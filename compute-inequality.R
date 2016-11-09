@@ -1,104 +1,58 @@
-# summarize unnevenness
-
-library(ineq)
-
-olesen_index = function(counts) {
-  x = data.frame(counts=counts) %>%
-    arrange(counts) %>%
-    mutate(x=1:dim(.)[1], x=x/max(x), y=cumsum(counts)/sum(counts)) %>%
-    filter(x + y - 1 < 0) %$%
-    x
-  
-  if (length(x) > 0) {
-    tail(x, 1)
-  } else {
-    1.0
-  }
-}
-
-printf <- function(fmt, ...) sprintf(fmt, ...) %>% print
+# create summary beneficiary x abx file
 
 codes = read_tsv('../db/proc/code-map.txt', col_names=c('ndc', 'abx'))
 
-all_pde_counts = read_tsv('bene_sum_2011.tsv') %>%
-  mutate(bene=bene_id, all_pde=counts)
+all_pde_counts = read_tsv('../data/pde_freq_2011.txt') %>%
+  rename(bene=BENE_ID, all_pde=COUNT)
 
 load.abxpde = function(fn) {
   read_tsv(fn) %>%
-    rename(bene=BENE_ID, ndc=PRDSRVID) %>%
+    rename(bene=BENE_ID, ndc=PRDSRVID, days=DAYSSPLY) %>%
+    mutate(days=as.integer(days)) %>%
     inner_join(codes, by='ndc') %>%
-    select(bene, abx)
+    select(bene, abx, days)
 }
 
+county_codes = read_tsv("../db/state-county-codes/county-codes.tsv")
+race_codes = read_tsv("../db/race-codes/race.tsv")
+
+load.bene = function(fn, n_max=Inf) {
+  # get and rearrange raw data
+  read_tsv(fn, n_max=n_max) %>%
+    # join state and county codes to merge with SSA list
+    unite(state_county_code, STATE_CD, CNTY_CD, sep='') %>%
+    # keep only the 5-digit zip
+    mutate(zip=substr(BENE_ZIP, 0, 5)) %>%
+    select(bene=BENE_ID, age=AGE, state_county_code, zip,
+           race_code=RACE,
+           plan_coverage_months=PLNCOVMO) %>%
+    # merge (and drop) state+county code
+    left_join(county_codes, by='state_county_code') %>%
+    select(-state_county_code) %>%
+    # merge (and drop) race codes
+    left_join(race_codes, by='race_code') %>%
+    select(-race_code)
+}
+
+bene = load.bene('../data/bene_match_2011.txt')
 abxpde = load.abxpde('../data/abx_pde_2011.tsv')
 
 # convert to a wide abx pde data frame 
-wap = abxpde %>%
+proto_wap = abxpde %>%
   group_by(bene, abx) %>%
-  summarize(counts=n()) %>%
-  ungroup() %>%
-  spread(abx, counts, fill=0)
+  summarize(n_claims=n(), days=sum(days))
 
-wap$total_abx = wap %>% select(-bene) %>% rowSums
+wap = proto_wap %>%
+  ungroup %>%
+  spread(abx, days, fill=0)
+
+wap$total_abx = wap %>% select(-bene, -n_claims) %>% rowSums
 
 # merge in the information from all the pdes
 wap %<>% inner_join(all_pde_counts, by='bene')
 
-# do a summary over beneficiaries for all abx
-all_abx_counts = function(abxpde) {
-  abxpde %>%
-    group_by(bene) %>%
-    summarize(counts=n()) %$%
-    counts
-}
+# merge in the information about the beneficiaries
+wap %<>% inner_join(bene, by='bene')
 
-# filter for a specific abx before summarizing
-abx_counts = function(this_abx, df) {
-  df %>%
-    filter(abx==this_abx) %>%
-    group_by(bene) %>%
-    summarize(counts=n()) %$%
-    counts
-}
-
-add_zeros = function(n_total, nonzero_counts) {
-  n_zero_benes = n_total_benes - length(nonzero_counts)
-  c(nonzero_counts, rep(0, times=n_zero_benes)) %>% .[order(.)]
-}
-
-n_total_benes = 10341351
-#nonzero_counts = all_abx_counts(abxpde)
-#sprintf("Gini: %f\nOlesen: %f\n", ineq(counts, type='Gini'), olesen.index(counts))
-
-plot_cdf = function(counts) {
-  data.frame(counts=counts) %>%
-    arrange(counts) %>%
-    mutate(x=1:dim(.)[1], x=x/max(x), y=cumsum(counts)/sum(counts)) %>%
-    ggplot(aes(x=x, y=y)) + geom_line() + coord_fixed()
-}
-
-plot_cdf2 = function(counts) {
-  data.frame(counts=counts) %>%
-    arrange(counts) %>%
-    mutate(x=1:dim(.)[1], y=cumsum(counts)) %>%
-    ggplot(aes(x=x, y=y)) + geom_line() + coord_fixed()
-}
-
-gini = function(x) ineq(x, type='Gini')
-
-f = function(abx, df) {
-  nonzero_counts = abx_counts(abx, df)
-  counts = add_zeros(n_total_benes, nonzero_counts)
-  list(abx=abx, total_usage=sum(counts), gini_all=gini(counts), olesen_all=olesen_index(counts),
-       gini_nonzero=gini(nonzero_counts), olesen_nonzero=olesen_index(nonzero_counts))
-}
-
-abxs = abxpde %$% abx %>% unique
-res = lapply(abxs, function(x) f(x, abxpde)) %>%
-  simplify2array %>% t %>% as.data.frame %>%
-  mutate(abx=as.character(abx),
-         total_usage=as.numeric(total_usage),
-         gini_all=as.numeric(gini_all),
-         olesen_all=as.numeric(olesen_all),
-         gini_nonzero=as.numeric(gini_nonzero),
-         olesen_nonzero=as.numeric(olesen_nonzero))
+# save this new file
+write_tsv(wap, 'bene-abx-2011.tsv')
