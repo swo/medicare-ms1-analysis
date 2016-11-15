@@ -21,4 +21,4 @@ summarize_cc = function(in_fn, out_fn) {
     write_tsv(out_fn)
 }
  
-summarize_cc("../data/cc2011.tsv", "cc2011.tsv")
+summarize_cc("../../data/cc2011.tsv", "cc2011.tsv")
