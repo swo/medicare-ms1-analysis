@@ -11,7 +11,8 @@ load.abxpde = function(fn) {
   read_tsv(fn) %>%
     rename(bene=BENE_ID, ndc=PRDSRVID, days=DAYSSPLY) %>%
     mutate(days=as.integer(days)) %>%
-    inner_join(codes, by='ndc') %>%
+    left_join(codes, by='ndc') %>%
+    filter(!is.na(abx)) %>%
     select(bene, abx, days)
 }
 
@@ -40,25 +41,35 @@ load.bene = function(fn, n_max=Inf) {
 bene = load.bene('../data/bene_match_2011.txt')
 abxpde = load.abxpde('../data/abx_pde_2011.tsv')
 
-# convert to a wide abx pde data frame
-proto_wap = abxpde %>%
+# summarize information about each beneficiary
+# (summarize over bene)
+abxpde %<>%
   group_by(bene, abx) %>%
   summarize(n_claims=n(), days=sum(days))
 
-wap = proto_wap %>%
-  ungroup %>%
-  spread(abx, days, fill=0)
+# summary stats about beneficiaries
+# (summarize again over abx for each bene)
+bene_sum = abxpde %>%
+  summarize(n_claims=sum(n_claims), days=sum(days))
 
-wap$total_abx = wap %>% select(-bene, -n_claims) %>% rowSums
+# convert to a wide abx pde
+wap = abxpde %>%
+  select(-n_claims) %>%
+  # spread to a wide format. use convert to ensure integers
+  spread(abx, days, fill=0, convert=TRUE)
+
+# merge in the summary information
+wap %<>%
+  left_join(bene_sum, by='bene')
 
 # merge in the information from all the pdes
-wap %<>% inner_join(all_pde_counts, by='bene')
+wap %<>% left_join(all_pde_counts, by='bene')
 
 # merge in the information about the beneficiaries
-wap %<>% inner_join(bene, by='bene')
+wap %<>% left_join(bene, by='bene')
 
 # merge in the information about the chronic conditions
-wap %<>% inner_join(chronic, by='bene')
+wap %<>% left_join(chronic, by='bene')
 
 # save this new file
 write_tsv(wap, 'bene-abx-2011.tsv')
