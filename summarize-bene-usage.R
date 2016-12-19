@@ -17,6 +17,7 @@ load.abxpde = function(fn) {
 }
 
 county_codes = read_tsv("../db/state-county-codes/county-codes.tsv")
+zipcodes = read_tsv("../db/zipcode/zipcode.tsv")
 race_codes = read_tsv("../db/race-codes/race.tsv")
 chronic = read_tsv("cc2011.tsv")
 
@@ -27,7 +28,8 @@ load.bene = function(fn, n_max=Inf) {
     unite(state_county_code, STATE_CD, CNTY_CD, sep='') %>%
     # keep only the 5-digit zip
     mutate(zip=substr(BENE_ZIP, 0, 5)) %>%
-    select(bene=BENE_ID, age=AGE, state_county_code, zip,
+    mutate(sex=as.character(factor(SEX, levels=c(0, 1, 2), labels=c('unknown', 'male', 'female')))) %>%
+    select(bene=BENE_ID, age=AGE, sex, state_county_code, zip,
            race_code=RACE,
            plan_coverage_months=PLNCOVMO) %>%
     # merge (and drop) state+county code
@@ -54,13 +56,13 @@ bene_sum = abxpde %>%
 
 # convert to a wide abx pde
 wap = abxpde %>%
+  ungroup() %>%
   select(-n_claims) %>%
   # spread to a wide format. use convert to ensure integers
   spread(abx, days, fill=0, convert=TRUE)
 
 # merge in the summary information
-wap %<>%
-  left_join(bene_sum, by='bene')
+wap %<>% left_join(bene_sum, by='bene')
 
 # merge in the information from all the pdes
 wap %<>% left_join(all_pde_counts, by='bene')
