@@ -17,24 +17,22 @@ load.abxpde = function(fn) {
 }
 
 county_codes = read_tsv("../db/state-county-codes/county-codes.tsv")
-zipcodes = read_tsv("../db/zipcode/zipcode.tsv")
+zipcodes = read_tsv("../db/zipcode/zipcode.tsv") %>%
+  select(zip, state, state_abbrev)
 race_codes = read_tsv("../db/race-codes/race.tsv")
 chronic = read_tsv("cc2011.tsv")
 
 load.bene = function(fn, n_max=Inf) {
   # get and rearrange raw data
   read_tsv(fn, n_max=n_max) %>%
-    # join state and county codes to merge with SSA list
-    unite(state_county_code, STATE_CD, CNTY_CD, sep='') %>%
     # keep only the 5-digit zip
     mutate(zip=substr(BENE_ZIP, 0, 5)) %>%
     mutate(sex=as.character(factor(SEX, levels=c(0, 1, 2), labels=c('unknown', 'male', 'female')))) %>%
-    select(bene=BENE_ID, age=AGE, sex, state_county_code, zip,
+    select(bene=BENE_ID, age=AGE, sex, zip,
            race_code=RACE,
            plan_coverage_months=PLNCOVMO) %>%
-    # merge (and drop) state+county code
-    left_join(county_codes, by='state_county_code') %>%
-    select(-state_county_code) %>%
+    # merge by zipcode to get state
+    left_join(zipcodes, by='zip') %>%
     # merge (and drop) race codes
     left_join(race_codes, by='race_code') %>%
     select(-race_code)
