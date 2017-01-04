@@ -68,7 +68,7 @@ con = abx %>%
             median_nz_days=median(nz(days)),
             quantile_nz_95=quantile(nz(days), probs=c(0.95)),
             quantile_nz_99=quantile(nz(days), probs=c(0.99))) %>%
-  mutate(did=365*n_days/(1000*n_bene))
+  mutate(did=1000/365*n_days/n_bene)
 
 write_tsv(con, 'tmp-con')
             
