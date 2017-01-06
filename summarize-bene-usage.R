@@ -41,11 +41,18 @@ load.bene = function(fn, n_max=Inf) {
 bene = load.bene('../data/bene_match_2011.txt')
 abxpde = load.abxpde('../data/abx_pde_2011.tsv')
 
+bene %>%
+  left_join(chronic, by='bene') %>%
+  left_join(all_pde_counts, by='bene') %>%
+  write_tsv('tmp-bene-2011.tsv')
+
 # summarize information about each beneficiary
 # (summarize over bene)
 abxpde %<>%
   group_by(bene, abx) %>%
   summarize(n_claims=n(), days=sum(days))
+
+abxpde %>% write_tsv('tmp-abx-pde-2011.tsv')
 
 # summary stats about beneficiaries
 # (summarize again over abx for each bene)
