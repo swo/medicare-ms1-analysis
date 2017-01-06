@@ -4,9 +4,6 @@
 
 codes = read_tsv('../db/proc/code-map.txt', col_names=c('ndc', 'abx'))
 
-all_pde_counts = read_tsv('../data/pde_freq_2011.txt') %>%
-  rename(bene=BENE_ID, all_pde=COUNT)
-
 load.abxpde = function(fn) {
   read_tsv(fn) %>%
     rename(bene=BENE_ID, ndc=PRDSRVID, days=DAYSSPLY) %>%
@@ -43,7 +40,6 @@ abxpde = load.abxpde('../data/abx_pde_2011.tsv')
 
 bene %>%
   left_join(chronic, by='bene') %>%
-  left_join(all_pde_counts, by='bene') %>%
   write_tsv('tmp-bene-2011.tsv')
 
 # summarize information about each beneficiary
@@ -68,9 +64,6 @@ wap = abxpde %>%
 
 # merge in the summary information
 wap %<>% left_join(bene_sum, by='bene')
-
-# merge in the information from all the pdes
-wap %<>% left_join(all_pde_counts, by='bene')
 
 # merge in the information about the beneficiaries
 wap %<>% left_join(bene, by='bene')
