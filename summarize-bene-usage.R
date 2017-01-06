@@ -4,7 +4,7 @@
 
 codes = read_tsv('../db/proc/code-map.txt', col_names=c('ndc', 'abx'))
 
-load.abxpde = function(fn) {
+load_abxpde = function(fn) {
   read_tsv(fn) %>%
     rename(bene=BENE_ID, ndc=PRDSRVID, days=DAYSSPLY) %>%
     mutate(days=as.integer(days)) %>%
@@ -13,13 +13,7 @@ load.abxpde = function(fn) {
     select(bene, abx, days)
 }
 
-county_codes = read_tsv("../db/state-county-codes/county-codes.tsv")
-zipcodes = read_tsv("../db/zipcode/zipcode.tsv") %>%
-  select(zip, state, state_abbrev)
-race_codes = read_tsv("../db/race-codes/race.tsv")
-chronic = read_tsv("cc2011.tsv")
-
-load.bene = function(fn, n_max=Inf) {
+load_bene = function(fn, n_max=Inf) {
   # get and rearrange raw data
   read_tsv(fn, n_max=n_max) %>%
     # keep only the 5-digit zip
@@ -35,41 +29,69 @@ load.bene = function(fn, n_max=Inf) {
     select(-race_code)
 }
 
-bene = load.bene('../data/bene_match_2011.txt')
-abxpde = load.abxpde('../data/abx_pde_2011.tsv')
+# load the database information
+county_codes = read_tsv("../db/state-county-codes/county-codes.tsv")
+zipcodes = read_tsv("../db/zipcode/zipcode.tsv") %>%
+  select(zip, state, state_abbrev)
+race_codes = read_tsv("../db/race-codes/race.tsv")
 
-bene %>%
-  left_join(chronic, by='bene') %>%
-  write_tsv('tmp-bene-2011.tsv')
+# and get the common chronic condition data
+all_chronic = read_tsv("../data/cc_all.tsv", col_types='cdddd')
 
-# summarize information about each beneficiary
-# (summarize over bene)
-abxpde %<>%
-  group_by(bene, abx) %>%
-  summarize(n_claims=n(), days=sum(days))
+summarize_year = function(year) {
+  bene_in_fn = sprintf('../data/bene_match_%s.txt', year)
+  abx_in_fn = sprintf('../data/abx_pde_%s.tsv', year)
 
-abxpde %>% write_tsv('tmp-abx-pde-2011.tsv')
+  bene_out_fn = sprintf('bene-%s.tsv', year)
+  abx_out_fn = sprintf('abx-pde-%s.tsv', year)
+  wide_out_fn = sprintf('bene-abx-%s.tsv', year)
 
-# summary stats about beneficiaries
-# (summarize again over abx for each bene)
-bene_sum = abxpde %>%
-  summarize(n_claims=sum(n_claims), days=sum(days))
+  bene = load_bene(bene_in_fn)
+  abxpde = load_abxpde(abx_in_fn)
 
-# convert to a wide abx pde
-wap = abxpde %>%
-  ungroup() %>%
-  select(-n_claims) %>%
-  # spread to a wide format. use convert to ensure integers
-  spread(abx, days, fill=0, convert=TRUE)
+  year_col = sprintf('y%s', year)
+  chronic = all_chronic %>%
+    select_('bene', year_col) %>%
+    rename_(.dots=setNames(year_col, 'chronic'))
 
-# merge in the summary information
-wap %<>% left_join(bene_sum, by='bene')
+  bene %>%
+    left_join(chronic, by='bene') %>%
+    write_tsv(bene_out_fn)
 
-# merge in the information about the beneficiaries
-wap %<>% left_join(bene, by='bene')
+  # summarize information about each beneficiary
+  # (summarize over bene)
+  abxpde %<>%
+    group_by(bene, abx) %>%
+    summarize(n_claims=n(), days=sum(days))
 
-# merge in the information about the chronic conditions
-wap %<>% left_join(chronic, by='bene')
+  abxpde %>% write_tsv(abx_out_fn)
 
-# save this new file
-write_tsv(wap, 'bene-abx-2011.tsv')
+  # summary stats about beneficiaries
+  # (summarize again over abx for each bene)
+  bene_sum = abxpde %>%
+    summarize(n_claims=sum(n_claims), days=sum(days))
+
+  # convert to a wide abx pde
+  wap = abxpde %>%
+    ungroup() %>%
+    select(-n_claims) %>%
+    # spread to a wide format. use convert to ensure integers
+    spread(abx, days, fill=0, convert=TRUE)
+
+  # merge in the summary information
+  wap %<>% left_join(bene_sum, by='bene')
+
+  # merge in the information about the beneficiaries
+  wap %<>% left_join(bene, by='bene')
+
+  # merge in the information about the chronic conditions
+  wap %<>% left_join(chronic, by='bene')
+
+  # save this new file
+  write_tsv(wap, wide_out_fn)
+}
+
+summarize_year('2011')
+summarize_year('2012')
+summarize_year('2013')
+summarize_year('2014')
