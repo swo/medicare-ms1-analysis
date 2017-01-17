@@ -3,7 +3,7 @@ trimethoprim-sulfamethoxazole	sulfonamide
 ciprofloxacin	quinolone
 nitrofurantoin	nitrofurantoin
 doxycycline	tetracycline
-azithromycin	azithromycin/clarithromycin
+azithromycin	macrolide
 cephalexin	cephalosporin-gen1
 amoxicillin	penicillin
 amoxicillin-clavulanate	penicillin
@@ -15,7 +15,7 @@ tetracycline	tetracycline
 trimethoprim	trimethoprim
 cefuroxime	cephalosporin-gen2plus
 penicillin	penicillin
-clarithromycin	azithromycin/clarithromycin
+clarithromycin	macrolide
 moxifloxacin	quinolone
 methenamine	methenamine
 cefdinir	cephalosporin-gen2plus
