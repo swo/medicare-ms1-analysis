@@ -86,7 +86,8 @@ analyze = function(year) {
   write_tsv(rx_by_age, sprintf('rx_by_age-%s.tsv', year))
 
   # then by census region
-  rx_by_region = summarize_by(dat, bene, 'region')
+  rx_by_region = summarize_by(dat, bene, 'region') %>%
+    arrange(desc(rx_per_1k_ppl))
   write_tsv(rx_by_region, sprintf('rx_by_region-%s.tsv', year))
 
   # prescriptions per 1000 people by state
