@@ -31,7 +31,6 @@ summarize_by = function(dat, bene, by) {
     mutate(rx_per_1k_ppl=n_rx*1000/n_ppl)
 }
 
-
 regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
   select(state, region)
 
@@ -45,10 +44,15 @@ analyze = function(year) {
     # merge in the census region information
     left_join(regions, by='state')
 
+  # read in the abx class information
+  # merge the different cephalosporins into the same class
+  abx_class = read_tsv('../abx-classes.tsv') %>%
+    mutate(abx_class=if_else(startsWith(abx_class, 'cephalosporin'), 'cephalosporin', abx_class))
+
   # read in PDE data
   dat = read_tsv(pde_fn) %>%
     # merge the abx class information
-    left_join(read_tsv('../abx-classes.tsv'), by='abx') %>%
+    left_join(abx_class, by='abx') %>%
     # merge the beneficiary information, keeping only claims mapping to beneficiaries
     # for which we have data (i.e., inner join)
     inner_join(bene, by='bene')
@@ -62,12 +66,12 @@ analyze = function(year) {
     mutate(rx_per_1k_ppl=n_rx*1000/n_beneficiaries)
   write_tsv(rx_by_class, sprintf('rx_by_class-%s.tsv', year))
 
-  # but with a separate list of the top 5 agents
+  # but with a separate list of the top 6 agents
   top_abx_rx = dat %>%
     group_by(abx) %>%
     summarize(n_rx=n()) %>%
     arrange(desc(n_rx)) %>%
-    head(5) %>%
+    head(6) %>%
     mutate(rx_per_1k_ppl=n_rx*1000/n_beneficiaries)
   write_tsv(top_abx_rx, sprintf('top_abx_rx-%s.tsv', year))
 
