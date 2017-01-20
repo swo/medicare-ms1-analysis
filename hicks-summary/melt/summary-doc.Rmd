@@ -2,8 +2,8 @@
 title: "Summary of consumption in Medicare Part D"
 author: "Scott Olesen"
 date: "1/19/2017"
-bibliography: "refs.bib"
 output: html_document
+bibliography: refs.bib
 ---
 
 This summary is modeled after @hicks-us-2015. That study, which used the IMS Health Xponent database to infer the number of prescriptions per capita, reported higher prescription rates than what we observe here. In that paper, the number of prescriptions per 1,000 people year (PKPY) is approximately 1,000 for people over 65. In this data, we find that number to be between 600 (in 2011) and 750 (in 2012). Our value is more similar to a report that used the National Ambulatory Care Survey (NAMCS) and National Hospital Ambulatory Care Survey (NHAMCS) rather than the Xponent data. That report estimated about 500 PKPY [@flemingdutra-prevalence-2016]. A third report, which used the Xponent database, reported that prescriptions fell from about 1,000 PKPY in 1996 to about 600 PKPY in 2003 [@hicks-outpatient-2011].
@@ -18,6 +18,10 @@ dat = read_tsv('dat.tsv', progress=FALSE, col_types='cccd') %>%
 # Antibiotic consumption by class
 
 Our data for antibiotic class roughly correspond to those reported in @hicks-us-2015, when allowing for the fact that their results have about 40% higher consumption overall. The striking difference is a in consumption of quinolones: in our 2011 data, quinolones are the most-prescribed class and account for 127 PKPY. In their data, quinolones are the fourth-most-prescribed class and account for 89 PKPY (adjusted to approximately $90 \times 0.6 = 54$).
+
+Across years, the consumption of drugs seems to follow similar patterns (excepting that consumption in 2012 was about 20% higher than in 2011 and consumption in 2013-2014 was about 10% higher).
+
+All consumption rates are reported as PKPY.
 
 ```{r by_class, echo=FALSE}
 top_abx_names = dat %>%
@@ -46,7 +50,9 @@ dat %>%
 
 Our data for the most prescribed individual antibiotics also generally accords with @hicks-us-2015 (again, allowing for the 40% discrepancy). The major difference is that ciprofloxacin consumption is greater in our data and amoxicillin (and augmentin) consumption are greater in their data. The reduced consumption of amoxicillin in our data could be explained by the fact that our population is older.
 
-```{r, echo=FALSE}
+Allowing for the overall differences in consumption, consumption of azithromycin appears to have declined during 2011 to 2014, while the consumption of levofloxacin increased.
+
+```{r top_abx, echo=FALSE}
 dat %>%
   filter(type=='top_abx_rx') %>%
   select(-type) %>% 
@@ -58,7 +64,7 @@ dat %>%
 
 # Consumption by sex
 
-Our result, that the consumption of antibiotics by women and men is in a 3:2 ratio, agrees with the result in @hicks-us-2015.
+Our result, that the consumption of antibiotics by women and men is in a 3:2 ratio, agrees with the result in @hicks-us-2015. The ratio also remained steady across years in our dataset.
 
 ```{r, echo=FALSE}
 table_f = function(x) {
@@ -73,13 +79,17 @@ table_f('rx_by_sex') %>% rename(sex=field) %>% filter(sex != 'unknown') %>% kabl
 
 # Consumption by region
 
+In @hicks-us-2015, stratifying consumption in 2011 by census region led to one major divide: the South, West, and Northeast consumed more antibiotics than the West (931, 897, and 848 vs. 647 PKPY). In our results, the major divide is between the South and the Midwest, West, and Northeast (641 vs. 583, 563, and 533 PKPY).
+
+In our data, 2012 appears exceptional: consumption in the Midwest and West was relatively high, and consumption in the Northeast was relatively low. Results from 2013 and 2014 accord more closely with the results from @hicks-us-2015, in which the West is the region with the lowest consumption.
+
 ```{r, echo=FALSE}
 table_f('rx_by_region') %>% rename(region=field) %>% kable
 ```
   
 # Consumption by age
 
-When stratifying by age, @hicks-us-2015 places all people 65 or older into one stratum. Here I stratify within this population. Excepting the beneficiaries under 65, older beneficiaries tend to consume more antibiotics. The beneficiaries under 65 qualify for Medicare because they are disabled, have end stage renal disease, or ALS, which might contribute to their increased consumption of antibiotics.
+When stratifying by age, @hicks-us-2015 places all people 65 or older into one stratum. Here I stratify within this population. Excepting the beneficiaries under 65, older beneficiaries tend to consume more antibiotics. The beneficiaries under 65 qualify for Medicare because they are disabled, have end stage renal disease, or ALS, which might contribute to their increased consumption of antibiotics. However, this trend across age groups does not hold in 2012.
 
 ```{r, echo=FALSE}
 dat %>%
