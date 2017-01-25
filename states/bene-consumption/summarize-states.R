@@ -26,16 +26,16 @@ f_state_consumption = function(abx, bene, state_bene_summary) {
 }
 
 analyze = function(year) {
-  bene_fn = sprintf('../bene-%s.tsv', year)
-  abx_fn = sprintf('../abx-pde-%s.tsv', year)
+  bene_fn = sprintf('../../bene-%s.tsv', year)
+  abx_fn = sprintf('../../abx-pde-%s.tsv', year)
   state_bene_summary_fn = sprintf('state-bene-%s.tsv', year)
   state_consumption_fn = sprintf('state-consumption-%s.tsv', year)
 
   bene = read_tsv(bene_fn) %>%
     filter(!is.na(state))
-  
+
   state_bene_summary = f_state_bene_summary(bene)
-  
+
   abx = read_tsv(abx_fn)
   state_consumption = f_state_consumption(abx, bene, state_bene_summary)
 
