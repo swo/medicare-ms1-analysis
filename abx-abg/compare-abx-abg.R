@@ -71,7 +71,7 @@ con = abx %>%
   mutate(did=1000/365*n_days/n_bene)
 
 write_tsv(con, 'tmp-con')
-            
+
 models = function(df) {
   out = data_frame()
   for (resp in c('median_sus', 'mean_sus', 'min_sus', 'max_sus')) {
@@ -86,14 +86,12 @@ models = function(df) {
   out
 }
 
-x = con %>%
+res = con %>%
   ungroup %>%
   left_join(sus, by=c('drug', 'hrr')) %>%
   filter(!is.na(n_isolates)) %>%
-  arrange(drug)
-
-y = x %>%
+  arrange(drug) %>%
   group_by(bug, drug) %>%
   do(models(.))
-  
-write_tsv(y, 'tmp-res')
+
+write_tsv(res, 'tmp-res')
