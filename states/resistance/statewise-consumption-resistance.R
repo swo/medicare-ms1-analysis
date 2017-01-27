@@ -1,7 +1,3 @@
-# like first, but at the state level
-
-#library(purrr)
-#library(lazyeval)
 library(mblm)
 library(broom)
 
@@ -36,10 +32,11 @@ write_tsv(sus, 'tmp-sus')
 models = function(df) {
   out = data_frame()
   for (resp in c('median_sus', 'mean_sus', 'min_sus', 'max_sus')) {
-    for (expl in c('claims_per_1k_ppl', 'did', 'fraction_no_claims')) {
-      sprintf("%s %s %s\n", resp, expl, head(df$drug, 1)) %>% cat
-      new_rows = df %>%
-        mblm(as.formula(paste0(resp, '~', expl)), dataframe=.) %>%
+    for (expl in c('claims_per_1k_ppl', 'did')) {
+      sprintf("%s %s %s\n", resp, expl, head(df$drug, 1), head(df$bug, 1)) %>% cat
+      new_rows = cor.test(df[[resp]], df[[expl]], method='spearman') %>%
+      #new_rows = df %>%
+        #mblm(as.formula(paste0(resp, '~', expl)), dataframe=.) %>%
         tidy %>%
         mutate(response=resp, explanatory=expl)
       out = bind_rows(out, new_rows)
