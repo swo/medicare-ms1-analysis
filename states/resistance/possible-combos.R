@@ -3,7 +3,7 @@
 coherence = read_tsv('../../../../antibiogram/analysis/geographic-coherence/coherences.tsv') %>%
   rename(resistance_drug=drug) %>%
   mutate(resistance_drug=tolower(resistance_drug)) %>%
-  select(bug, resistance_drug, level)
+  select(bug, resistance_drug, level, n_groups)
 
 gram_negs = c('Escherichia coli', 'Klebsiella pneumoniae', 'Proteus mirabilis',
   'Enterobacter cloacae', 'Klebisella oxytoca')
@@ -43,7 +43,8 @@ known_states = abg %$% state %>% unique %>% sort
 state_bene = read_tsv('../bene-consumption/state-bene-2011.tsv') %>%
   filter(state %in% known_states)
 state_cons = read_tsv('../bene-consumption/state-consumption-2011.tsv') %>%
-  filter(state %in% known_states)
+  filter(state %in% known_states) %>%
+  rename(consumption_drug=drug)
 
 sus = coherent_bug_drug %>%
   left_join(abg, by=c('bug', 'resistance_drug')) %>%
@@ -56,8 +57,6 @@ sus = coherent_bug_drug %>%
             sd_sus=sd(percent_susceptible, na.rm=TRUE),
             min_sus=min(percent_susceptible, na.rm=TRUE),
             max_sus=max(percent_susceptible, na.rm=TRUE))
-
-write_tsv(sus, 'tmp-sus')
 
 models = function(df) {
   out = data_frame()
@@ -75,14 +74,16 @@ models = function(df) {
   out
 }
 
-x = state_cons %>%
-  ungroup %>%
-  left_join(sus, by=c('consumption_drug', 'state')) %>%
-  filter(!is.na(n_isolates)) %>%
-  arrange(drug)
-
-y = x %>%
-  group_by(bug, drug) %>%
+res = sus %>%
+  left_join(coherent_bug_drug, by=c('bug', 'resistance_drug')) %>%
+  left_join(state_cons, by=c('state', 'consumption_drug')) %>%
+  filter(state_coherent) %>%
+  group_by(bug, resistance_drug) %>%
   do(models(.))
 
-write_tsv(y, 'tmp-res')
+write_tsv(sus, 'susceptibily.tsv')
+write_tsv(y, 'model-results.tsv')
+
+res %>%
+  filter(p.value < 0.05) %>%
+  write_tsv('model-results-p005.tsv')
