@@ -74,16 +74,22 @@ models = function(df) {
   out
 }
 
-res = sus %>%
+dat = sus %>%
   left_join(coherent_bug_drug, by=c('bug', 'resistance_drug')) %>%
   left_join(state_cons, by=c('state', 'consumption_drug')) %>%
   filter(state_coherent) %>%
-  group_by(bug, resistance_drug) %>%
+  group_by(bug, resistance_drug)
+
+write_tsv(dat, 'plotting-dat.tsv')
+
+res = dat %>%
   do(models(.))
 
 write_tsv(sus, 'susceptibily.tsv')
-write_tsv(y, 'model-results.tsv')
+write_tsv(res, 'model-results.tsv')
 
 res %>%
   filter(p.value < 0.05) %>%
+  select(bug, resistance_drug, explanatory, response, correlation=estimate, p.value) %>%
+  mutate(correlation=signif(correlation, digits=3), p.value=signif(p.value, digits=3)) %>%
   write_tsv('model-results-p005.tsv')
