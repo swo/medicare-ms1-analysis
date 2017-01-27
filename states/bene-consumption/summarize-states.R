@@ -17,8 +17,8 @@ f_state_consumption = function(abx, bene, state_bene_summary) {
   bene %>%
     select(bene, state) %>%
     left_join(abx, by='bene') %>%
-    mutate(n_claims=if_else(is.na(n_claims), 0, n_claims),
-           days=if_else(is.na(days), 0, days)) %>%
+    mutate(n_claims=if_else(is.na(n_claims), 0L, n_claims),
+           days=if_else(is.na(days), 0L, days)) %>%
     select(state, drug=abx, n_claims, days) %>%
     group_by(state, drug) %>%
     summarize(claims=sum(n_claims),
@@ -29,7 +29,7 @@ f_state_consumption = function(abx, bene, state_bene_summary) {
            days_per_1k_ppl=days/n_bene * 1000,
            did=days_per_1k_ppl/365,
            fraction_no_claims=n_zero_claims/n_bene) %>%
-    select(-n_bene)
+    select(-n_bene, -n_zero_claims)
   
   # other consumption metrics include:
   # - max_days=max(days),
