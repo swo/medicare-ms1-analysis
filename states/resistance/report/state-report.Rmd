@@ -1,0 +1,143 @@
+---
+title: 'Consumption and resistance across states'
+---
+
+```{r echo=FALSE, message=FALSE}
+res = read_tsv('../model-results-p005.tsv')
+plot_dat = read_tsv('../plotting-dat.tsv')
+
+plot_f = function(this_bug, this_resistance_drug, this_explanatory, this_response) {
+  this_res = res %>%
+    filter(bug==this_bug, resistance_drug==this_resistance_drug, explanatory==this_explanatory, response==this_response)
+
+  if (dim(this_res)[1] != 1) stop('wrong number of rows')
+
+  z = this_res$correlation %>% head
+  p.value = this_res$p.value %>% head
+
+  plot_dat %>%
+    filter(bug==this_bug, resistance_drug==this_resistance_drug) %>%
+    ggplot(aes_string(this_explanatory, this_response)) +
+    geom_point() +
+    geom_smooth(method='lm', se=FALSE) +
+    theme_minimal() +
+    xlab(this_explanatory) +
+    ylab(this_response) +
+    ggtitle(sprintf('%s susceptibility to %s', this_bug, this_resistance_drug))
+}
+```
+
+# Methodology
+
+1. I determined which bug/drug combinations were coherent at the state level (i.e., separating antibiograms into their states significantly decreased variance below what would be expected by chance)
+2. For each *consumption* drug, I asserted a matched *resistance* drug
+3. I correlated metrics of consumption (of the consumption drug) against metrics of resistance (against the resistance drug) across states.
+
+## Metrics
+
+The consumption metrics were:
+
+- *DID*: Defined daily doses per 1,000 inhabitants per day. In fact, I don't have proper DDDs, so these are the "days supply" supplied in the Medicare claims data. This is what Goossens *et al.* uses.
+- *Claims per 1,000 people*: Rather than days supply, this is just the raw number of claims. It also has a different denominator. This is what the Hicks papers use.
+
+In general, PKPY will be larger than DID. If all people get $d$ days of drug per prescription, the relationship is:
+
+$$
+\mathrm{PKPY} = \frac{365}{d} \times \mathrm{DID}
+$$
+
+The resistance metrics were:
+
+- *Mean* susceptibility
+- *Median* susceptibility
+- *Maximum* susceptibility
+- *Minimum* susceptibility
+
+## Correlations
+
+I used Spearman correlations and examined only those bug/drug combinations that produced $p < 0.05$. I manually examined the results and show some representative ones here.
+
+## Consumption and resistance drugs
+
+Trimethoprim-sulfamethoxazole, ciprofloxacin, levofloxacin, ceftriaxone, nitrofurantoin, and penicillin were present in both the consumption and resistance data; they are each their own pair. Consumption of amoxicillin was matched with resistance to ampicillin; doxycycline with tetracycline/doxycycline, and azithromycin with erythromycin.
+
+## Organisms
+
+I examined these organisms:
+
+Gram negatives:
+- Escherichia coli
+- Klebsiella pneumoniae
+- Proteus mirabilis
+- Enterobacter cloacae
+- Klebisella oxytoca
+
+Gram positives:
+- Coagulase-negative staphylococci
+- Methicillin-resistant S. aureus (MRSA)
+- Methicillin-susceptible S. aureus (MSSA)
+- Streptococcus pneumoniae (non-meningitis)
+- Staphylococcus aureus
+
+# Results
+
+## Strong results
+
+I call these strong results because:
+
+- Their p-values were small.
+- The correlations went in the right direction (i.e., increased consumption was associated with decreased susceptibility).
+- The same bug/drug/drug combinations had significant correlations for multiple metrics (e.g., *E. coli* susceptibility to cipro anticorrelated with cipro consumption regardless of whether consumption was measured with claims or days and whether the mean or median susceptibility was used).
+
+In general, the coefficients for these correlations were in the range 0.4--0.6.
+
+N.B.: The plots have a linear best fit line added for clarity, but the correlation was measured with Spearman (i.e., rank ordered).
+
+```{r echo=FALSE}
+plot_f('Escherichia coli', 'ciprofloxacin', 'claims_per_1k_ppl', 'mean_sus')
+plot_f('Escherichia coli', 'levofloxacin', 'claims_per_1k_ppl', 'mean_sus')
+plot_f('Methicillin-susceptible S. aureus (MSSA)', 'ciprofloxacin', 'claims_per_1k_ppl', 'mean_sus')
+plot_f('Methicillin-susceptible S. aureus (MSSA)', 'erythromycin', 'claims_per_1k_ppl', 'mean_sus')
+plot_f('Streptococcus pneumoniae (non-meningitis)', 'erythromycin', 'claims_per_1k_ppl', 'mean_sus')
+```
+
+## Dubious Results
+
+I call these results "dubious" because, in general:
+
+- The p-values were not as strong.
+- The correlations were sometimes in the wrong direction.
+- The susceptibility metrics were weird (e.g., consumption correlations with the minimum susceptibility reported in a state).
+- The correlation was significant for one consumption metric but not the other.
+
+```{r echo=FALSE}
+plot_f('Coagulase-negative staphylococci', 'levofloxacin', 'claims_per_1k_ppl', 'min_sus') # why only min sus?
+plot_f('Enterobacter cloacae', 'ceftriaxone', 'did', 'mean_sus') # why only DID?
+plot_f('Escherichia coli', 'ampicillin', 'did', 'median_sus') # why only DID?
+plot_f('Escherichia coli', 'trimethoprim-sulfamethoxazole', 'claims_per_1k_ppl', 'mean_sus') # why not claims per 1k ppl?
+plot_f('Klebsiella pneumoniae', 'ceftriaxone', 'did', 'mean_sus') # why only DID?
+plot_f('Methicillin-resistant S. aureus (MRSA)', 'levofloxacin', 'claims_per_1k_ppl', 'max_sus') # why only max sus?
+plot_f('Methicillin-resistant S. aureus (MRSA)', 'trimethoprim-sulfamethoxazole', 'did', 'mean_sus') # why only DID?
+plot_f('Proteus mirabilis', 'levofloxacin', 'claims_per_1k_ppl', 'min_sus') # why only min sus?
+plot_f('Streptococcus pneumoniae (non-meningitis)', 'trimethoprim-sulfamethoxazole', 'claims_per_1k_ppl', 'mean_sus') # why only some?
+```
+
+# Discussion
+
+## Comparison to Goossens
+
+Goossens *et al.* found significant correlations for:
+
+- Consumption of macrolides with *S. pneumoniae* susceptibility to erythromycin
+- Consumption of penicillins and cephalosporins with *S. pneumoniae* susceptibility to penicillin
+- Consumption of macrolides and lincosamids with *S. pyogenes* susceptibility to erythromycin
+- Consumption of quinolones with *E. coli* susceptibility to ciprofloxacin
+- Consumption of co-trimoxazole with *E. coli* susceptibility to co-trimoxazole
+
+The Spearman correlation coefficients range from 0.68 to 0.83, which are higher than our results.
+
+The Goossens *et al.* graph shows a best-fit line of penicillin consumption against *S. pneumoniae* non-susceptibility to penicillin: 5 DID corresponds to 0% non-susceptible, while 16 DID corresponds to 45% non-susceptible. The translates to a 4 percentage point change in susceptibility per 1 DID.
+
+I can't immediately compare this to the US data (because *S. pneumoniae* resistance to penicillin was not coherent at the state level).
+
+However, *E. coli* resistance to ciprofloxacin is interesting: 85% susceptibility at 50 PKPY and 75% at 200, that is, 1 percentage point in susceptibility per 15 PKPY. That's a very weak response!
