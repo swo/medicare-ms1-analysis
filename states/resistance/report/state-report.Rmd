@@ -1,5 +1,10 @@
 ---
-title: 'Consumption and resistance across states'
+title: "Consumption and resistance across states"
+output:
+  pdf_document:
+    fig_height: 3
+  html_document:
+    fig_height: 4
 ---
 
 ```{r echo=FALSE, message=FALSE}
