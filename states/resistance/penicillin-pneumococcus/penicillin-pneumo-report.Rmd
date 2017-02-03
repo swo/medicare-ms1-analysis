@@ -12,7 +12,7 @@ To compare against Goossens *et al.*, I wanted to compare the consumption of pen
 # Methods
 
 ```{r echo=FALSE}
-
+library(knitr)
 library(broom)
 
 bug = 'Streptococcus pneumoniae (non-meningitis)'
@@ -27,11 +27,11 @@ bug_drug = expand.grid(bug=bug,
 
 I'm going to look at this one organism but a few consumption drugs and resistance drugs:
 
-```{r echo=FALSE}
-bug_drug
+```{r echo=FALSE, result='asis'}
+bug_drug %>% kable
 ```
 
-```{r echo=FALSE, message=FALSE}
+```{r echo=FALSE, message=FALSE, cache=TRUE}
 abg = read_tsv('../../../../../antibiogram/data/abg.tsv') %>%
   mutate(drug=tolower(drug)) %>%
   rename(resistance_drug=drug)
