@@ -1,0 +1,125 @@
+---
+title: "Consumption and resistance across states"
+output:
+  html_document:
+    fig_height: 4
+  pdf_document:
+    fig_height: 3
+---
+
+```{r setup}
+library(broom)
+library(knitr)
+library(pander)
+
+coherence = read_tsv('../../../../../antibiogram/analysis/geographic-coherence/coherences.tsv') %>%
+  rename(resistance_drug=drug) %>%
+  mutate(resistance_drug=tolower(resistance_drug)) %>%
+  select(bug, resistance_drug, level, n_groups)
+
+gram_negs = c('Escherichia coli', 'Klebsiella pneumoniae', 'Proteus mirabilis',
+              'Enterobacter cloacae', 'Klebisella oxytoca')
+gram_poss = c('Coagulase-negative staphylococci', 'Methicillin-resistant S. aureus (MRSA)',
+              'Methicillin-susceptible S. aureus (MSSA)', 'Streptococcus pneumoniae (non-meningitis)',
+              'Staphylococcus aureus')
+organisms = c(gram_negs, gram_poss)
+
+consumption_drugs=c('trimethoprim-sulfamethoxazole', 'ciprofloxacin', 'levofloxacin',
+                    'ceftriaxone', 'nitrofurantoin', 'amoxicillin', 'penicillin',
+                    'doxycycline', 'azithromycin')
+resistance_drugs=c('trimethoprim-sulfamethoxazole', 'ciprofloxacin', 'levofloxacin',
+                   'ceftriaxone', 'nitrofurantoin', 'ampicillin', 'penicillin',
+                   'tetracycline/doxycycline', 'erythromycin')
+
+consumption_resistance = data_frame(consumption_drug=consumption_drugs,
+                                    resistance_drug=resistance_drugs)
+
+# get all bug/drug combos (i.e., all bug/cons drug combos with appropriate res drugs)
+bug_drug = expand.grid(bug=organisms,
+                       consumption_drug=consumption_drugs,
+                       stringsAsFactors=FALSE) %>%
+  left_join(consumption_resistance, by='consumption_drug') %>%
+  left_join(coherence, by=c('resistance_drug', 'bug')) %>%
+  mutate(state_coherent=level %in% c('state', 'hrr', 'zipcode'))
+```
+   
+```{r load_data}
+abg = read_tsv('../../../../../antibiogram/data/abg.tsv') %>%
+  mutate(drug=tolower(drug)) %>%
+  rename(resistance_drug=drug)
+
+known_states = abg %$% state %>% unique %>% sort
+
+state_bene = read_tsv('../../bene-consumption/state-bene-2011.tsv') %>%
+  filter(state %in% known_states)
+state_cons = read_tsv('../../bene-consumption/state-consumption-2011.tsv') %>%
+  filter(state %in% known_states) %>%
+  rename(consumption_drug=drug)
+
+sus = bug_drug %>%
+  left_join(abg, by=c('bug', 'resistance_drug')) %>%
+  group_by(bug, resistance_drug, state) %>%
+  summarize(n_abg=n(),
+            n_isolates=sum(n_isolates, na.rm=TRUE),
+            mean_sus=mean(percent_susceptible, na.rm=TRUE))
+```
+
+```{r run_models}
+safe_spearman = function(df, expl) {
+  if (dim(df)[1] < 3L) {
+    data_frame(estimate=NA, statistic=NA, p.value=NA, method=NA, alternative=NA)
+  } else {
+    cor.test(df[['mean_sus']], df[[expl]], method='spearman') %>% tidy
+  }
+}
+
+models = function(df) {
+  out = data_frame()
+  for (expl in c('claims_per_1k_ppl', 'did')) {
+    new_rows = safe_spearman(df, expl) %>% 
+      mutate(explanatory=expl)
+    
+    out = bind_rows(out, new_rows)
+  }
+  out
+}
+
+dat = sus %>%
+  left_join(bug_drug, by=c('bug', 'resistance_drug')) %>%
+  left_join(state_cons, by=c('state', 'consumption_drug')) %>%
+  group_by(bug, resistance_drug)
+
+res = dat %>%
+  do(models(.))
+```
+
+```{r echo=FALSE, message=FALSE}
+
+plot_f = function(this_bug, this_resistance_drug, this_explanatory, this_response) {
+  this_res = res %>%
+    filter(bug==this_bug, resistance_drug==this_resistance_drug, explanatory==this_explanatory, response==this_response)
+
+  if (dim(this_res)[1] != 1) stop('wrong number of rows')
+
+  z = this_res$correlation %>% head
+  p.value = this_res$p.value %>% head
+
+  plot_dat %>%
+    filter(bug==this_bug, resistance_drug==this_resistance_drug) %>%
+    ggplot(aes_string(this_explanatory, this_response)) +
+    geom_point() +
+    geom_smooth(method='lm', se=FALSE) +
+    theme_minimal() +
+    xlab(this_explanatory) +
+    ylab(this_response) +
+    ggtitle(sprintf('%s susceptibility to %s', this_bug, this_resistance_drug))
+}
+```
+
+```{r}
+res %>%
+  head %>%
+  select(bug, resistance_drug, explanatory, correlation=estimate, p.value) %>%
+  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
+  kable
+```
