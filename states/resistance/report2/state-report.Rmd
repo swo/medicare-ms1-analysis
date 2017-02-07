@@ -115,7 +115,7 @@ for (i in 1:nrow(res)) {
   p = plot_dat %>%
     filter(bug==row$bug, consumption_drug==row$consumption_drug) %>%
     ggplot(aes_string(row$explanatory, 'percent_susceptible')) +
-    geom_point() +
+    geom_point(shape=1) +
     xlab(row$explanatory) +
     ylab('percent susceptible') +
     theme_minimal()
@@ -124,7 +124,9 @@ for (i in 1:nrow(res)) {
 }
 ```
 
-```{r display_results}
+The column `state_coherent` means that the variance in susceptibilities of the bug to the resistance drug reported in antibiograms was significantly improved by dividing the antibiogram records into states. The column `explanatory` is the explanatory variable in the Spearman correlation: either claims per 1,000 people or DID (days of drug per 1,000 people per day).
+
+```{r display_results, echo=FALSE}
 res %>%
   mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
   select(bug, consumption_drug, resistance_drug,
