@@ -1,13 +1,16 @@
 #!/usr/bin/env Rscript
 
+library(lubridate)
+
 # create summary beneficiary x abx file
 
 codes = read_tsv('../db/proc/code-map.txt', col_names=c('ndc', 'abx'))
 
-load_abxpde = function(fn) {
+load_abxpde = function(fn, expected_year) {
   read_tsv(fn) %>%
-    rename(bene=BENE_ID, ndc=PRDSRVID, days=DAYSSPLY) %>%
-    mutate(days=as.integer(days)) %>%
+    rename(bene=BENE_ID, service_date=SRVC_DT, ndc=PRDSRVID, days=DAYSSPLY) %>%
+    mutate(service_date=dmy(service_date), days=as.integer(days)) %>%
+    filter(year(service_date) == expected_year) %>%
     left_join(codes, by='ndc') %>%
     filter(!is.na(abx)) %>%
     select(bene, abx, days)
@@ -47,7 +50,7 @@ summarize_year = function(year) {
   wide_out_fn = sprintf('bene-abx-%s.tsv', year)
 
   bene = load_bene(bene_in_fn)
-  abxpde = load_abxpde(abx_in_fn)
+  abxpde = load_abxpde(abx_in_fn, expected_year=as.integer(year))
 
   year_col = sprintf('y%s', year)
   chronic = all_chronic %>%
