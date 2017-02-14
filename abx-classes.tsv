@@ -1,87 +1,87 @@
-abx	abx_class
-trimethoprim-sulfamethoxazole	sulfonamide
-ciprofloxacin	quinolone
-nitrofurantoin	nitrofurantoin
-doxycycline	tetracycline
-azithromycin	macrolide
-cephalexin	cephalosporin-gen1
-amoxicillin	penicillin
-amoxicillin-clavulanate	penicillin
-levofloxacin	quinolone
-clindamycin	lincosamide
-metronidazole	metronidazole
-minocycline	tetracycline
-tetracycline	tetracycline
-trimethoprim	trimethoprim
-cefuroxime	cephalosporin-gen2plus
-penicillin	penicillin
-clarithromycin	macrolide
-moxifloxacin	quinolone
-methenamine	methenamine
-cefdinir	cephalosporin-gen2plus
-erythromycin	macrolide
-rifaximin	rifamycin
-vancomycin	glycopeptide
-rifampin	rifamycin
-cefadroxil	cephalosporin-gen1
-isoniazid	antimycobacterial
-ampicillin	penicillin
-ethambutol	antimycobacterial
-ceftriaxone	cephalosporin-gen2plus
-demeclocycline	tetracycline
-cefpodoxime	cephalosporin-gen2plus
-dicloxacillin	penicillin
-cefprozil	cephalosporin-gen2plus
-neomycin	aminoglycoside
-linezolid	linezolid
-gentamicin	aminoglycoside
-cefaclor	cephalosporin-gen2plus
-ertapenem	carbapenem
-cefepime	cephalosporin-gen2plus
-tobramycin	aminoglycoside
-daptomycin	lipopeptide
-piperacillin-tazobactam	penicillin
-rifabutin	antimycobacterial
-cefixime	cephalosporin-gen2plus
-cefazolin	cephalosporin-gen1
-norfloxacin	quinolone
-ceftazidime	cephalosporin-gen2plus
-pyrazinamide	antimycobacterial
-meropenem	carbapenem
-imipenem-cilastatin	carbapenem
-sulfadiazine	sulfonamide
-metronidazole-tetracycline	tetracycline
-tigecycline	glycylcycline
-ofloxacin	quinolone
-fosfomycin	fosfomycin
-nafcillin	penicillin
-amikacin	aminoglycoside
-cefditoren	cephalosporin-gen2plus
-colistimethate	polymyxin
-doribax	carbapenem
-ampicillin-sulbactam	penicillin
-aztreonam	aztreonam
-gemifloxacin	quinolone
-polymyxin_b	polymyxin
-oxacillin	penicillin
-fidaxomicin	fidaxomicin
-ceftibuten	cephalosporin-gen2plus
-cefoxitin	cephalosporin-gen2plus
-telithromycin	macrolide
-bacitracin	bacitracin
-teflaro	cephalosporin-gen2plus
-telavancin	glycopeptide
-cefotaxime	cephalosporin-gen2plus
-lincomycin	lincosamide
-rifampin-isoniazid	antimycobacterial
-erythromycin-sulfisoxazole	macrolide
-streptomycin	aminoglycoside
-cefotetan	cephalosporin-gen2plus
-sulfacetamide	sulfonamide
-rifapentine	antimycobacterial
-seromycin	antimycobacterial
-ticarcillin-clavulanate	penicillin
-quinupristin-dalfopristin	streptogramin
-rifampin-isoniazid-pyrazinamide	antimycobacterial
-chloramphenicol	amphenicol
-piperacillin	penicillin
+abx	abx_class_specific	abx_class
+trimethoprim-sulfamethoxazole	sulfonamide	sulfonamide
+ciprofloxacin	quinolone	quinolone
+nitrofurantoin	nitrofurantoin	nitrofurantoin
+doxycycline	tetracycline	tetracycline
+azithromycin	macrolide	macrolide
+cephalexin	cephalosporin-gen1	cephalosporin
+amoxicillin	penicillin	penicillin
+amoxicillin-clavulanate	penicillin	penicillin
+levofloxacin	quinolone	quinolone
+clindamycin	lincosamide	lincosamide
+metronidazole	metronidazole	metronidazole
+minocycline	tetracycline	tetracycline
+tetracycline	tetracycline	tetracycline
+trimethoprim	trimethoprim	trimethoprim
+cefuroxime	cephalosporin-gen2plus	cephalosporin
+penicillin	penicillin	penicillin
+clarithromycin	macrolide	macrolide
+moxifloxacin	quinolone	quinolone
+methenamine	methenamine	methenamine
+cefdinir	cephalosporin-gen2plus	cephalosporin
+erythromycin	macrolide	macrolide
+rifaximin	rifamycin	rifamycin
+vancomycin	glycopeptide	glycopeptide
+rifampin	rifamycin	rifamycin
+cefadroxil	cephalosporin-gen1	cephalosporin
+isoniazid	antimycobacterial	antimycobacterial
+ampicillin	penicillin	penicillin
+ethambutol	antimycobacterial	antimycobacterial
+ceftriaxone	cephalosporin-gen2plus	cephalosporin
+demeclocycline	tetracycline	tetracycline
+cefpodoxime	cephalosporin-gen2plus	cephalosporin
+dicloxacillin	penicillin	penicillin
+cefprozil	cephalosporin-gen2plus	cephalosporin
+neomycin	aminoglycoside	aminoglycoside
+linezolid	linezolid	linezolid
+gentamicin	aminoglycoside	aminoglycoside
+cefaclor	cephalosporin-gen2plus	cephalosporin
+ertapenem	carbapenem	carbapenem
+cefepime	cephalosporin-gen2plus	cephalosporin
+tobramycin	aminoglycoside	aminoglycoside
+daptomycin	lipopeptide	lipopeptide
+piperacillin-tazobactam	penicillin	penicillin
+rifabutin	antimycobacterial	antimycobacterial
+cefixime	cephalosporin-gen2plus	cephalosporin
+cefazolin	cephalosporin-gen1	cephalosporin
+norfloxacin	quinolone	quinolone
+ceftazidime	cephalosporin-gen2plus	cephalosporin
+pyrazinamide	antimycobacterial	antimycobacterial
+meropenem	carbapenem	carbapenem
+imipenem-cilastatin	carbapenem	carbapenem
+sulfadiazine	sulfonamide	sulfonamide
+metronidazole-tetracycline	tetracycline	tetracycline
+tigecycline	glycylcycline	glycylcycline
+ofloxacin	quinolone	quinolone
+fosfomycin	fosfomycin	fosfomycin
+nafcillin	penicillin	penicillin
+amikacin	aminoglycoside	aminoglycoside
+cefditoren	cephalosporin-gen2plus	cephalosporin
+colistimethate	polymyxin	polymyxin
+doribax	carbapenem	carbapenem
+ampicillin-sulbactam	penicillin	penicillin
+aztreonam	aztreonam	aztreonam
+gemifloxacin	quinolone	quinolone
+polymyxin_b	polymyxin	polymyxin
+oxacillin	penicillin	penicillin
+fidaxomicin	fidaxomicin	fidaxomicin
+ceftibuten	cephalosporin-gen2plus	cephalosporin
+cefoxitin	cephalosporin-gen2plus	cephalosporin
+telithromycin	macrolide	macrolide
+bacitracin	bacitracin	bacitracin
+teflaro	cephalosporin-gen2plus	cephalosporin
+telavancin	glycopeptide	glycopeptide
+cefotaxime	cephalosporin-gen2plus	cephalosporin
+lincomycin	lincosamide	lincosamide
+rifampin-isoniazid	antimycobacterial	antimycobacterial
+erythromycin-sulfisoxazole	macrolide	macrolide
+streptomycin	aminoglycoside	aminoglycoside
+cefotetan	cephalosporin-gen2plus	cephalosporin
+sulfacetamide	sulfonamide	sulfonamide
+rifapentine	antimycobacterial	antimycobacterial
+seromycin	antimycobacterial	antimycobacterial
+ticarcillin-clavulanate	penicillin	penicillin
+quinupristin-dalfopristin	streptogramin	streptogramin
+rifampin-isoniazid-pyrazinamide	antimycobacterial	antimycobacterial
+chloramphenicol	amphenicol	amphenicol
+piperacillin	penicillin	penicillin
