@@ -1,0 +1,79 @@
+---
+title: "Seasonal patterns for azithromycin across states"
+author: "Scott Olesen"
+date: "2/15/2017"
+output: html_document
+---
+
+# Motivation
+
+Azithromycin has a seasonal pattern in prescriptions. Does that pattern vary by geography? I used the Medicare data.
+
+```{r load_data, echo=FALSE, message=FALSE}
+dat2011 = read_tsv('../temporal-abx-2011.tsv')
+
+full_dat = lapply(2011:2014, function(x) { read_tsv(sprintf('../temporal-abx-%i.tsv', x)) %>% mutate(year=x) }) %>%
+  bind_rows()
+```
+
+# Data
+
+By eye, it looks like the peak in consumption is similar across states (it occurs just after New Year's), and the minimum occurs at around the same time (weeks 27-36, which are the months of July and August).
+
+```{r plot_azithro_two_states, echo=FALSE}
+tick_labels = seq(1, 52) %>% { if_else(. %% 2 == 1, as.character(.), '') }
+dat2011 %>%
+  filter(abx == 'azithromycin', state %in% c('Florida', 'New York', 'Texas', 'California', 'Michigan'), week < 53.0) %>%
+  ggplot(aes(x=factor(week), y=n_rx, group=state, color=state)) +
+  geom_point() + geom_line() +
+  xlab('week of year 2011') + ylab('# of claims') +
+  scale_x_discrete(labels=tick_labels) +
+  theme_minimal() +
+  ggtitle('Azithromycin claims across states in 2011')
+```
+
+The pattern within a state looks fairly consistent across years
+
+```{r plot_azithro_years, echo=FALSE}
+full_dat %>%
+  filter(abx == 'azithromycin', state == 'Florida', week < 53.0) %>%
+  mutate(year=factor(year)) %>%
+  ggplot(aes(x=factor(week), y=n_rx, group=year, color=year)) +
+  geom_point() + geom_line() +
+  xlab('week of year') + ylab('# of claims') +
+  scale_x_discrete(labels=tick_labels) +
+  theme_minimal() +
+  ggtitle('Azithromycin claims in Florida across years')
+```
+
+I wrote a function to find the time until the number of prescriptions falls by half. Specifically, I:
+
+- fit a smoothed spline (loess) to timepoints between weeks a start week and end week
+- find the mean value between the predicted (i.e., the spline's values) for between the start and end weeks
+- find the time at which the spline hits that value
+
+```{r midpoint_function}
+start_week = 5 # after the fast dropoff from New Years
+end_week = 27 # just before the July/August lull
+
+midpoint_time = function(n_rx, week) {
+  f = loess(n_rx ~ week)
+  midval = mean(c(predict(f, start_week), predict(f, end_week)))
+  uniroot(function(x) predict(f, x) - midval, c(start_week, end_week))$root
+}
+```
+
+It looks like there is some relationship between geography and midpoint week: in the northernmost states, consumption falls to half about 5 weeks after the southernmost states. The values are super-beautiful, but the metric I used to measure them is pretty janky.
+
+```{r show_midpoints, echo=FALSE}
+library(knitr)
+
+full_dat %>%
+  filter(abx == 'azithromycin', state %in% c('Florida', 'New York', 'Texas', 'California', 'Michigan', 'North Dakota', 'Mississippi'), week <= end_week) %>%
+  group_by(year, state) %>%
+  summarize(midpoint_time=midpoint_time(n_rx, week)) %>%
+  mutate(midpoint_time=round(midpoint_time, 1)) %>%
+  spread(year, midpoint_time) %>%
+  arrange(desc(`2011`)) %>%
+  kable
+```
