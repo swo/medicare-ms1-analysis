@@ -1,5 +1,5 @@
 ---
-title: "Seasonal patterns for azithromycin across states"
+title: "Seasonal patterns across states"
 author: "Scott Olesen"
 date: "2/15/2017"
 output: html_document
@@ -7,22 +7,27 @@ output: html_document
 
 # Motivation
 
-Azithromycin has a seasonal pattern in prescriptions. Does that pattern vary by geography? I used the Medicare data.
+Azithromycin has a seasonal pattern in prescriptions. Does that pattern vary by geography? What about for other drugs, like ciprofloxacin or tetracycline?
+
+# Data
+
+I used the Medicare data.
 
 ```{r load_data, echo=FALSE, message=FALSE}
-dat2011 = read_tsv('../temporal-abx-2011.tsv')
-
-full_dat = lapply(2011:2014, function(x) { read_tsv(sprintf('../temporal-abx-%i.tsv', x)) %>% mutate(year=x) }) %>%
+dat = lapply(2011:2014, function(x) { read_tsv(sprintf('../temporal-abx-%i.tsv', x)) %>% mutate(year=x) }) %>%
   bind_rows()
 ```
 
-# Data
+# Results
+
+## Azithromycin
 
 By eye, it looks like the peak in consumption is similar across states (it occurs just after New Year's), and the minimum occurs at around the same time (weeks 27-36, which are the months of July and August).
 
 ```{r plot_azithro_two_states, echo=FALSE}
 tick_labels = seq(1, 52) %>% { if_else(. %% 2 == 1, as.character(.), '') }
-dat2011 %>%
+dat %>%
+  filter(year == 2011) %>%
   filter(abx == 'azithromycin', state %in% c('Florida', 'New York', 'Texas', 'California', 'Michigan'), week < 53.0) %>%
   ggplot(aes(x=factor(week), y=n_rx, group=state, color=state)) +
   geom_point() + geom_line() +
@@ -35,7 +40,7 @@ dat2011 %>%
 The pattern within a state looks fairly consistent across years
 
 ```{r plot_azithro_years, echo=FALSE}
-full_dat %>%
+dat %>%
   filter(abx == 'azithromycin', state == 'Florida', week < 53.0) %>%
   mutate(year=factor(year)) %>%
   ggplot(aes(x=factor(week), y=n_rx, group=year, color=year)) +
@@ -68,7 +73,7 @@ It looks like there is some relationship between geography and midpoint week: in
 ```{r show_midpoints, echo=FALSE}
 library(knitr)
 
-full_dat %>%
+dat %>%
   filter(abx == 'azithromycin', state %in% c('Florida', 'New York', 'Texas', 'California', 'Michigan', 'North Dakota', 'Mississippi'), week <= end_week) %>%
   group_by(year, state) %>%
   summarize(midpoint_time=midpoint_time(n_rx, week)) %>%
@@ -76,4 +81,48 @@ full_dat %>%
   spread(year, midpoint_time) %>%
   arrange(desc(`2011`)) %>%
   kable
+```
+
+## Tetracycline
+
+There are multiple drugs with the substring "cycline". I grouped the consumption of these together for this analysis.
+
+```{r tetracycline_names, echo=FALSE}
+library(stringr)
+tetracyclines = dat$abx %>% unique %>% { .[str_detect(., 'cycline')] }
+tetracyclines
+```
+
+Tetracycline does appear to have some seasonal patterns, but they apparently differ by states: in California, Florida, and Texas (southern states), they are prescribed more in winter than in summer (although the seasonal variation seems to be around half as large as for azithromycin). In New York and Michigan (northern states), tetracycline claims appear to peak in the fall.
+
+```{r tetracycline_seasonality, echo=FALSE}
+dat %>%
+  filter(year == 2011) %>%
+  # group all the tetracyclines together
+  filter(abx %in% tetracyclines) %>%
+  group_by(week, state) %>%
+  summarize(n_rx=sum(n_rx)) %>%
+  filter(state %in% c('Florida', 'New York', 'Texas', 'California', 'Michigan'), week < 53.0) %>%
+  ggplot(aes(x=factor(week), y=n_rx, group=state, color=state)) +
+  geom_point() + geom_line() +
+  xlab('week of year 2011') + ylab('# of claims') +
+  scale_x_discrete(labels=tick_labels) +
+  theme_minimal() +
+  ggtitle('Tetracycline (etc.) claims across states in 2011')
+```
+
+## Ciprofloxacin
+
+For comparison, I also reproduced the plots for ciprofloxacin claims. These appear flat.
+
+```{r cipro_seasonality, echo=FALSE}
+dat %>%
+  filter(year == 2011) %>%
+  filter(abx=='ciprofloxacin', state %in% c('Florida', 'New York', 'Texas', 'California', 'Michigan'), week < 53.0) %>%
+  ggplot(aes(x=factor(week), y=n_rx, group=state, color=state)) +
+  geom_point() + geom_line() +
+  xlab('week of year 2011') + ylab('# of claims') +
+  scale_x_discrete(labels=tick_labels) +
+  theme_minimal() +
+  ggtitle('Cipro claims across states in 2011')
 ```
