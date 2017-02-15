@@ -126,7 +126,7 @@ data_2013 = analyze(2013)
 data_2014 = analyze(2014)
 ```
 
-```{r arrange_data}
+```{r arrange_data, echo=FALSE}
 library(knitr)
 data = list("2011"=data_2011,
             "2012"=data_2012,
