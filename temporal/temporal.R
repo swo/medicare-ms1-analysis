@@ -30,24 +30,21 @@ load_bene = function(fn) {
 }
 
 analyze = function(year) {
-  abx_in_fn = sprintf('../../data/abx_pde_%s.tsv', year)
-  bene_in_fn = sprintf('../bene-%s.tsv', year)
-  out_fn = sprintf('temporal-abx-%s.tsv', year)
-  
+  abx_in_fn = sprintf('../../data/abx_pde_%i.tsv', year)
+  bene_in_fn = sprintf('../bene-%i.tsv', year)
+  out_fn = sprintf('temporal-abx-%i.tsv', year)
+
   abx = load_abxpde(abx_in_fn)
   bene = load_bene(bene_in_fn)
-  
+
   dat = abx %>%
     left_join(bene, by='bene') %>%
-    filter(!is.na(state), !is.na(week)) %>%
+    filter(!is.na(state), !is.na(week), year(date) == year) %>%
     group_by(week, state, abx) %>%
     summarize(n_rx=n(), n_days=sum(days)) %>%
     ungroup
-  
+
   write_tsv(dat, out_fn)
 }
 
-analyze('2011')
-analyze('2012')
-analyze('2013')
-analyze('2014')
+for (y in 2011:2014) analyze(y)
