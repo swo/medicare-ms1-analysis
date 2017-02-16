@@ -1,0 +1,152 @@
+---
+title: "PDE special days"
+author: "Scott Olesen"
+date: "2/16/2017"
+output: html_document
+---
+
+The PDE data has funny bumps and wiggles. I think these are due to things like the start of the month or holidays.
+
+# Data
+
+Using SAS on the cluster, I collected the counts for each unique date among all the PDEs.
+
+# Results
+
+```{r load_data, message=FALSE, echo=FALSE}
+library(lubridate)
+library(knitr)
+dow_levels = c('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')
+d11 = read_tsv('pde_date_counts_2011.tsv') %>%
+  mutate(date=dmy(date)) %>%
+  mutate(week_n=week(date)) %>%
+  mutate(day_of_week=date %>% weekdays %>% factor(levels=dow_levels, ordered=TRUE)) %>%
+  group_by(day_of_week) %>%
+  mutate(day_of_week_z_score=as.vector(scale(count))) %>%
+  ungroup()
+```
+
+There is a clear pattern by day:
+```{r plot_days}
+d11 %>%
+  ggplot(aes(x=date, y=count)) +
+  geom_line() + geom_point() +
+  xlab('day of the year 2011') + ylab('PDEs on that day') +
+  theme_minimal()
+```
+
+It looks like there are a few things going on in that day:
+
+- a fast, weekly rhythm
+- a slower, monthly rhythm
+- a few weirdly low points
+
+# Patterns within a week
+
+It looks like there is a pattern within each week:
+```{r plot_weekday, echo=FALSE}
+d11 %>%
+  ggplot(aes(x=day_of_week, y=count)) +
+  geom_boxplot() +
+  xlab('') + ylab('PDEs on that day') +
+  theme_minimal()
+```
+
+Some of these days fall outside the normal range. For example, there are three or four Mondays and one Thursday that fall far below the normal range.
+```{r outliers_plot, echo=FALSE}
+d11 %>%
+  ggplot(aes(x=day_of_week, y=day_of_week_z_score)) +
+  geom_boxplot() +
+  xlab('day of week') + ylab('z score (within the week)') +
+  theme_minimal()
+```
+
+Which days are the ones that have large z-scores?
+```{r outliers}
+d11 %>%
+  select(day_of_week, date, day_of_week_z_score) %>%
+  filter(abs(day_of_week_z_score) >= 2) %>%
+  arrange(day_of_week) %>%
+  kable
+```
+
+The dates with abnormally low numbers were:
+
+- April 24 (Easter Sunday)
+- May 30 (Memorial Day)
+- July 4
+- September 5 (Labor Day)
+- November 24 (Thanksgiving)
+- December 24 (Christmas Eve)
+- December 25 (Christmas)
+
+The dates with abnormally high numbers of PDEs were all the first of the month or the first work day after a holiday:
+
+- January 2 (the Sunday after New Year's)
+- January 3 (the first Monday after New Year's)
+- April 1 (Friday)
+- May 1 (Sunday)
+- May 31 (the Tuesday after Memorial Day Monday)
+- June 1 (Wednesday)
+- July 1 (Friday)
+- July 5 (the Tuesday after July 4 Monday)
+- September 1 (Thursday)
+- September 6 (the Tuesday after Labor Day Monday)
+- October 1 (Saturday)
+- December 1 (Thursday)
+
+The first-of-months that are missing from this list are all Mondays and Tuesdays (i.e., otherwise busy days):
+
+- February 1 (Tuesday)
+- March 1 (Tuesday)
+- August 1 (Monday)
+- November 1 (Tuesday)
+
+# Patterns across weeks
+
+There is variation week-to-week:
+```{r plot_week}
+d11 %>%
+  group_by(week_n) %>%
+  summarize(count=sum(count)) %>%
+  ggplot(aes(x=week_n, y=count)) +
+  geom_point() + geom_line() +
+  xlab('week of year 2011') + ylab('count') +
+  theme_minimal()
+```
+
+The most obvious features are the weird last week and an apparently monthly pattern.
+
+The last week is weird because it has only one day in it:
+```{r last_week}
+d11 %>% filter(week_n==53)
+```
+
+# Patterns across months
+
+What about the monthly pattern? Which are the weeks that 
+```{r exceptional_weeks}
+summarize_week = function(x) {
+  data_frame(start_day=min(x$date),
+             end_day=max(x$date),
+             count=sum(x$count))
+}
+  
+d11 %>%
+  group_by(week_n) %>%
+  do(summarize_week(.)) %>%
+  ungroup() %>%
+  mutate(week_z_score=as.vector(scale(count))) %>%
+  filter(abs(week_z_score) > 0.25) %>%
+  arrange(week_z_score) %>%
+  kable
+```
+
+The three lowest weeks are the weird last day, the week of Thanksgiving, and the week of Christmas. The highest weeks are:
+
+- first week of December
+- first week of January
+- first week of March
+- first week of October
+
+and so forth.
