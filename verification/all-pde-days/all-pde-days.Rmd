@@ -27,7 +27,7 @@ d11 = read_tsv('pde_date_counts_2011.tsv') %>%
 ```
 
 There is a clear pattern by day:
-```{r plot_days}
+```{r plot_days, echo=FALSE}
 d11 %>%
   ggplot(aes(x=date, y=count)) +
   geom_line() + geom_point() +
@@ -62,7 +62,7 @@ d11 %>%
 ```
 
 Which days are the ones that have large z-scores?
-```{r outliers}
+```{r outliers, echo=FALSE}
 d11 %>%
   select(day_of_week, date, day_of_week_z_score) %>%
   filter(abs(day_of_week_z_score) >= 2) %>%
@@ -150,3 +150,33 @@ The three lowest weeks are the weird last day, the week of Thanksgiving, and the
 - first week of October
 
 and so forth.
+
+# 2012
+
+Was there something weird happening in 2012?
+
+```{r load_2012}
+d12 = read_tsv('pde_date_counts_2012.tsv') %>%
+  mutate(date=dmy(date)) %>%
+  mutate(week_n=week(date)) %>%
+  mutate(day_of_week=date %>% weekdays %>% factor(levels=dow_levels, ordered=TRUE)) %>%
+  group_by(day_of_week) %>%
+  mutate(day_of_week_z_score=as.vector(scale(count))) %>%
+  ungroup()
+```
+
+```{r plot_2012_days}
+d12 %>%
+  ggplot(aes(x=date, y=count)) +
+  geom_point() + geom_line() +
+  theme_minimal()
+```
+
+```{r}
+
+bind_rows(d11 %>% mutate(data_year=2011),
+          d12 %>% mutate(data_year=2012)) %>%
+  mutate(data_year=factor(data_year)) %>%
+  ggplot(aes(x=date, y=count, color=data_year, group=data_year)) +
+  geom_point() + geom_line()
+```

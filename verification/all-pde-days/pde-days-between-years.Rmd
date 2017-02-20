@@ -1,0 +1,85 @@
+---
+title: "PDEs between years"
+author: "Scott Olesen"
+date: "2/19/2017"
+output: html_document
+---
+
+```{r load_data, message=FALSE, echo=FALSE}
+library(lubridate)
+library(knitr)
+
+read_data = function(fn) {
+  read_tsv(fn) %>%
+    mutate(date=dmy(date)) %>%
+    mutate(week_n=week(date))
+}
+
+read_data_year = function(y) {
+  sprintf('pde_date_counts_%i.tsv', y) %>%
+    read_data() %>%
+    mutate(data_year=y)
+}
+
+sum_by_week = function(x) {
+  data_frame(count=sum(x$count),
+             date=head(x$date, 1))
+}
+
+dat = 2011:2014 %>%
+  lapply(read_data_year) %>%
+  bind_rows() %>%
+  mutate(data_year=factor(data_year)) %>%
+  group_by(data_year, year(date), week_n) %>%
+  do(sum_by_week(.)) %>%
+  ungroup
+```
+
+The Medicare data on the server contains Medicare Part D data for 2011 through 2014. I've been focusing on analyzing this data, especially in the files ``pdesaf2011.sas7bdat`` through ``pdesaf2014.sas7bdat``. These files contain the Part D events (PDEs), which are individual prescription drug claim records.
+
+It seems like there is something wrong with the 2012 data. I'm hoping you can help me understand what is going on.
+
+First, I noticed that the number of PDEs is greater in the 2012 data than in the other years:
+
+<style type="text/css">
+.table {
+    width: 40%;
+}
+</style>
+
+```{r counts_table, echo=FALSE}
+dat %>%
+  group_by(data_year) %>%
+  summarize(n=sum(count)) %>%
+  mutate(n=round(n/1e6, 1)) %>%
+  rename(`data year`=data_year, `number of PDEs (millions)`=n) %>%
+  kable(align='l')
+```
+
+This makes it seem like there were many more claims in 2012 than in the other years. However, the 2012 data file includes claims from 2011.
+
+```{r plot_days, echo=FALSE}
+dat %>%
+  filter(week_n < 53) %>%
+  ggplot(aes(x=date, y=count, group=data_year, color=data_year)) +
+  geom_line() + geom_point() +
+  ylab('PDEs in that week') +
+  theme_minimal()
+```
+
+This plot shows the number of PDEs that occurred during each week, colored by the year of the data file. The 2012 data file (``pdesaf2012.sas7bdat``) contains claims information for both 2011 and 2011, while the other three files only contain claims from their years.
+
+Furthermore, the number of claims in the 2012 data doesn't match up with the number of claims from the other years. The 2013 and 2014 data match up nicely, but it looks like there are missing claims for 2012.
+
+```{r compute_mean_missing, echo=FALSE}
+mean_missing_percent = dat %>%
+  filter(year(date) == 2011) %>%
+  select(date, count, data_year) %>%
+  spread(data_year, count) %>%
+  mutate(f=`2011`/`2012`) %$%
+  mean(f) %>%
+  { (. - 1) * 100 } %>% round
+```
+
+To see how many claims are "missing", I looked at PDEs from 2011. In the 2011 data file, there are on average `r mean_missing_percent`% more claims in the 2011 data file than in the 2012 data file. I'm not sure what this means. Do we have a 20% sample for the 2011, 2013, and 2014 data but only a 15% sample for the 2012 data (such that the 2011 data has $20/15 = 4/3$ fold, or 33% more, claims as the 2012 data)?
+

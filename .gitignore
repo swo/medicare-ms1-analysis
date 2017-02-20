@@ -1,5 +1,7 @@
 old/
 img/
+*_files/
+*_cache/
 *.tsv
 *.tar.gz
 *.html
