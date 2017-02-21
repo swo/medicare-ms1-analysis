@@ -56,7 +56,7 @@ CIPROFLOXACIN LACTATE/D5W	quinolone
 CIPROFLOXACIN/CIPROFLOXA HCL	quinolone
 CIPROFLOXACIN/HYDROCORTISONE	quinolone
 CLARITHROMYCIN	macrolide
-CLINDAMYCIN HCL	lincosamide
+CLINDAMYCIN HCL	lincosamide_streptogramin_phenicol_pleuromutilin
 CLINDAMYCIN PALMITATE HCL	lincosamide_streptogramin_phenicol_pleuromutilin
 CLINDAMYCIN PHOS/BENZOYL PEROX	lincosamide_streptogramin_phenicol_pleuromutilin
 CLINDAMYCIN PHOS/SKIN CLNSR 19	lincosamide_streptogramin_phenicol_pleuromutilin
@@ -97,7 +97,7 @@ KANAMYCIN SULFATE	aminoglycoside
 LANSOPRAZOLE/AMOXICILN/CLARITH	macrolide
 LEVOFLOXACIN	quinolone
 LEVOFLOXACIN/D5W	quinolone
-LEVOFLOXACIN/DEXTROSE 5%-WATE	quinoloneR
+LEVOFLOXACIN/DEXTROSE 5%-WATER	quinolone
 LINCOMYCIN HCL	lincosamide_streptogramin_phenicol_pleuromutilin
 LINEZOLID	oxazolidinone
 MEROPENEM	carbapenem
