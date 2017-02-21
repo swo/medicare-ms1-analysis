@@ -4,5 +4,7 @@ img/
 *_cache/
 *.tsv
 *.tar.gz
+*.7z
 *.html
 *.pdf
+*.sqlite
