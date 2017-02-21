@@ -68,7 +68,7 @@ drugs_by_code = pde11 %>%
   group_by(dosage_form_code) %>%
   do(head(., 3))
 
-codes_to_keep = scan('oral_injected_codes.txt')
+codes_to_keep = scan('oral_injected_codes.txt', what=character())
 
 drugs_by_code %>%
   mutate(keep_code=dosage_form_code %in% codes_to_keep) %>%
