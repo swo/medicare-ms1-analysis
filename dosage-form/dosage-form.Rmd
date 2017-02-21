@@ -68,13 +68,7 @@ drugs_by_code = pde11 %>%
   group_by(dosage_form_code) %>%
   do(head(., 3))
 
-codes_to_keep = c('AF', 'CA', 'CE', 'CJ', 'HH',
-                  'HK', 'HM', 'HP', 'HQ', 'HS',
-                  'HV', 'IF', 'IG', 'PD', 'PI',
-                  'PP', 'QI', 'RG', 'RH', 'SC',
-                  'SJ', 'SN', 'SO', 'ST', 'TA',
-                  'TC', 'TE', 'TM', 'TS', 'UP',
-                  'ZD')
+codes_to_keep = scan('oral_injected_codes.txt')
 
 drugs_by_code %>%
   mutate(keep_code=dosage_form_code %in% codes_to_keep) %>%
