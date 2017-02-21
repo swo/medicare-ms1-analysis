@@ -1,0 +1,83 @@
+---
+title: "Dosage forms in antibiotic PDEs"
+author: "Scott Olesen"
+date: "2/20/2017"
+output: html_document
+---
+
+```{r load_library, echo=FALSE}
+library(knitr)
+```
+
+```{r load_data, message=FALSE}
+dat = 2011:2014 %>%
+  lapply(function(y) read_tsv(sprintf('../abx_pde_%g.tsv', y)) %>%
+           select(dosage_form_code=GCDF, dosage_form_desc=GCDF_DESC) %>%
+           mutate(year=y)) %>%
+  bind_rows()
+```
+
+Most codes have a unique descriptions. There are a few exceptions:
+```{r code_desc}
+filter_repeated_block = function(x) {
+  if (nrow(x) == 1) {
+    data_frame()
+  } else {
+    x
+  }
+}
+
+dat %>%
+  select(dosage_form_code, dosage_form_desc) %>%
+  distinct %>%
+  group_by(dosage_form_code) %>%
+  do(filter_repeated_block(.)) %>%
+  arrange(dosage_form_code, dosage_form_desc) %>%
+  kable
+```
+
+I like the first of each of these sets, so that's the ones I'll keep.
+
+```{r codes_by_year}
+canonical_codes = dat %>%
+  select(dosage_form_code, dosage_form_desc) %>%
+  distinct %>%
+  arrange(dosage_form_code, dosage_form_desc) %>%
+  group_by(dosage_form_code) %>%
+  do(head(., 1))
+
+codes_by_year = dat %>%
+  select(dosage_form_code, year) %>%
+  group_by(year) %>%
+  count(dosage_form_code) %>%
+  spread(year, n) %>%
+  left_join(canonical_codes, by='dosage_form_code') %>%
+  arrange(desc(`2011`)) %>%
+  kable
+```
+
+Which ones of the codes should I keep? Let's consider, for each code, the top drugs that match that code. Of these, I should only keep some.
+
+```{r drugs_by_code, message=FALSE}
+pde11 = read_tsv('../abx_pde_2011.tsv')
+
+drugs_by_code = pde11 %>%
+  select(generic_name=GNN, dosage_form_code=GCDF) %>%
+  group_by(dosage_form_code) %>%
+  count(generic_name) %>%
+  group_by(dosage_form_code) %>%
+  do(head(., 3))
+
+codes_to_keep = c('AF', 'CA', 'CE', 'CJ', 'HH',
+                  'HK', 'HM', 'HP', 'HQ', 'HS',
+                  'HV', 'IF', 'IG', 'PD', 'PI',
+                  'PP', 'QI', 'RG', 'RH', 'SC',
+                  'SJ', 'SN', 'SO', 'ST', 'TA',
+                  'TC', 'TE', 'TM', 'TS', 'UP',
+                  'ZD')
+
+drugs_by_code %>%
+  mutate(keep_code=dosage_form_code %in% codes_to_keep) %>%
+  rename(`generic names of top drugs with that code`=generic_name) %>%
+  kable
+```
