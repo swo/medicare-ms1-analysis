@@ -8,7 +8,7 @@ output: html_document
 ```{r load_data, message=FALSE}
 dat = 2011:2014 %>%
   lapply(function(y) read_tsv(sprintf('../../data/pde_%i.tsv', y)) %>%
-           select(generic_name=GNN, dosage_form_code=GCDF, dosage_form_desc=GCDF_DESC) %>%
+           select(brand_name=BN, generic_name=GNN, dosage_form_code=GCDF, dosage_form_desc=GCDF_DESC) %>%
            mutate(year=y)) %>%
   bind_rows()
 ```
@@ -25,7 +25,8 @@ filter_repeated_block = function(x) {
 
 unique_combos = dat %>%
   select(dosage_form_code, dosage_form_desc) %>%
-  distinct
+  distinct %>%
+  arrange(dosage_form_code)
 
 unique_combos %>% kable
 ```
@@ -64,7 +65,7 @@ Which ones of the codes should I keep? Let's consider, for each code, the top dr
 
 drugs_by_code = dat %>%
   filter(year == 2011) %>%
-  select(generic_name, dosage_form_code) %>%
+  select(generic_name, brand_name, dosage_form_code) %>%
   group_by(dosage_form_code) %>%
   count(generic_name) %>%
   group_by(dosage_form_code) %>%
@@ -74,6 +75,5 @@ codes_to_keep = scan('oral_injected_codes.txt', what=character())
 
 drugs_by_code %>%
   mutate(keep_code=dosage_form_code %in% codes_to_keep) %>%
-  rename(`generic names of top drugs with that code`=generic_name) %>%
   kable
 ```
