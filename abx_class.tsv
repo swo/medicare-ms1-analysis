@@ -1,0 +1,177 @@
+drug	antibiotic_class
+AMIKACIN SULFATE	aminoglycoside
+AMOXICILLIN	penicillin
+AMOXICILLIN/POTASSIUM CLAV	penicillin
+AMPICILLIN SODIUM	penicillin
+AMPICILLIN SODIUM/SULBACTAM NA	penicillin
+AMPICILLIN TRIHYDRATE	penicillin
+AZITHROMYCIN	macrolide
+AZTREONAM	non-penicillin beta-lactam
+AZTREONAM LYSINE	non-penicillin beta-lactam
+AZTREONAM/DEXTROSE-WATER	non-penicillin beta-lactam
+BACITRACIN	bacitracin
+BACITRACIN/POLYMYXIN B SULFATE	bacitracin
+BEDAQUILINE FUMARATE	antimycobacterial
+BESIFLOXACIN HCL	fluoroquinolone
+BESIFLOXACIN HYDROCHLORIDE	fluoroquinolone
+BISMUTH SAL/METRONID/TETRACYC	tetracycline
+BISMUTH/METRONID/TETRACYCLINE	tetracycline
+CAPREOMYCIN SULFATE	antimycobacterial
+CEFACLOR	cephalosporin
+CEFADROXIL	cephalosporin
+CEFADROXIL HYDRATE	cephalosporin
+CEFAZOLIN SODIUM	cephalosporin
+CEFAZOLIN SODIUM/DEXTROSE,ISO	cephalosporin
+CEFDINIR	cephalosporin
+CEFDITOREN PIVOXIL	cephalosporin
+CEFEPIME HCL	cephalosporin
+CEFIXIME	cephalosporin
+CEFOTAXIME SODIUM	cephalosporin
+CEFOTETAN DISODIUM	cephalosporin
+CEFOXITIN SODIUM	cephalosporin
+CEFOXITIN SODIUM/DEXTROSE,ISO	cephalosporin
+CEFPODOXIME PROXETIL	cephalosporin
+CEFPROZIL	cephalosporin
+CEFTAROLINE FOSAMIL ACETATE	cephalosporin
+CEFTAZIDIME	cephalosporin
+CEFTAZIDIME IN DEXTROSE5%WATER	cephalosporin
+CEFTAZIDIME NA/DEXTROSE,ISO	cephalosporin
+CEFTAZIDIME PENTAHYDRATE	cephalosporin
+CEFTAZIDIME PENTAHYDRATE/D5W	cephalosporin
+CEFTIBUTEN DIHYDRATE	cephalosporin
+CEFTRIAXONE SODIUM	cephalosporin
+CEFUROXIME AXETIL	cephalosporin
+CEFUROXIME SODIUM	cephalosporin
+CEFUROXIME SODIUM/DEXTROSE,ISO	cephalosporin
+CEFUROXIME SODIUM/WATER	cephalosporin
+CEPHALEXIN	cephalosporin
+CHLORAMPHENICOL NA SUCC	lincosamide_streptogramin_phenicol_pleuromutilin
+CHLORAMPHENICOL SOD SUCC	lincosamide_streptogramin_phenicol_pleuromutilin
+CHLORHEXIDINE GLUCONATE	biguanide
+CIPROFLOXACIN	quinolone
+CIPROFLOXACIN HCL	quinolone
+CIPROFLOXACIN HCL/DEXAMETH	quinolone
+CIPROFLOXACIN LACTATE	quinolone
+CIPROFLOXACIN LACTATE/D5W	quinolone
+CIPROFLOXACIN/CIPROFLOXA HCL	quinolone
+CIPROFLOXACIN/HYDROCORTISONE	quinolone
+CLARITHROMYCIN	macrolide
+CLINDAMYCIN HCL	lincosamide
+CLINDAMYCIN PALMITATE HCL	lincosamide_streptogramin_phenicol_pleuromutilin
+CLINDAMYCIN PHOS/BENZOYL PEROX	lincosamide_streptogramin_phenicol_pleuromutilin
+CLINDAMYCIN PHOS/SKIN CLNSR 19	lincosamide_streptogramin_phenicol_pleuromutilin
+CLINDAMYCIN PHOSPHATE	lincosamide_streptogramin_phenicol_pleuromutilin
+CLINDAMYCIN PHOSPHATE/D5W	lincosamide_streptogramin_phenicol_pleuromutilin
+CLINDAMYCIN/BENZ PER/HYALUR NA	lincosamide_streptogramin_phenicol_pleuromutilin
+CLINDAMYCIN/TRETINOIN	lincosamide_streptogramin_phenicol_pleuromutilin
+COLISTIN (COLISTIMETHATE NA)	polymyxin
+CYCLOSERINE	antimycobacterial
+DAPTOMYCIN	lipopeptide
+DEMECLOCYCLINE HCL	tetracycline
+DICLOXACILLIN SODIUM	penicillin
+DORIPENEM	carbapenem
+DOXYCYCLINE CALCIUM	tetracycline
+DOXYCYCLINE HYCLATE	tetracycline
+DOXYCYCLINE MONOHYDRATE	tetracycline
+ERTAPENEM SODIUM	carbapenem
+ERY E-SUCC/SULFISOXAZOLE	macrolide
+ERYTHROMYCIN BASE	macrolide
+ERYTHROMYCIN BASE/ETHANOL	macrolide
+ERYTHROMYCIN ETHYLSUCCINATE	macrolide
+ERYTHROMYCIN LACTOBIONATE	macrolide
+ERYTHROMYCIN STEARATE	macrolide
+ERYTHROMYCIN/BENZOYL PEROXIDE	macrolide
+ETHAMBUTOL HCL	antimycobacterial
+ETHIONAMIDE	antimycobacterial
+FIDAXOMICIN	fidaxomicin
+FOSFOMYCIN TROMETHAMINE	fosfomycin
+GATIFLOXACIN	quinolone
+GEMIFLOXACIN MESYLATE	quinolone
+GENTAMICIN IN NACL, ISO-OSM	aminoglycoside
+GENTAMICIN SULFATE	aminoglycoside
+GENTAMICIN SULFATE/PF	aminoglycoside
+GENTAMICIN/PREDNISOL AC	aminoglycoside
+IMIPENEM/CILASTATIN SODIUM	carbapenem
+ISONIAZID	antimycobacterial
+KANAMYCIN SULFATE	aminoglycoside
+LANSOPRAZOLE/AMOXICILN/CLARITH	macrolide
+LEVOFLOXACIN	quinolone
+LEVOFLOXACIN/D5W	quinolone
+LEVOFLOXACIN/DEXTROSE 5%-WATE	quinoloneR
+LINCOMYCIN HCL	lincosamide_streptogramin_phenicol_pleuromutilin
+LINEZOLID	oxazolidinone
+MEROPENEM	carbapenem
+METRONIDAZOLE	imidazole
+METRONIDAZOLE/SODIUM CHLORIDE	imidazole
+MINOCYCLINE HCL	tetracycline
+MINOCYCLINE HCL/SKIN CL NO.4	tetracycline
+MOXIFLOXACIN HCL	quinolone
+MOXIFLOXACIN IN NACL (ISO-OSM)	quinolone
+NAFCILLIN IN DEXTROSE,ISO-OSM	penicillin
+NAFCILLIN SODIUM	penicillin
+NAFCILLIN SODIUM/D2.4W	penicillin
+NEO/POLYMYX B SULF/DEXAMETH	aminoglycoside
+NEOMY SULF/BACITRA/POLYMYXIN B	aminoglycoside
+NEOMY SULF/BACITRAC ZN/POLY/HC	aminoglycoside
+NEOMY SULF/COLIST SUL/HC/THONZ	aminoglycoside
+NEOMY SULF/POLYMYX B SULF/PRED	aminoglycoside
+NEOMY SULF/POLYMYXIN B SULFATE	aminoglycoside
+NEOMYCIN SULFATE	aminoglycoside
+NEOMYCIN SULFATE/FLUOCINOLONE	aminoglycoside
+NEOMYCIN/BACITRA/POLYMYXIN/HC	aminoglycoside
+NEOMYCIN/POLYMYXIN B SULF/HC	aminoglycoside
+NEOMYCIN/POLYMYXN B/GRAMICIDIN	aminoglycoside
+NITROFURANTOIN	nitrofurantoin
+NITROFURANTOIN MACROCRYSTAL	nitrofurantoin
+NITROFURANTOIN MONOHYD/M-CRYST	nitrofurantoin
+NORFLOXACIN	quinolone
+OFLOXACIN	quinolone
+OMEPRAZOLE/CLARITH/AMOXICILLIN	macrolide
+OXACILLIN SODIUM	penicillin
+OXACILLIN SODIUM/DEXTROSE,ISO	penicillin
+PAROMOMYCIN SULFATE	aminoglycoside
+PEN G BENZ/PEN G PROCAINE	penicillin
+PEN G POT/DEXTROSE-WATER	penicillin
+PENICILLIN G BENZATHINE	penicillin
+PENICILLIN G POTASSIUM	penicillin
+PENICILLIN G PROCAINE	penicillin
+PENICILLIN G SODIUM	penicillin
+PENICILLIN V POTASSIUM	penicillin
+PIPERACILLIN SODIUM	penicillin
+PIPERACILLIN SODIUM/TAZOBACTAM	penicillin
+PIPERACILLIN-TAZO-DEXTROSE,ISO	penicillin
+POLYMYXIN B SULF/TRIMETHOPRIM	polymyxin
+POLYMYXIN B SULFATE	polymyxin
+POLYMYXIN B SULFATE/TMP	polymyxin
+PYRAZINAMIDE	antimycobacterial
+QUINUPRISTIN/DALFOPRISTIN	lincosamide_streptogramin_phenicol_pleuromutilin
+RETAPAMULIN	lincosamide_streptogramin_phenicol_pleuromutilin
+RIFABUTIN	antimycobacterial
+RIFAMP/ISONIAZID/PYRAZINAMIDE	antimycobacterial
+RIFAMPIN	antimycobacterial
+RIFAMPIN/ISONIAZID	antimycobacterial
+RIFAMPIN/ISONIAZID/PYRAZINAMID	antimycobacterial
+RIFAPENTINE	antimycobacterial
+RIFAXIMIN	rifamycin
+STREPTOMYCIN SULFATE	aminoglycoside
+SULFACETAMIDE SODIUM	sulfonamide
+SULFACETAMIDE/PREDNISOLONE SP	sulfonamide
+SULFACETM NA/PREDNISOL AC	sulfonamide
+SULFADIAZINE	sulfonamide
+SULFAMETHOXAZOLE/TRIMETHOPRIM	sulfonamide
+TEDIZOLID PHOSPHATE	oxazolidinone
+TELAVANCIN HCL	glycopeptide
+TELITHROMYCIN	macrolide
+TETRACYCLINE HCL	tetracycline
+TICARCILLIN/K CLAVULANATE	penicillin
+TIGECYCLINE	tetracycline
+TINIDAZOLE	imidazole
+TOBRAMYCIN	aminoglycoside
+TOBRAMYCIN IN 0.225% NACL	aminoglycoside
+TOBRAMYCIN SULF/DEXAMETHASONE	aminoglycoside
+TOBRAMYCIN SULFATE	aminoglycoside
+TOBRAMYCIN/DEXAMETHASONE	aminoglycoside
+TOBRAMYCIN/LOTEPRED ETAB	aminoglycoside
+TOBRAMYCIN/SODIUM CHLORIDE	aminoglycoside
+TRIMETHOPRIM	trimethoprim
+VANCOMYCIN HCL	glycopeptide
