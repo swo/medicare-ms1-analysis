@@ -1,100 +1,40 @@
 #!/usr/bin/env Rscript
 
-library(lubridate)
-
 # create summary beneficiary x abx file
 
-codes = read_tsv('../db/proc/code-map.txt', col_names=c('ndc', 'abx'))
+# get the common chronic condition data
+all_chronic = read_tsv("../data/cc_all.tsv", col_types='cdddd') %>% 
+  #swo> hack for column name
+  rename(bene_id=bene)
 
-load_abxpde = function(fn, expected_year) {
-  read_tsv(fn) %>%
-    rename(bene=BENE_ID, service_date=SRVC_DT, ndc=PRDSRVID, days=DAYSSPLY) %>%
-    mutate(service_date=dmy(service_date), days=as.integer(days)) %>%
-    filter(year(service_date) == expected_year) %>%
-    left_join(codes, by='ndc') %>%
-    filter(!is.na(abx)) %>%
-    select(bene, abx, days)
-}
+summarize_year = function(year, n_max=Inf) {
+  bene_fn = sprintf('bene_%i.tsv', year)
+  pde_fn = sprintf('pde_%i.tsv', year)
+  usage_fn = sprintf('bene_usage_%i.tsv', year)
 
-load_bene = function(fn, n_max=Inf) {
-  # get and rearrange raw data
-  read_tsv(fn, n_max=n_max) %>%
-    # keep only the 5-digit zip
-    mutate(zip=substr(BENE_ZIP, 0, 5)) %>%
-    mutate(sex=as.character(factor(SEX, levels=c(0, 1, 2), labels=c('unknown', 'male', 'female')))) %>%
-    select(bene=BENE_ID, age=AGE, sex, zip,
-           race_code=RACE,
-           plan_coverage_months=PLNCOVMO) %>%
-    # merge by zipcode to get state
-    left_join(zipcodes, by='zip') %>%
-    # merge (and drop) race codes
-    left_join(race_codes, by='race_code') %>%
-    select(-race_code)
-}
-
-# load the database information
-county_codes = read_tsv("../db/state-county-codes/county-codes.tsv")
-zipcodes = read_tsv("../db/zipcode/zipcode.tsv") %>%
-  select(zip, state, state_abbrev)
-race_codes = read_tsv("../db/race-codes/race.tsv")
-
-# and get the common chronic condition data
-all_chronic = read_tsv("../data/cc_all.tsv", col_types='cdddd')
-
-summarize_year = function(year) {
-  bene_in_fn = sprintf('../data/bene_match_%s.txt', year)
-  abx_in_fn = sprintf('../data/abx_pde_%s.tsv', year)
-
-  bene_out_fn = sprintf('bene-%s.tsv', year)
-  abx_out_fn = sprintf('abx-pde-%s.tsv', year)
-  wide_out_fn = sprintf('bene-abx-%s.tsv', year)
-
-  bene = load_bene(bene_in_fn)
-  abxpde = load_abxpde(abx_in_fn, expected_year=as.integer(year))
-
-  year_col = sprintf('y%s', year)
+  year_column_name = sprintf('y%i', year)
   chronic = all_chronic %>%
-    select_('bene', year_col) %>%
-    rename_(.dots=setNames(year_col, 'chronic'))
+    select_('bene_id', year_column_name) %>%
+    rename_(.dots=setNames(year_column_name, 'chronic'))
 
-  bene %>%
-    left_join(chronic, by='bene') %>%
-    write_tsv(bene_out_fn)
+  bene = read_tsv(bene_fn, n_max=n_max) %>%
+    filter(!is.na(state), plan_coverage_months==12) %>%
+    left_join(chronic, by='bene_id')
+  #swo> filter for only those beneficiaries that appear in the chronic data?
 
-  # summarize information about each beneficiary
-  # (summarize over bene)
-  abxpde %<>%
-    group_by(bene, abx) %>%
-    summarize(n_claims=n(), days=sum(days))
+  pde = read_tsv(pde_fn, n_max=n_max) %>%
+    filter(year(service_date) == year) %>%
+    inner_join(bene %>% select(bene_id), by='bene_id') # keep only PDEs for beneficiaries we have
 
-  abxpde %>% write_tsv(abx_out_fn)
+  usage = pde %>%
+    group_by(bene_id, antibiotic) %>%
+    summarize(n_claims=n(), n_days=sum(days_supply)) %>%
+    gather('consumption_metric', 'consumption', n_claims:n_days) %T>%
+    { . %>% select(antibiotic) %>% distinct %>% write_tsv('tmp') } %>%
+    spread(antibiotic, consumption, fill=0) %>%
+    left_join(bene, by='bene_id')
 
-  # summary stats about beneficiaries
-  # (summarize again over abx for each bene)
-  bene_sum = abxpde %>%
-    summarize(n_claims=sum(n_claims), days=sum(days))
-
-  # convert to a wide abx pde
-  wap = abxpde %>%
-    ungroup() %>%
-    select(-n_claims) %>%
-    # spread to a wide format. use convert to ensure integers
-    spread(abx, days, fill=0, convert=TRUE)
-
-  # merge in the summary information
-  wap %<>% left_join(bene_sum, by='bene')
-
-  # merge in the information about the beneficiaries
-  wap %<>% left_join(bene, by='bene')
-
-  # merge in the information about the chronic conditions
-  wap %<>% left_join(chronic, by='bene')
-
-  # save this new file
-  write_tsv(wap, wide_out_fn)
+  write_tsv(usage, usage_fn)
 }
 
-summarize_year('2011')
-summarize_year('2012')
-summarize_year('2013')
-summarize_year('2014')
+for (y in 2011:2014) summarize_year(y)
