@@ -5,19 +5,15 @@ date: "2/20/2017"
 output: html_document
 ---
 
-```{r load_library, echo=FALSE}
-library(knitr)
-```
-
 ```{r load_data, message=FALSE}
 dat = 2011:2014 %>%
-  lapply(function(y) read_tsv(sprintf('../abx_pde_%g.tsv', y)) %>%
-           select(dosage_form_code=GCDF, dosage_form_desc=GCDF_DESC) %>%
+  lapply(function(y) read_tsv(sprintf('../../data/pde_%i.tsv', y)) %>%
+           select(generic_name=GNN, dosage_form_code=GCDF, dosage_form_desc=GCDF_DESC) %>%
            mutate(year=y)) %>%
   bind_rows()
 ```
 
-Most codes have a unique descriptions. There are a few exceptions:
+Most codes have a unique descriptions.
 ```{r code_desc}
 filter_repeated_block = function(x) {
   if (nrow(x) == 1) {
@@ -27,26 +23,32 @@ filter_repeated_block = function(x) {
   }
 }
 
-dat %>%
+unique_combos = dat %>%
   select(dosage_form_code, dosage_form_desc) %>%
-  distinct %>%
+  distinct
+
+unique_combos %>% kable
+```
+
+There are a few exceptions:
+
+```{r repeated_codes}
+unique_combos %>%
   group_by(dosage_form_code) %>%
   do(filter_repeated_block(.)) %>%
   arrange(dosage_form_code, dosage_form_desc) %>%
   kable
 ```
 
-I like the first of each of these sets, so that's the ones I'll keep.
+None of these repetitions are meaningfully different from one another, so I'll
+conclude that the code uniquely identifies the dosage type.
 
 ```{r codes_by_year}
-canonical_codes = dat %>%
-  select(dosage_form_code, dosage_form_desc) %>%
-  distinct %>%
-  arrange(dosage_form_code, dosage_form_desc) %>%
+canonical_codes = unique_combos %>%
   group_by(dosage_form_code) %>%
   do(head(., 1))
 
-codes_by_year = dat %>%
+dat %>%
   select(dosage_form_code, year) %>%
   group_by(year) %>%
   count(dosage_form_code) %>%
@@ -59,10 +61,10 @@ codes_by_year = dat %>%
 Which ones of the codes should I keep? Let's consider, for each code, the top drugs that match that code. Of these, I should only keep some.
 
 ```{r drugs_by_code, message=FALSE}
-pde11 = read_tsv('../abx_pde_2011.tsv')
 
-drugs_by_code = pde11 %>%
-  select(generic_name=GNN, dosage_form_code=GCDF) %>%
+drugs_by_code = dat %>%
+  filter(year == 2011) %>%
+  select(generic_name, dosage_form_code) %>%
   group_by(dosage_form_code) %>%
   count(generic_name) %>%
   group_by(dosage_form_code) %>%

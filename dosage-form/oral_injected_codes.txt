@@ -19,8 +19,6 @@ RG
 RH
 SC
 SJ
-SN
-SO
 ST
 TA
 TC
