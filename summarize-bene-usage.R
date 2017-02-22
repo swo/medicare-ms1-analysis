@@ -3,9 +3,12 @@
 # create summary beneficiary x abx file
 
 # get the common chronic condition data
-all_chronic = read_tsv("../data/cc_all.tsv", col_types='cdddd') %>% 
+all_chronic = read_tsv("../data/cc_all.tsv", col_types='cdddd') %>%
   #swo> hack for column name
   rename(bene_id=bene)
+
+regions = read_tsv('../db/census-regions/census-regions.tsv') %>%
+  select(state, region)
 
 summarize_year = function(year, n_max=Inf) {
   bene_fn = sprintf('bene_%i.tsv', year)
@@ -18,12 +21,12 @@ summarize_year = function(year, n_max=Inf) {
     rename_(.dots=setNames(year_column_name, 'chronic'))
 
   bene = read_tsv(bene_fn, n_max=n_max) %>%
-    filter(!is.na(state), plan_coverage_months==12) %>%
-    left_join(chronic, by='bene_id')
-  #swo> filter for only those beneficiaries that appear in the chronic data?
+    filter(!is.na(state), plan_coverage_months==12, age >= 65) %>%
+    left_join(chronic, by='bene_id') %>%
+    #swo> filter for only those beneficiaries that appear in the chronic data?
+    left_join(regions, by='state')
 
   pde = read_tsv(pde_fn, n_max=n_max) %>%
-    filter(year(service_date) == year) %>%
     inner_join(bene %>% select(bene_id), by='bene_id') # keep only PDEs for beneficiaries we have
 
   usage = pde %>%
