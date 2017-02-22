@@ -5,7 +5,12 @@ date: "2/13/2017"
 output: html_document
 ---
 
-```{r setup, echo=FALSE}
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='fig/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r setup}
 library(assertive)
 
 # Group values in x into ranges determined by upper_limits.
@@ -37,21 +42,21 @@ summarize_by = function(usage, bene, by) {
 }
 ```
 
-```{r load_db, echo=FALSE, message=FALSE}
+```{r load_db}
 
-regions = read_tsv('../../../db/census-regions/census-regions.tsv') %>%
+regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
   select(state, region)
 
-antibiotic_class = read_tsv('../../abx_class.tsv') %>%
+antibiotic_class = read_tsv('../abx_class.tsv') %>%
   select(antibiotic, antibiotic_class) %>%
   distinct
 
 assert_has_no_duplicates(antibiotic_class$antibiotic)
 ```
 
-```{r analyze_data, cache=TRUE, echo=FALSE, message=FALSE}
+```{r analyze_data, cache=TRUE}
 analyze = function(this_year) {
-  bene = read_tsv(sprintf('../../bene_%i.tsv', this_year)) %>%
+  bene = read_tsv(sprintf('../bene_%i.tsv', this_year)) %>%
     mutate_at(vars(age, plan_coverage_months), as.integer) %>%
     filter(!is.na(state), plan_coverage_months == 12, age >= 65) %>%
     left_join(regions, by='state')
@@ -59,7 +64,7 @@ analyze = function(this_year) {
   assert_has_no_duplicates(bene$bene_id)
   total_n_bene = nrow(bene)
   
-  pde = read_tsv(sprintf('../../pde_%i.tsv', this_year)) %>%
+  pde = read_tsv(sprintf('../pde_%i.tsv', this_year)) %>%
     mutate_at(vars(days_supply), as.integer) %>%
     left_join(antibiotic_class, by='antibiotic')
   
@@ -123,7 +128,7 @@ data_2013 = analyze(2013)
 data_2014 = analyze(2014)
 ```
 
-```{r arrange_data, echo=FALSE}
+```{r arrange_data}
 library(knitr)
 data = list("2011"=data_2011,
             "2012"=data_2012,
