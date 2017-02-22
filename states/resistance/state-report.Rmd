@@ -72,14 +72,14 @@ I performed this matching by hand.
 `r consumption_resistance %>% kable`
 
 ```{r load_data}
-coherence = read_tsv('../../../../../antibiogram/analysis/geographic-coherence/coherences.tsv') %>%
+coherence = read_tsv('../../../../antibiogram/analysis/geographic-coherence/coherences.tsv') %>%
   rename(resistance_drug=drug) %>%
   mutate(resistance_drug=tolower(resistance_drug),
          state_coherent=level %in% c('state', 'hrr', 'zipcode')) %>%
   select(bug, resistance_drug, state_coherent)
 
 # Antibiogram data, with individual records
-abg = read_tsv('../../../../../antibiogram/data/abg.tsv') %>%
+abg = read_tsv('../../../../antibiogram/data/abg.tsv') %>%
   mutate(drug=tolower(drug)) %>%
   rename(resistance_drug=drug) %>%
   select(bug, resistance_drug, state, percent_susceptible)
@@ -90,7 +90,7 @@ abg = read_tsv('../../../../../antibiogram/data/abg.tsv') %>%
   #filter(state %in% known_states)
 
 # State-level consumption data
-state_consumption = read_tsv('../../bene-consumption/state_usage_2011.tsv') %>%
+state_consumption = read_tsv('../bene-consumption/state_usage_2011.tsv') %>%
   rename(consumption_drug=antibiotic) %>%
   select(state, consumption_drug, cpkp, did)
 
