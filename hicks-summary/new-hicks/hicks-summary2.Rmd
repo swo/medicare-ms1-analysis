@@ -6,6 +6,8 @@ output: html_document
 ---
 
 ```{r setup, echo=FALSE}
+library(assertive)
+
 # Group values in x into ranges determined by upper_limits.
 # Values below the lowest limit are named as the lowest limit, and so forth.
 # You should probably put Inf as the last limit.
@@ -23,95 +25,91 @@ bounds_group = function(x, upper_limits) {
     factor(levels=levels, ordered=TRUE)
 }
 
-summarize_by = function(x, bene, by) {
-  group_by_(x, by) %>%
-    summarize(n_claims=sum(n_claims)) %>%
-    left_join(bene %>% group_by_(by) %>% summarize(n_ppl=n()), by=by) %>%
+summarize_by = function(usage, bene, by) {
+  denom = group_by_(bene, by) %>%
+    summarize(n_ppl=n())
+  
+  group_by_(usage, by) %>%
+    summarize(n_claims=n()) %>%
+    left_join(denom, by=by) %>%
     mutate(cpkp=n_claims*1000/n_ppl) %>%
     select_(by, 'cpkp')
 }
 ```
 
-```{r load_db, echo=FALSE}
-db = src_sqlite('../../abx.sqlite')
+```{r load_db, echo=FALSE, message=FALSE}
 
-regions = tbl(db, 'census_regions') %>%
+regions = read_tsv('../../../db/census-regions/census-regions.tsv') %>%
   select(state, region)
 
-abx_class = tbl(db, 'abx_class') %>%
+antibiotic_class = read_tsv('../../abx_class.tsv') %>%
   select(antibiotic, antibiotic_class) %>%
   distinct
+
+assert_has_no_duplicates(antibiotic_class$antibiotic)
 ```
 
-```{r analyze_data, cache=TRUE, echo=FALSE}
+```{r analyze_data, cache=TRUE, echo=FALSE, message=FALSE}
 analyze = function(this_year) {
-  bene = tbl(db, sprintf('bene_%i', this_year)) %>%
-    mutate(age=as.integer(age),
-           plan_coverage_months=as.integer(plan_coverage_months)) %>%
-    filter(!is.na(state), plan_coverage_months == 12) %>%
-    left_join(regions, by='state') %>%
-    compute
-
-  pde = tbl(db, sprintf('pde_%i', this_year)) %>%
-    mutate(days_supply=as.integer(days_supply)) %>%
-    left_join(abx_class, by='antibiotic') %>%
-    semi_join(bene, by='bene_id') %>%
-    compute
-
-  total_n_bene = bene %>% count() %>% head(1) %>% collect %$% n
+  bene = read_tsv(sprintf('../../bene_%i.tsv', this_year)) %>%
+    mutate_at(vars(age, plan_coverage_months), as.integer) %>%
+    filter(!is.na(state), plan_coverage_months == 12, age >= 65) %>%
+    left_join(regions, by='state')
+  
+  assert_has_no_duplicates(bene$bene_id)
+  total_n_bene = nrow(bene)
+  
+  pde = read_tsv(sprintf('../../pde_%i.tsv', this_year)) %>%
+    mutate_at(vars(days_supply), as.integer) %>%
+    left_join(antibiotic_class, by='antibiotic')
+  
+  usage = pde %>%
+    inner_join(bene, by='bene_id') # inner join to keep only matching rows
+  
+  # usage only has PDEs from beneficiaries in our list,
+  # so there should be fewer
+  is_greater_than_or_equal_to(nrow(pde), nrow(usage))
 
   # claims per 1,000 people by abx class
-  claims_by_class = pde %>%
+  claims_by_class = usage %>%
     group_by(antibiotic_class) %>%
     summarize(n_claims=n()) %>%
     mutate(cpkp=n_claims*1000/total_n_bene) %>%
-    mutate(year=this_year) %>%
-    select(antibiotic_class, cpkp, year) %>%
-    collect
+    select(antibiotic_class, cpkp) %>%
+    mutate(year=this_year)
 
   # the top few inidividual antibiotics
-  top_abx = pde %>%
+  top_abx = usage %>%
     group_by(antibiotic) %>%
     summarize(n_claims=n()) %>%
     mutate(cpkp=n_claims*1000/total_n_bene) %>%
-    mutate(year=this_year) %>%
-    select(antibiotic, cpkp, year) %>%
-    collect
+    select(antibiotic, cpkp) %>% 
+    mutate(year=this_year)
 
   # from here on, the denominators are taken from the beneficiary data grouped
   # in the same way as the consumption data, so we can use the summarize_by function
-  claims_by_sex = summarize_by(pde, bene, 'sex') %>% mutate(year=this_year) %>% collect
+  claims_by_sex = summarize_by(usage, bene, 'sex') %>%
+    mutate(year=this_year)
 
   # then by age group
   # (the input to summarize_by is modified, since we want to group by age *group*,
   # not just by raw age)
   age_group_f = function(x) bounds_group(x, c(65, 75, 85, Inf))
-  bene_age = bene %>%
-    filter(!is.na(age)) %>%
-    collect(n=Inf) %>%
-    mutate(age_group=age_group_f(age)) %>%
-    count(age_group) %>%
-    rename(n_bene=n)
-
-  claims_by_age = pde %>%
-    collect(n=Inf) %>%
-    mutate(age_group=age_group_f(age)) %>%
-    group_by(age_group) %>%
-    summarize(n_claims=sum(n_claims)) %>%
-    left_join(bene_age, by='age_group') %>%
-    mutate(cpkp=n_claims*1000/n_bene, year=this_year) %>%
-    select(age_group, cpkp, year)
+  claims_by_age = summarize_by(
+    usage %>% mutate(age_group=age_group_f(age)),
+    bene %>% mutate(age_group=age_group_f(age)),
+    'age_group') %>%
+    mutate(year=this_year)
 
   # then by census region
-  claims_by_region = summarize_by(pde, bene, 'region') %>%
-    mutate(year=this_year) %>% collect
+  claims_by_region = summarize_by(usage, bene, 'region') %>%
+    mutate(year=this_year)
 
   # claims by state (broken into sextiles)
-  claims_by_state = summarize_by(pde, bene, 'state') %>%
-    collect(n=Inf) %>%
+  claims_by_state = summarize_by(usage, bene, 'state') %>%
     mutate(sextile=ntile(cpkp, 6), year=this_year)
 
-  list(consumption_by_class=consumption_by_class,
+  list(claims_by_class=claims_by_class,
        top_abx=top_abx,
        claims_by_sex=claims_by_sex,
        claims_by_age=claims_by_age,
@@ -134,22 +132,24 @@ data = list("2011"=data_2011,
 
 data_by_field = function(field) lapply(data, function(x) x[[field]]) %>% bind_rows()
 
-claims_by_class = data_by_field('consumption_by_class')
+claims_by_class = data_by_field('claims_by_class')
 
 top_classes = claims_by_class %>%
   filter(year==2011) %>%
   arrange(desc(cpkp)) %>%
   head(9) %$%
-  abx_class %>%
+  antibiotic_class %>%
   c('other')
 
 claims_by_class %<>%
-  mutate(abx_class=if_else(abx_class %in% top_classes, abx_class, 'other')) %>%
-  group_by(year, abx_class) %>%
+  mutate(antibiotic_class=if_else(antibiotic_class %in% top_classes,
+                                  antibiotic_class,
+                                  'other')) %>%
+  group_by(year, antibiotic_class) %>%
   summarize(cpkp=sum(cpkp)) %>%
   spread(year, cpkp) %>%
-  mutate(abx_class=factor(abx_class, levels=top_classes, ordered=TRUE)) %>%
-  arrange(abx_class) %>%
+  mutate(antibiotic_class=factor(antibiotic_class, levels=top_classes, ordered=TRUE)) %>%
+  arrange(antibiotic_class) %>%
   kable
 
 top_abx = data_by_field('top_abx') %>%
@@ -171,6 +171,7 @@ claims_by_age = data_by_field('claims_by_age') %>%
 claims_by_region = data_by_field('claims_by_region') %>%
   filter(!is.na(region)) %>%
   spread(year, cpkp) %>%
+  arrange(desc(`2011`)) %>%
   kable
 
 state_sextiles_2011 = data_by_field('claims_by_state') %>%
