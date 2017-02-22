@@ -1,148 +1,228 @@
 ---
 title: "Consumption and resistance across states"
+bibliography: refs.bib
 output:
-  pdf_document:
-    fig_height: 3
   html_document:
     fig_height: 4
+  pdf_document:
+    fig_height: 3
 ---
 
-```{r echo=FALSE, message=FALSE}
-res = read_tsv('../model-results-p005.tsv')
-plot_dat = read_tsv('../plotting-dat.tsv')
+# Background
 
-plot_f = function(this_bug, this_resistance_drug, this_explanatory, this_response) {
-  this_res = res %>%
-    filter(bug==this_bug, resistance_drug==this_resistance_drug, explanatory==this_explanatory, response==this_response)
+Here I report results of comparisons antibiotic consumption and resistance across states. States they were a convenient middle ground between census regions (in which there is certainly a consumption/resistance association, but where having only 6 data points is disappointing) and HRRs or zipcodes (in which there might be relationships, but would require throwing out a lot of consumption data because the antibiogram data is sparse).
 
-  if (dim(this_res)[1] != 1) stop('wrong number of rows')
+In a separate analysis, I determined that the antibiogram data in certain locales, separating the data into those locales decreased variance more than could be expected by chance. Thus, for some bug/drug combinations, it is sensible to break the antibiogram data from census regions down into states, while for other bug/drug combinations, it does not.
 
-  z = this_res$correlation %>% head
-  p.value = this_res$p.value %>% head
+# Methods
 
-  plot_dat %>%
-    filter(bug==this_bug, resistance_drug==this_resistance_drug) %>%
-    ggplot(aes_string(this_explanatory, this_response)) +
-    geom_point() +
-    geom_smooth(method='lm', se=FALSE) +
-    theme_minimal() +
-    xlab(this_explanatory) +
-    ylab(this_response) +
-    ggtitle(sprintf('%s susceptibility to %s', this_bug, this_resistance_drug))
-}
-```
+I used the Medicare Part D data from 2011. Only beneficiaries greater than 65 years old were used. I also used the antibiogram data. I pooled the antiobiograms from all years.
 
-# Methodology
+I selected a set of organisms in the antibiogram to examine. They mostly represent the most abundant organisms in the data. I also matched particular drugs in the consumption data to match to drugs in the resistance data.
 
-1. I determined which bug/drug combinations were coherent at the state level (i.e., separating antibiograms into their states significantly decreased variance below what would be expected by chance)
-2. For each *consumption* drug, I asserted a matched *resistance* drug
-3. I correlated metrics of consumption (of the consumption drug) against metrics of resistance (against the resistance drug) across states.
+For each bug, consumption/resistance drug, and state, I ran a Spearman correlation test and adjusted the $p$-values using the Benjamini-Hochberg method. I also separately adjusted the $p$-values considering only the tests performed on coherent bug/drug/state combinations.
 
-## Metrics
-
-The consumption metrics were:
-
-- *DID*: Defined daily doses per 1,000 inhabitants per day. In fact, I don't have proper DDDs, so these are the "days supply" supplied in the Medicare claims data. This is what Goossens *et al.* uses.
-- *Claims per 1,000 people*: Rather than days supply, this is just the raw number of claims. It also has a different denominator. This is what the Hicks papers use.
-
-In general, PKPY will be larger than DID. If all people get $d$ days of drug per prescription, the relationship is:
-
-$$
-\mathrm{PKPY} = \frac{365}{d} \times \mathrm{DID}
-$$
-
-The resistance metrics were:
-
-- *Mean* susceptibility
-- *Median* susceptibility
-- *Maximum* susceptibility
-- *Minimum* susceptibility
-
-## Correlations
-
-I used Spearman correlations and examined only those bug/drug combinations that produced $p < 0.05$. I manually examined the results and show some representative ones here.
-
-## Consumption and resistance drugs
-
-Trimethoprim-sulfamethoxazole, ciprofloxacin, levofloxacin, ceftriaxone, nitrofurantoin, and penicillin were present in both the consumption and resistance data; they are each their own pair. Consumption of amoxicillin was matched with resistance to ampicillin; doxycycline with tetracycline/doxycycline, and azithromycin with erythromycin.
-
-## Organisms
-
-I examined these organisms:
-
-Gram negatives:
-- Escherichia coli
-- Klebsiella pneumoniae
-- Proteus mirabilis
-- Enterobacter cloacae
-- Klebisella oxytoca
-
-Gram positives:
-- Coagulase-negative staphylococci
-- Methicillin-resistant S. aureus (MRSA)
-- Methicillin-susceptible S. aureus (MSSA)
-- Streptococcus pneumoniae (non-meningitis)
-- Staphylococcus aureus
+The explanatory variable in the correlation was either claims per 1,000 people per year (CPKP) or days' supply (my proxy for daily defined dose) per 1,000 people per day (DID). The dependent variable was always mean percent susceptibility of that bug to that resistance drug across antibiograms from that state.
 
 # Results
 
-## Strong results
-
-I call these strong results because:
-
-- Their p-values were small.
-- The correlations went in the right direction (i.e., increased consumption was associated with decreased susceptibility).
-- The same bug/drug/drug combinations had significant correlations for multiple metrics (e.g., *E. coli* susceptibility to cipro anticorrelated with cipro consumption regardless of whether consumption was measured with claims or days and whether the mean or median susceptibility was used).
-
-In general, the coefficients for these correlations were in the range 0.4--0.6.
-
-N.B.: The plots have a linear best fit line added for clarity, but the correlation was measured with Spearman (i.e., rank ordered).
-
-```{r echo=FALSE}
-plot_f('Escherichia coli', 'ciprofloxacin', 'claims_per_1k_ppl', 'mean_sus')
-plot_f('Escherichia coli', 'levofloxacin', 'claims_per_1k_ppl', 'mean_sus')
-plot_f('Methicillin-susceptible S. aureus (MSSA)', 'ciprofloxacin', 'claims_per_1k_ppl', 'mean_sus')
-plot_f('Methicillin-susceptible S. aureus (MSSA)', 'erythromycin', 'claims_per_1k_ppl', 'mean_sus')
-plot_f('Streptococcus pneumoniae (non-meningitis)', 'erythromycin', 'claims_per_1k_ppl', 'mean_sus')
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
 ```
 
-## Dubious Results
+```{r setup}
+library(broom)
+library(pander)
 
-I call these results "dubious" because, in general:
+gram_negs = c('Escherichia coli', 'Klebsiella pneumoniae',
+              'Proteus mirabilis', 'Enterobacter cloacae',
+              'Klebisella oxytoca', 'Enterococcus faecium')
+gram_poss = c('Coagulase-negative staphylococci',
+              'Methicillin-resistant S. aureus (MRSA)',
+              'Methicillin-susceptible S. aureus (MSSA)',
+              'Streptococcus pneumoniae (non-meningitis)',
+              'Staphylococcus aureus')
+organisms = c(gram_negs, gram_poss)
 
-- The p-values were not as strong.
-- The correlations were sometimes in the wrong direction.
-- The susceptibility metrics were weird (e.g., consumption correlations with the minimum susceptibility reported in a state).
-- The correlation was significant for one consumption metric but not the other.
+consumption_drugs=c('trimethoprim/sulfamethoxazole', 'ciprofloxacin',
+                    'levofloxacin', 'ceftriaxone', 'nitrofurantoin',
+                    'amoxicillin', 'penicillin', 'doxycycline',
+                    'azithromycin')
+resistance_drugs=c('trimethoprim-sulfamethoxazole', 'ciprofloxacin',
+                   'levofloxacin', 'ceftriaxone', 'nitrofurantoin',
+                   'ampicillin', 'penicillin',
+                   'tetracycline/doxycycline', 'erythromycin')
 
-```{r echo=FALSE}
-plot_f('Coagulase-negative staphylococci', 'levofloxacin', 'claims_per_1k_ppl', 'min_sus') # why only min sus?
-plot_f('Enterobacter cloacae', 'ceftriaxone', 'did', 'mean_sus') # why only DID?
-plot_f('Escherichia coli', 'ampicillin', 'did', 'median_sus') # why only DID?
-plot_f('Escherichia coli', 'trimethoprim-sulfamethoxazole', 'claims_per_1k_ppl', 'mean_sus') # why not claims per 1k ppl?
-plot_f('Klebsiella pneumoniae', 'ceftriaxone', 'did', 'mean_sus') # why only DID?
-plot_f('Methicillin-resistant S. aureus (MRSA)', 'levofloxacin', 'claims_per_1k_ppl', 'max_sus') # why only max sus?
-plot_f('Methicillin-resistant S. aureus (MRSA)', 'trimethoprim-sulfamethoxazole', 'did', 'mean_sus') # why only DID?
-plot_f('Proteus mirabilis', 'levofloxacin', 'claims_per_1k_ppl', 'min_sus') # why only min sus?
-plot_f('Streptococcus pneumoniae (non-meningitis)', 'trimethoprim-sulfamethoxazole', 'claims_per_1k_ppl', 'mean_sus') # why only some?
+consumption_resistance = data_frame(consumption_drug=consumption_drugs,
+                                    resistance_drug=resistance_drugs)
+
+# get all bug/drug combos (i.e., all bug/cons drug combos with appropriate res drugs)
+bug_drug = expand.grid(bug=organisms,
+                       consumption_drug=consumption_drugs,
+                       stringsAsFactors=FALSE) %>%
+  left_join(consumption_resistance, by='consumption_drug') %>%
+  select(bug, consumption_drug, resistance_drug)
+```
+
+## Matching consumption and resistance drugs
+
+I performed this matching by hand.
+
+`r consumption_resistance %>% kable`
+
+```{r load_data}
+coherence = read_tsv('../../../../../antibiogram/analysis/geographic-coherence/coherences.tsv') %>%
+  rename(resistance_drug=drug) %>%
+  mutate(resistance_drug=tolower(resistance_drug),
+         state_coherent=level %in% c('state', 'hrr', 'zipcode')) %>%
+  select(bug, resistance_drug, state_coherent)
+
+# Antibiogram data, with individual records
+abg = read_tsv('../../../../../antibiogram/data/abg.tsv') %>%
+  mutate(drug=tolower(drug)) %>%
+  rename(resistance_drug=drug) %>%
+  select(bug, resistance_drug, state, percent_susceptible)
+
+# swo> State beneficiary information could be used as control variables
+# in regressions
+#state_bene = read_tsv('../../bene-consumption/state-bene-2011.tsv') %>%
+  #filter(state %in% known_states)
+
+# State-level consumption data
+state_consumption = read_tsv('../../bene-consumption/state_usage_2011.tsv') %>%
+  rename(consumption_drug=antibiotic) %>%
+  select(state, consumption_drug, cpkp, did)
+
+dat = bug_drug %>%
+  left_join(abg, by=c('bug', 'resistance_drug')) %>%
+  left_join(state_consumption, by=c('state', 'consumption_drug'))
+```
+
+```{r run_models}
+safe_spearman = function(df, expl) {
+  if (dim(df)[1] < 3L) {
+    data_frame(estimate=NA, statistic=NA, p.value=NA, method=NA, alternative=NA)
+  } else {
+    cor.test(df[['mean_sus']], df[[expl]], method='spearman') %>% tidy
+  }
+}
+
+models = function(df) {
+  out = data_frame()
+  for (expl in c('cpkp', 'did')) {
+    new_rows = safe_spearman(df, expl) %>%
+      mutate(explanatory=expl)
+
+    out = bind_rows(out, new_rows)
+  }
+  out
+}
+
+pvalue_stars = function(x) {
+  case_when(x < 0.001 ~ '***',
+            x < 0.01 ~ '**',
+            x < 0.05 ~ '*',
+            x < 0.1 ~ 'o',
+            TRUE ~ '')
+}
+
+res = dat %>%
+  group_by(bug, resistance_drug, state) %>%
+  summarize(mean_sus=mean(percent_susceptible, na.rm=TRUE)) %>%
+  left_join(bug_drug, by=c('bug', 'resistance_drug')) %>%
+  left_join(state_consumption, by=c('state', 'consumption_drug')) %>%
+  mutate_at(vars(cpkp, did), function(x) if_else(is.na(x), 0, x)) %>%
+  group_by(bug, resistance_drug, consumption_drug) %>%
+  do(models(.)) %>%
+  ungroup %>%
+  filter(!is.na(estimate)) %>%
+  mutate(adj.p.value=p.adjust(p.value, method='BH'),
+         sig=pvalue_stars(adj.p.value)) %>%
+  left_join(coherence, by=c('bug', 'resistance_drug')) %>%
+  mutate(record_number=1:n(),
+         plot_fn=sprintf('plots/%03i.pdf', record_number),
+         plot_link=pandoc.link.return(url=plot_fn, text='plot')) %>%
+  select(bug, consumption_drug, resistance_drug, state_coherent,
+         explanatory, correlation=estimate, p.value,
+         adj.p.value, sig,
+         plot_fn, plot_link)
+
+coherent_res = res %>%
+  filter(state_coherent) %>%
+  mutate(adj.p.value=p.adjust(p.value, method='BH'),
+         sig=pvalue_stars(adj.p.value))
+```
+
+```{r make_plots, cache=TRUE}
+unlink('plots/*.pdf')
+
+for (i in 1:nrow(res)) {
+  row = res[i,]
+
+  plot_dat = dat %>%
+    filter(bug==row$bug, consumption_drug==row$consumption_drug)
+
+  p = plot_dat %>%
+    filter(bug==row$bug, consumption_drug==row$consumption_drug) %>%
+    ggplot(aes_string(row$explanatory, 'percent_susceptible')) +
+    geom_point(shape=1) +
+    xlab(row$explanatory) +
+    ylab('percent susceptible') +
+    theme_minimal()
+
+  ggsave(row$plot_fn, plot=p)
+}
+```
+
+## Consumption and resistance
+
+First, I show the results from all correlations:
+
+```{r display_results}
+res %>%
+  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
+  select(bug, consumption_drug,
+         state_coherent, explanatory, correlation,
+         adj.p.value, sig,
+         plot_link) %>%
+  kable
+```
+
+Second, I show the results from the coherent tests only. The $p$-values here are different because I adjusted those values using only this subset of tests.
+
+```{r display_coherent_result}
+coherent_res %>%
+  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
+  select(bug, consumption_drug,
+     explanatory, correlation,
+     adj.p.value, sig,
+     plot_link) %>%
+  kable
 ```
 
 # Discussion
 
-## Comparison to Goossens
+## Future work
 
-Goossens *et al.* found significant correlations for:
+In the future, I intend to refine this analysis by:
 
-- Consumption of macrolides with *S. pneumoniae* susceptibility to erythromycin
-- Consumption of penicillins and cephalosporins with *S. pneumoniae* susceptibility to penicillin
-- Consumption of macrolides and lincosamids with *S. pyogenes* susceptibility to erythromycin
-- Consumption of quinolones with *E. coli* susceptibility to ciprofloxacin
-- Consumption of co-trimoxazole with *E. coli* susceptibility to co-trimoxazole
+- pooling various consumption drugs (e.g., cipro and levo consumption probably have comparable effects on cipro resistance)
+- more intelligently pooling data from the different *S. aureus* designations (in the antibiogram data, *S. aureus* is reported as one of *S. aureus*, MRSA, or MSSA)
+- comparing data from various years (i.e., is there any evidence that a consumption/resistance relationship changed drastically?)
+- pooling data from various years (i.e., if the relationship doesn't change over years, we might get more power by including
 
-The Spearman correlation coefficients range from 0.68 to 0.83, which are higher than our results.
+## Correlations are overall weak
 
-The Goossens *et al.* graph shows a best-fit line of penicillin consumption against *S. pneumoniae* non-susceptibility to penicillin: 5 DID corresponds to 0% non-susceptible, while 16 DID corresponds to 45% non-susceptible. The translates to a 4 percentage point change in susceptibility per 1 DID.
+There were only a few significant results from these tests:
 
-I can't immediately compare this to the US data (because *S. pneumoniae* resistance to penicillin was not coherent at the state level).
+- *S. aureus* and azithromycin
+- Potentially, a backward relationship for *S. aureus* and TMP-SMX
+- *S. pneumoniae* and azithromycin
+- *E. coli* and quinolones
 
-However, *E. coli* resistance to ciprofloxacin is interesting: 85% susceptibility at 50 PKPY and 75% at 200, that is, 1 percentage point in susceptibility per 15 PKPY. That's a very weak response!
+Interestingly, this accords with some of the conclusions from @bell-systematic-2014, namely:
+
+- the relationship between antibiotic consumption and resistance inside the US is weak (compared to across European countries, especially southern European countries)
+- reliable consumption/resistance relationships were found for enteric bacteria and streptococcus (though, in contrast, not with *Staphylococcus*, which is one of our strongest correlations)
+- among enteric bacteria, the only reliable consumption/resistance relationship was for quinolones
