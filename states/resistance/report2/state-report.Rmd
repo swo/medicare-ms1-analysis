@@ -7,9 +7,13 @@ output:
     fig_height: 3
 ---
 
-```{r setup, echo=FALSE}
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r setup}
 library(broom)
-library(knitr)
 library(pander)
 
 gram_negs = c('Escherichia coli', 'Klebsiella pneumoniae',
@@ -22,7 +26,7 @@ gram_poss = c('Coagulase-negative staphylococci',
               'Staphylococcus aureus')
 organisms = c(gram_negs, gram_poss)
 
-consumption_drugs=c('trimethoprim-sulfamethoxazole', 'ciprofloxacin',
+consumption_drugs=c('trimethoprim/sulfamethoxazole', 'ciprofloxacin',
                     'levofloxacin', 'ceftriaxone', 'nitrofurantoin',
                     'amoxicillin', 'penicillin', 'doxycycline',
                     'azithromycin')
@@ -42,7 +46,7 @@ bug_drug = expand.grid(bug=organisms,
   select(bug, consumption_drug, resistance_drug)
 ```
    
-```{r load_data, echo=FALSE, message=FALSE}
+```{r load_data}
 coherence = read_tsv('../../../../../antibiogram/analysis/geographic-coherence/coherences.tsv') %>%
   rename(resistance_drug=drug) %>%
   mutate(resistance_drug=tolower(resistance_drug),
@@ -63,14 +67,14 @@ abg = read_tsv('../../../../../antibiogram/data/abg.tsv') %>%
 # State-level consumption data
 state_consumption = read_tsv('../../bene-consumption/state_usage_2011.tsv') %>%
   rename(consumption_drug=antibiotic) %>%
-  select(state, consumption_drug, claims_per_1k_ppl, did)
+  select(state, consumption_drug, cpkp, did)
 
 dat = bug_drug %>%
   left_join(abg, by=c('bug', 'resistance_drug')) %>%
   left_join(state_consumption, by=c('state', 'consumption_drug'))
 ```
 
-```{r run_models, echo=FALSE, warning=FALSE}
+```{r run_models}
 safe_spearman = function(df, expl) {
   if (dim(df)[1] < 3L) {
     data_frame(estimate=NA, statistic=NA, p.value=NA, method=NA, alternative=NA)
@@ -81,7 +85,7 @@ safe_spearman = function(df, expl) {
 
 models = function(df) {
   out = data_frame()
-  for (expl in c('claims_per_1k_ppl', 'did')) {
+  for (expl in c('cpkp', 'did')) {
     new_rows = safe_spearman(df, expl) %>% 
       mutate(explanatory=expl)
     
@@ -90,25 +94,37 @@ models = function(df) {
   out
 }
 
+pvalue_stars = function(x) {
+  case_when(x < 0.001 ~ '***',
+            x < 0.01 ~ '**',
+            x < 0.05 ~ '*',
+            x < 0.1 ~ 'o',
+            TRUE ~ '')
+}
+
 res = dat %>%
   group_by(bug, resistance_drug, state) %>%
   summarize(mean_sus=mean(percent_susceptible, na.rm=TRUE)) %>%
   left_join(bug_drug, by=c('bug', 'resistance_drug')) %>%
   left_join(state_consumption, by=c('state', 'consumption_drug')) %>%
+  mutate_at(vars(cpkp, did), function(x) if_else(is.na(x), 0, x)) %>%
   group_by(bug, resistance_drug, consumption_drug) %>%
   do(models(.)) %>%
   ungroup %>%
   filter(!is.na(estimate)) %>%
+  mutate(adj.p.value=p.adjust(p.value, method='BH'),
+         sig=pvalue_stars(adj.p.value)) %>%
   left_join(coherence, by=c('bug', 'resistance_drug')) %>%
   mutate(record_number=1:n(),
          plot_fn=sprintf('plots/%03i.pdf', record_number),
          plot_link=pandoc.link.return(url=plot_fn, text='plot')) %>%
   select(bug, consumption_drug, resistance_drug, state_coherent,
          explanatory, correlation=estimate, p.value,
+         adj.p.value, sig,
          plot_fn, plot_link)
 ```
 
-```{r make_plots, echo=FALSE, message=FALSE}
+```{r make_plots}
 unlink('plots/*.pdf')
 
 for (i in 1:nrow(res)) {
@@ -131,11 +147,12 @@ for (i in 1:nrow(res)) {
 
 The column `state_coherent` means that the variance in susceptibilities of the bug to the resistance drug reported in antibiograms was significantly improved by dividing the antibiogram records into states. The column `explanatory` is the explanatory variable in the Spearman correlation: either claims per 1,000 people or DID (days of drug per 1,000 people per day).
 
-```{r display_results, echo=FALSE}
+```{r display_results}
 res %>%
   mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
-  select(bug, consumption_drug, resistance_drug,
-         state_coherent, explanatory, correlation, p.value,
+  select(bug, consumption_drug,
+         state_coherent, explanatory, correlation,
+         p.value, adj.p.value, sig,
          plot_link) %>%
   kable
 ```
