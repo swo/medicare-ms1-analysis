@@ -1,5 +1,7 @@
 #!/usr/bin/env Rscript
 
+library(assertive)
+
 # create summary beneficiary x abx file
 
 # get the common chronic condition data
@@ -9,6 +11,12 @@ all_chronic = read_tsv("../data/cc_all.tsv", col_types='cdddd') %>%
 
 regions = read_tsv('../db/census-regions/census-regions.tsv') %>%
   select(state, region)
+
+antibiotic_class = read_tsv('abx_class.tsv') %>%
+  select(antibiotic, antibiotic_class) %>%
+  distinct
+
+assert_has_no_duplicates(antibiotic_class$antibiotic)
 
 summarize_year = function(year, n_max=Inf) {
   bene_fn = sprintf('bene_%i.tsv', year)
@@ -21,21 +29,22 @@ summarize_year = function(year, n_max=Inf) {
     rename_(.dots=setNames(year_column_name, 'chronic'))
 
   bene = read_tsv(bene_fn, n_max=n_max) %>%
+    mutate_at(vars(age, plan_coverage_months), as.integer) %>%
     filter(!is.na(state), plan_coverage_months==12, age >= 65) %>%
     left_join(chronic, by='bene_id') %>%
     #swo> filter for only those beneficiaries that appear in the chronic data?
     left_join(regions, by='state')
+  
+  assert_has_no_duplicates(bene$bene_id)
 
   pde = read_tsv(pde_fn, n_max=n_max) %>%
-    inner_join(bene %>% select(bene_id), by='bene_id') # keep only PDEs for beneficiaries we have
-
-  usage = pde %>%
-    group_by(bene_id, antibiotic) %>%
-    summarize(n_claims=n(), n_days=sum(days_supply)) %>%
-    gather('consumption_metric', 'consumption', n_claims:n_days) %T>%
-    { . %>% select(antibiotic) %>% distinct %>% write_tsv('tmp') } %>%
-    spread(antibiotic, consumption, fill=0) %>%
-    left_join(bene, by='bene_id')
+    mutate_at(vars(days_supply), as.integer) %>%
+    left_join(antibiotic_class, by='antibiotic')
+  
+  usage = bene %>%
+    left_join(pde, by='bene_id') %>%
+    mutate(n_claims=if_else(is.na(antibiotic), 0L, 1L),
+           n_days=if_else(is.na(days_supply), 0L, days_supply))
 
   write_tsv(usage, usage_fn)
 }
