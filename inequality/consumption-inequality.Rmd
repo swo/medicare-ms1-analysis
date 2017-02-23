@@ -1,0 +1,122 @@
+---
+title: "Inequality in consumption"
+author: "Scott Olesen"
+date: "2/22/2017"
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+# Background
+
+What is the inequality in consumption for antibiotics? How does it depend on region or the antibiotic used?
+
+# Methods
+
+I define the Juran inequality index $J$: for a random variable $X$ with a domain $\{0, 1\}$ and a cumulative distribution function $F_X$, $J(X)$ is that value such that $F(J(X)) = 1 - J(X)$. For example, if the top 20% of beneficiaries make 80% of the claims, then $J = 0.8$.
+
+For each group under consideration, I considered 5 different metrics:
+
+- the fraction of beneficiaries with at least one claim
+- the Juran index among all beneficiaries
+- the Juran index among beneficiaries with at least one claim
+- the Gini index among all beneficiaries
+- the Gini index among beneficiaries with at least one claim
+
+```{r setup}
+library(ineq)
+is_nonzero = function(x) x > 0
+nonzero = function(x) x[is_nonzero(x)]
+fraction_nonzero = function(x) sum(is_nonzero(x)) / length(x)
+gini = function(x) ineq(x, type='Gini')
+
+normalize = function(x) x / max(x)
+juran = function(x) {
+  fraction_consumed = cumsum(sort(x, decreasing=TRUE)) %>% normalize
+  fraction_users = 1:length(x) %>% normalize
+  fraction_nonzero(fraction_consumed + fraction_users - 1)
+}
+
+add_zeros = function(x, n) {
+  if (n < length(x)) {
+    stop(sprintf('cannot extend x of length %i to %i', length(x), n))
+  }
+  
+  c(x, rep(0, n - length(x)))
+}
+
+summarize_inequality = function(x, ...) {
+  do(x, inequalities(., ...))
+}
+
+inequalities = function(x, what, denom=NULL) {
+  z = x[[what]]
+  if (!is.null(denom)) z = add_zeros(z, denom)
+  
+  data_frame(fraction_nonzero=fraction_nonzero(z),
+             juran=juran(z),
+             juran_nonzero=juran(nonzero(z)),
+             gini=gini(z),
+             gini_nonzero=gini(nonzero(z)))
+}
+
+top_antibiotics = c('azithromycin', 'ciprofloxacin', 'levofloxacin', 'amoxicillin', 'cephalexin', 'trimethoprim/sulfamethoxazole', 'nitrofurantoin', 'doxycycline')
+```
+
+# Results
+
+```{r load_data}
+usage = read_tsv('../bene_usage_2011.tsv')
+```
+
+Overall, about half of beneficiaries took at least one antibiotic. Overall, 20% of beneficiaries claimed 80% of the antibiotic days' supply.
+
+```{r inequality_overall, cache=TRUE}
+# put in both metrics of consumption
+# run it through summarize_inequality
+# then group by region or by drug also
+usage %>%
+  group_by(bene_id) %>%
+  summarize(n_claims=sum(n_claims),
+            n_days=sum(n_days)) %>%
+  gather('consumption_metric', 'amount', n_claims, n_days) %>%
+  group_by(consumption_metric) %>%
+  summarize_inequality('amount') %>%
+  kable
+```
+
+Breaking down these results by region shows that the South, which consumed the most antibiotic per capita, has a slightly more even usage (Juran index of 79% versus 80% in other regions). I'm not sure that's a meaningful difference.
+
+```{r inequality_by_region, cache=TRUE}
+usage %>% 
+  group_by(region, bene_id) %>%
+  summarize(n_claims=sum(n_claims),
+            n_days=sum(n_days)) %>%
+  gather('consumption_metric', 'amount', n_claims, n_days) %>%
+  group_by(region, consumption_metric) %>%
+  summarize_inequality('amount') %>%
+  kable
+```
+
+Among the most popular drugs, unevenness varies only slightly. Among users, azithromycin consumption has an approximately 60% Juran index, and ciprofloxacin has 65%, while TMP-SMX and vancomycin have 70%.
+
+```{r inequality_by_drug, cache=TRUE}
+n_bene = usage$bene_id %>% unique %>% length
+usage %>%
+  filter(!is.na(antibiotic)) %>%
+  group_by(antibiotic, bene_id) %>%
+  summarize(n_claims=sum(n_claims),
+            n_days=sum(n_days)) %>%
+  gather('consumption_metric', 'amount', n_claims, n_days) %>%
+  group_by(antibiotic, consumption_metric) %>%
+  summarize_inequality('amount', n_bene) %>%
+  filter(antibiotic %in% top_antibiotics) %>%
+  kable
+```
+
+# Discussion
+
+I used only the 2011 data in this analysis. I intend to extend the analysis to other years. Data from other years could help confirm any of the (relatively small) differences in inequality in consumption.
