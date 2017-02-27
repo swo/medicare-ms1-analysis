@@ -7,7 +7,7 @@ output: html_document
 
 ```{r global_options, include=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/',
-                      echo=FALSE, warning=FALSE, message=FALSE)
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
 ```
 
 # Background
@@ -45,8 +45,13 @@ add_zeros = function(x, n) {
   if (n < length(x)) {
     stop(sprintf('cannot extend x of length %i to %i', length(x), n))
   }
-  
+
   c(x, rep(0, n - length(x)))
+}
+
+summarize_claims = function(x) {
+  summarize(x, n_claims=sum(n_claims), n_days=sum(days_supply)) %>%
+    mutate(n_days=if_else(is.na(n_days), 0L, n_days))
 }
 
 summarize_inequality = function(x, ...) {
@@ -56,7 +61,7 @@ summarize_inequality = function(x, ...) {
 inequalities = function(x, what, denom=NULL) {
   z = x[[what]]
   if (!is.null(denom)) z = add_zeros(z, denom)
-  
+
   data_frame(fraction_nonzero=fraction_nonzero(z),
              juran=juran(z),
              juran_nonzero=juran(nonzero(z)),
@@ -75,21 +80,20 @@ usage = read_tsv('../bene_usage_2011.tsv')
 
 Overall, about half of beneficiaries took at least one antibiotic. Overall, 20% of beneficiaries claimed 80% of the antibiotic days' supply.
 
-```{r inequality_overall, cache=TRUE}
+```{r inequality_overall}
 # put in both metrics of consumption
 # run it through summarize_inequality
 # then group by region or by drug also
 usage %>%
   group_by(bene_id) %>%
-  summarize(n_claims=sum(n_claims),
-            n_days=sum(n_days)) %>%
+  summarize_claims() %>%
   gather('consumption_metric', 'amount', n_claims, n_days) %>%
   group_by(consumption_metric) %>%
   summarize_inequality('amount') %>%
   kable
 ```
 
-```{r inequality_hist, cache=TRUE}
+```{r inequality_hist}
 usage %>%
   group_by(bene_id) %>%
   summarize(n_claims=sum(n_claims)) %>%
@@ -102,11 +106,10 @@ usage %>%
 
 Breaking down these results by region shows that the South, which consumed the most antibiotic per capita, has a slightly more even usage (Juran index of 79% versus 80% in other regions). I'm not sure that's a meaningful difference.
 
-```{r inequality_by_region, cache=TRUE}
-usage %>% 
+```{r inequality_by_region}
+usage %>%
   group_by(region, bene_id) %>%
-  summarize(n_claims=sum(n_claims),
-            n_days=sum(n_days)) %>%
+  summarize_claims() %>%
   gather('consumption_metric', 'amount', n_claims, n_days) %>%
   group_by(region, consumption_metric) %>%
   summarize_inequality('amount') %>%
@@ -115,13 +118,11 @@ usage %>%
 
 Among the most popular drugs, unevenness varies only slightly. Among users, azithromycin consumption has an approximately 60% Juran index, and ciprofloxacin has 65%, while TMP-SMX and vancomycin have 70%.
 
-```{r inequality_by_drug, cache=TRUE}
+```{r inequality_by_drug}
 n_bene = usage$bene_id %>% unique %>% length
 usage %>%
-  filter(!is.na(antibiotic)) %>%
   group_by(antibiotic, bene_id) %>%
-  summarize(n_claims=sum(n_claims),
-            n_days=sum(n_days)) %>%
+  summarize_claims() %>%
   gather('consumption_metric', 'amount', n_claims, n_days) %>%
   group_by(antibiotic, consumption_metric) %>%
   summarize_inequality('amount', n_bene) %>%
@@ -129,11 +130,45 @@ usage %>%
   kable
 ```
 
+## Inequality by state
+```{r compute_inequality_by_state}
+inequality_by_state = usage %>%
+  group_by(state, bene_id) %>%
+  summarize_claims() %>%
+  gather('consumption_metric', 'amount', n_claims, n_days) %>%
+  group_by(state, consumption_metric) %>%
+  summarize(n_bene=n(),
+             fraction_nonzero=fraction_nonzero(amount),
+             juran=juran(amount),
+             juran_nonzero=juran(nonzero(amount)),
+             gini=gini(amount),
+             gini_nonzero=gini(nonzero(amount))) %>%
+  ungroup()
+```
+
+The distribution of inequalities seems small: all states have (non-zero) Juran
+indices that fall between about 0.7 and 0.75. That being said, there does seem
+to be a trend by region: the fraction nonzero is highest in the South?
+
+```{r show_inequality_by_state}
+inequality_by_state %>%
+  filter(consumption_metric=='n_days') %>%
+  ggplot(aes(x=juran_nonzero)) + geom_histogram() +
+  theme_minimal()
+
+inequality_by_state %>%
+  filter(fraction_nonzero > 0) %>%
+  filter(consumption_metric=='n_days') %>%
+  select(-consumption_metric) %>%
+  arrange(state) %>%
+  kable
+```
+
 ## Characteristics by consumption
 
 I broke down the beneficiaries based on their consumption: those who had no antibiotic claims were in one "tile", and I separated the rest into $n$-tiles.
 
-```{r chars_by_consumption, cache=TRUE}
+```{r chars_by_consumption}
 ntile_zero = function(x, n) {
   out = x
   out[x > 0] = ntile(out[x > 0], n)
@@ -153,9 +188,9 @@ bounds_group = function(x, upper_limits) {
   formula_list = mapply(function(str, lim) as.formula(sprintf('x <= %i ~ "%s"', lim, str)),
                         levels, upper_limits) %>%
     c(as.formula(sprintf('TRUE ~ "%s"', top_level)))
-  
+
   levels = c(levels, top_level)
-  
+
   do.call(case_when, formula_list) %>%
     factor(levels=levels, ordered=TRUE)
 }
@@ -164,7 +199,7 @@ usage %>%
   group_by(age, sex, race, chronic, bene_id) %>%
   summarize(n_claims=sum(n_claims),
             n_days=sum(n_days)) %>%
-  ungroup() %>% 
+  ungroup() %>%
   mutate(claims_group=bounds_group(n_claims, c(0, 1, 2, 5, 10, 20, 50, 100)),
          is_female=if_else(sex=='female', 1, 0),
          is_white=if_else(race=='white', 1, 0)) %>%
@@ -175,7 +210,7 @@ usage %>%
             percent_white=mean(is_white)*100,
             mean_n_chronic_cond=mean(chronic),
             mean_n_claims=mean(n_claims)) %>%
-  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>% 
+  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
   kable
 ```
 
