@@ -100,18 +100,18 @@ dat = bug_drug %>%
 ```
 
 ```{r run_models}
-safe_spearman = function(df, expl) {
+safe_spearman = function(df, expl, indep) {
   if (dim(df)[1] < 3L) {
     data_frame(estimate=NA, statistic=NA, p.value=NA, method=NA, alternative=NA)
   } else {
-    cor.test(df[['mean_sus']], df[[expl]], method='spearman') %>% tidy
+    cor.test(df[[indep]], df[[expl]], method='spearman') %>% tidy
   }
 }
 
-models = function(df) {
+models = function(df, indep) {
   out = data_frame()
   for (expl in c('cpkp', 'did')) {
-    new_rows = safe_spearman(df, expl) %>%
+    new_rows = safe_spearman(df, expl, indep) %>%
       mutate(explanatory=expl)
 
     out = bind_rows(out, new_rows)
@@ -134,7 +134,7 @@ res = dat %>%
   left_join(state_consumption, by=c('state', 'consumption_drug')) %>%
   mutate_at(vars(cpkp, did), function(x) if_else(is.na(x), 0, x)) %>%
   group_by(bug, resistance_drug, consumption_drug) %>%
-  do(models(.)) %>%
+  do(models(., 'mean_sus')) %>%
   ungroup %>%
   filter(!is.na(estimate)) %>%
   mutate(adj.p.value=p.adjust(p.value, method='BH'),
@@ -198,6 +198,25 @@ coherent_res %>%
      explanatory, correlation,
      adj.p.value, sig,
      plot_link) %>%
+  kable
+```
+
+And I try the same thing again, but this time keeping all the data points:
+
+```{r correlations_with_all_points}
+dat %>%
+  mutate_at(vars(cpkp, did), function(x) if_else(is.na(x), 0, x)) %>%
+  group_by(bug, resistance_drug, consumption_drug) %>%
+  do(models(., 'percent_susceptible')) %>%
+  ungroup %>%
+  left_join(coherence, by=c('bug', 'resistance_drug')) %>%
+  filter(!is.na(estimate), state_coherent) %>%
+  mutate(adj.p.value=p.adjust(p.value, method='BH'),
+         sig=pvalue_stars(adj.p.value)) %>%
+  select(bug, consumption_drug, resistance_drug,
+         explanatory, correlation=estimate, p.value,
+         adj.p.value, sig) %>%
+  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
   kable
 ```
 

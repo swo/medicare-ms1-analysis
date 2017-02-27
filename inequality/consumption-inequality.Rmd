@@ -35,6 +35,7 @@ gini = function(x) ineq(x, type='Gini')
 
 normalize = function(x) x / max(x)
 juran = function(x) {
+  # better to do with percent_rank and cume_dist
   fraction_consumed = cumsum(sort(x, decreasing=TRUE)) %>% normalize
   fraction_users = 1:length(x) %>% normalize
   fraction_nonzero(fraction_consumed + fraction_users - 1)
@@ -88,6 +89,17 @@ usage %>%
   kable
 ```
 
+```{r inequality_hist, cache=TRUE}
+usage %>%
+  group_by(bene_id) %>%
+  summarize(n_claims=sum(n_claims)) %>%
+  ggplot(aes(x=n_claims)) +
+  geom_histogram() +
+  scale_y_log10() +
+  xlab('number of claims') + ylab('number of beneficiaries') +
+  theme_minimal()
+```
+
 Breaking down these results by region shows that the South, which consumed the most antibiotic per capita, has a slightly more even usage (Juran index of 79% versus 80% in other regions). I'm not sure that's a meaningful difference.
 
 ```{r inequality_by_region, cache=TRUE}
@@ -117,6 +129,58 @@ usage %>%
   kable
 ```
 
+## Characteristics by consumption
+
+I broke down the beneficiaries based on their consumption: those who had no antibiotic claims were in one "tile", and I separated the rest into $n$-tiles.
+
+```{r chars_by_consumption, cache=TRUE}
+ntile_zero = function(x, n) {
+  out = x
+  out[x > 0] = ntile(out[x > 0], n)
+  out
+}
+
+bounds_group = function(x, upper_limits) {
+  upper_limits = as.integer(upper_limits)
+  levels = lapply(seq(from=1, to=length(upper_limits)), function(i) {
+    if (i == 1) {
+      sprintf('<= %i', upper_limits[i])
+    } else {
+      sprintf('> %i and <= %i', upper_limits[i - 1], upper_limits[i])
+    }
+  })
+  top_level = sprintf('> %i', tail(upper_limits, 1))
+  formula_list = mapply(function(str, lim) as.formula(sprintf('x <= %i ~ "%s"', lim, str)),
+                        levels, upper_limits) %>%
+    c(as.formula(sprintf('TRUE ~ "%s"', top_level)))
+  
+  levels = c(levels, top_level)
+  
+  do.call(case_when, formula_list) %>%
+    factor(levels=levels, ordered=TRUE)
+}
+
+usage %>%
+  group_by(age, sex, race, chronic, bene_id) %>%
+  summarize(n_claims=sum(n_claims),
+            n_days=sum(n_days)) %>%
+  ungroup() %>% 
+  mutate(claims_group=bounds_group(n_claims, c(0, 1, 2, 5, 10, 20, 50, 100)),
+         is_female=if_else(sex=='female', 1, 0),
+         is_white=if_else(race=='white', 1, 0)) %>%
+  group_by(claims_group) %>%
+  summarize(n_beneficiaries=n(),
+            mean_age=mean(age),
+            percent_female=mean(is_female)*100,
+            percent_white=mean(is_white)*100,
+            mean_n_chronic_cond=mean(chronic),
+            mean_n_claims=mean(n_claims)) %>%
+  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>% 
+  kable
+```
+
 # Discussion
 
 I used only the 2011 data in this analysis. I intend to extend the analysis to other years. Data from other years could help confirm any of the (relatively small) differences in inequality in consumption.
+
+Surprisingly, the characteristics of the beneficiaries are fairly constant by consumption $n$-tile among those who took antibiotics. Those who took no antibiotics where more male and less white.
