@@ -1,5 +1,5 @@
 ---
-title: "Consumption and resistance across states"
+title: "Consumption and resistance across states and HRRs"
 bibliography: refs.bib
 output:
   html_document:
@@ -10,9 +10,9 @@ output:
 
 # Background
 
-Here I report results of comparisons antibiotic consumption and resistance across states. States they were a convenient middle ground between census regions (in which there is certainly a consumption/resistance association, but where having only 6 data points is disappointing) and HRRs or zipcodes (in which there might be relationships, but would require throwing out a lot of consumption data because the antibiogram data is sparse).
+Here I report results of comparisons antibiotic consumption and resistance across states and HRRs.
 
-In a separate analysis, I determined that the antibiogram data in certain locales, separating the data into those locales decreased variance more than could be expected by chance. Thus, for some bug/drug combinations, it is sensible to break the antibiogram data from census regions down into states, while for other bug/drug combinations, it does not.
+In a separate analysis, I determined that the antibiogram data in certain locales, separating the data into those locales decreased variance more than could be expected by chance. Thus, for some bug/drug combinations, it is sensible to break the antibiogram data from census regions down into states, while for other bug/drug combinations, it does not. Similarly, HRRs can be coherent or not.
 
 # Methods
 
@@ -20,14 +20,14 @@ I used the Medicare Part D data from 2011. Only beneficiaries greater than 65 ye
 
 I selected a set of organisms in the antibiogram to examine. They mostly represent the most abundant organisms in the data. I also matched particular drugs in the consumption data to match to drugs in the resistance data.
 
-For each bug, consumption/resistance drug, and state, I ran a Spearman correlation test and adjusted the $p$-values using the Benjamini-Hochberg method. I also separately adjusted the $p$-values considering only the tests performed on coherent bug/drug/state combinations.
+For each bug, consumption/resistance drug, and state, I ran a Spearman correlation test and adjusted the $p$-values using the Benjamini-Hochberg method. I also separately adjusted the $p$-values considering only the tests performed on coherent bug/drug/state combinations. I performed a similar analysis using HRRs.
 
-The explanatory variable in the correlation was either claims per 1,000 people per year (CPKP) or days' supply (my proxy for daily defined dose) per 1,000 people per day (DID). The dependent variable was always mean percent susceptibility of that bug to that resistance drug across antibiograms from that state.
+The explanatory variable in the correlation was either claims per 1,000 people per year (CPKP) or days' supply (my proxy for daily defined dose) per 1,000 people per day (DID). The dependent variable was always mean percent susceptibility of that bug to that resistance drug across antibiograms from that state/HRR.
 
 # Results
 
 ```{r global_options, include=FALSE}
-knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/',
+knitr::opts_chunk$set(fig.width=7, fig.height=4, cache=TRUE,
                       echo=FALSE, warning=FALSE, message=FALSE)
 ```
 
@@ -75,14 +75,19 @@ I performed this matching by hand.
 coherence = read_tsv('../../../../antibiogram/analysis/geographic-coherence/coherences.tsv') %>%
   rename(resistance_drug=drug) %>%
   mutate(resistance_drug=tolower(resistance_drug),
-         state_coherent=level %in% c('state', 'hrr', 'zipcode')) %>%
-  select(bug, resistance_drug, state_coherent)
+         state_coherent=level %in% c('state', 'hrr', 'zipcode'),
+         hrr_coherent=level %in% c('hrr', 'zipcode')) %>%
+  select(bug, resistance_drug, state_coherent, hrr_coherent)
+
+hrr = read_tsv('../../../db/hrr/hrr_2011.tsv') %>%
+  select(zipcode, hrr)
 
 # Antibiogram data, with individual records
-abg = read_tsv('../../../../antibiogram/data/abg.tsv') %>%
+abg = read_tsv('../../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c')) %>%
   mutate(drug=tolower(drug)) %>%
   rename(resistance_drug=drug) %>%
-  select(bug, resistance_drug, state, percent_susceptible)
+  left_join(hrr, by='zipcode') %>%
+  select(bug, resistance_drug, state, hrr, percent_susceptible)
 
 # swo> State beneficiary information could be used as control variables
 # in regressions
@@ -94,9 +99,17 @@ state_consumption = read_tsv('../bene-consumption/state_usage_2011.tsv') %>%
   rename(consumption_drug=antibiotic) %>%
   select(state, consumption_drug, cpkp, did)
 
-dat = bug_drug %>%
+hrr_consumption = read_tsv('../bene-consumption/hrr_usage_2011.tsv') %>%
+  rename(consumption_drug=antibiotic) %>%
+  select(hrr, consumption_drug, cpkp, did)
+
+state_dat = bug_drug %>%
   left_join(abg, by=c('bug', 'resistance_drug')) %>%
   left_join(state_consumption, by=c('state', 'consumption_drug'))
+
+hrr_dat = bug_drug %>%
+  left_join(abg, by=c('bug', 'resistance_drug')) %>%
+  left_join(hrr_consumption, by=c('hrr', 'consumption_drug'))
 ```
 
 ```{r run_models}
@@ -127,7 +140,7 @@ pvalue_stars = function(x) {
             TRUE ~ '')
 }
 
-res = dat %>%
+state_res = state_dat %>%
   group_by(bug, resistance_drug, state) %>%
   summarize(mean_sus=mean(percent_susceptible, na.rm=TRUE)) %>%
   left_join(bug_drug, by=c('bug', 'resistance_drug')) %>%
@@ -148,8 +161,34 @@ res = dat %>%
          adj.p.value, sig,
          plot_fn, plot_link)
 
-coherent_res = res %>%
+hrr_res = hrr_dat %>%
+  group_by(bug, resistance_drug, hrr) %>%
+  summarize(mean_sus=mean(percent_susceptible, na.rm=TRUE)) %>%
+  left_join(bug_drug, by=c('bug', 'resistance_drug')) %>%
+  left_join(hrr_consumption, by=c('hrr', 'consumption_drug')) %>%
+  mutate_at(vars(cpkp, did), function(x) if_else(is.na(x), 0, x)) %>%
+  group_by(bug, resistance_drug, consumption_drug) %>%
+  do(models(., 'mean_sus')) %>%
+  ungroup %>%
+  filter(!is.na(estimate)) %>%
+  mutate(adj.p.value=p.adjust(p.value, method='BH'),
+         sig=pvalue_stars(adj.p.value)) %>%
+  left_join(coherence, by=c('bug', 'resistance_drug')) %>%
+  mutate(record_number=1:n(),
+         plot_fn=sprintf('plots/hrr-%03i.pdf', record_number),
+         plot_link=pandoc.link.return(url=plot_fn, text='plot')) %>%
+  select(bug, consumption_drug, resistance_drug, hrr_coherent,
+         explanatory, correlation=estimate, p.value,
+         adj.p.value, sig,
+         plot_fn, plot_link)
+
+coherent_state_res = state_res %>%
   filter(state_coherent) %>%
+  mutate(adj.p.value=p.adjust(p.value, method='BH'),
+         sig=pvalue_stars(adj.p.value))
+
+coherent_hrr_res = hrr_res %>%
+  filter(hrr_coherent) %>%
   mutate(adj.p.value=p.adjust(p.value, method='BH'),
          sig=pvalue_stars(adj.p.value))
 ```
@@ -157,10 +196,27 @@ coherent_res = res %>%
 ```{r make_plots, cache=TRUE}
 unlink('plots/*.pdf')
 
-for (i in 1:nrow(res)) {
-  row = res[i,]
+for (i in 1:nrow(state_res)) {
+  row = state_res[i,]
 
-  plot_dat = dat %>%
+  plot_dat = state_dat %>%
+    filter(bug==row$bug, consumption_drug==row$consumption_drug)
+
+  p = plot_dat %>%
+    filter(bug==row$bug, consumption_drug==row$consumption_drug) %>%
+    ggplot(aes_string(row$explanatory, 'percent_susceptible')) +
+    geom_point(shape=1) +
+    xlab(row$explanatory) +
+    ylab('percent susceptible') +
+    theme_minimal()
+
+  ggsave(row$plot_fn, plot=p)
+}
+
+for (i in 1:nrow(hrr_res)) {
+  row = hrr_res[i,]
+
+  plot_dat = hrr_dat %>%
     filter(bug==row$bug, consumption_drug==row$consumption_drug)
 
   p = plot_dat %>%
@@ -179,8 +235,10 @@ for (i in 1:nrow(res)) {
 
 First, I show the results from all correlations:
 
+### State
+
 ```{r display_results}
-res %>%
+state_res %>%
   mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
   select(bug, consumption_drug,
          state_coherent, explanatory, correlation,
@@ -189,10 +247,24 @@ res %>%
   kable
 ```
 
+### HRR
+
+```{r}
+hrr_res %>%
+  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
+  select(bug, consumption_drug,
+         hrr_coherent, explanatory, correlation,
+         adj.p.value, sig,
+         plot_link) %>%
+  kable
+```
+
+### Coherent state
+
 Second, I show the results from the coherent tests only. The $p$-values here are different because I adjusted those values using only this subset of tests.
 
 ```{r display_coherent_result}
-coherent_res %>%
+coherent_state_res %>%
   mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
   select(bug, consumption_drug,
      explanatory, correlation,
@@ -201,10 +273,43 @@ coherent_res %>%
   kable
 ```
 
+### Coherent results from the HRR level
+
+```{r}
+coherent_hrr_res %>%
+  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
+  select(bug, consumption_drug,
+     explanatory, correlation,
+     adj.p.value, sig,
+     plot_link) %>%
+  kable
+```
+
+### State, all points
+
 And I try the same thing again, but this time keeping all the data points:
 
 ```{r correlations_with_all_points}
-dat %>%
+state_dat %>%
+  mutate_at(vars(cpkp, did), function(x) if_else(is.na(x), 0, x)) %>%
+  group_by(bug, resistance_drug, consumption_drug) %>%
+  do(models(., 'percent_susceptible')) %>%
+  ungroup %>%
+  left_join(coherence, by=c('bug', 'resistance_drug')) %>%
+  filter(!is.na(estimate), hrr_coherent) %>%
+  mutate(adj.p.value=p.adjust(p.value, method='BH'),
+         sig=pvalue_stars(adj.p.value)) %>%
+  select(bug, consumption_drug, resistance_drug,
+         explanatory, correlation=estimate, p.value,
+         adj.p.value, sig) %>%
+  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
+  kable
+```
+
+### HRR, all points
+
+```{r}
+hrr_dat %>%
   mutate_at(vars(cpkp, did), function(x) if_else(is.na(x), 0, x)) %>%
   group_by(bug, resistance_drug, consumption_drug) %>%
   do(models(., 'percent_susceptible')) %>%
