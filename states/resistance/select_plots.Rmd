@@ -1,0 +1,109 @@
+---
+title: "Select consumption vs resistance plots"
+bibliography: refs.bib
+output:
+  html_document:
+    fig_height: 4
+  pdf_document:
+    fig_height: 3
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r load_data}
+# Antibiogram data, with individual records
+abg = read_tsv('../../../../antibiogram/data/abg.tsv') %>%
+  mutate(drug=tolower(drug)) %>%
+  rename(resistance_drug=drug) %>%
+  select(bug, resistance_drug, state, percent_susceptible)
+
+# State-level consumption data
+state_consumption = read_tsv('../bene-consumption/state_usage_2011.tsv') %>%
+  rename(consumption_drug=antibiotic) %>%
+  select(state, consumption_drug, cpkp, did)
+```
+
+E. coli against cipro resistance and consumption. First plot is against state means; second includes all data points.
+
+```{r ecoli_cipro}
+cons = state_consumption %>%
+  filter(consumption_drug=='ciprofloxacin')
+
+res = abg %>%
+  filter(resistance_drug=='ciprofloxacin', bug=='Escherichia coli') %>%
+  mutate(pct_nonsus=100-percent_susceptible)
+
+res_sum = res %>%
+  group_by(state) %>%
+  summarize(mean_pct_nonsus=mean(pct_nonsus))
+
+full_join(cons, res_sum, by='state') %>%
+  filter(!is.na(mean_pct_nonsus), !is.na(cpkp)) %>%
+  ggplot(aes(x=cpkp, y=mean_pct_nonsus)) +
+  geom_point() +
+  geom_smooth(method='glm', se=FALSE) +
+  ylim(c(0, 50)) +
+  xlab('ciprofloxacin claims per 1,000 people per year') + ylab('mean percent cirpo. non-susceptible E. coli') +
+  theme_minimal()
+```
+
+```{r ecoli_cipro_all}
+dat_all = bind_rows(
+  res %>% mutate(summary=FALSE),
+  res_sum %>% rename(pct_nonsus=mean_pct_nonsus) %>% mutate(summary=TRUE)
+) %>% 
+  full_join(cons, by='state') %>% 
+  filter(!is.na(pct_nonsus), !is.na(cpkp))
+  ggplot(dat_all %>% filter(summary), aes(x=cpkp, y=pct_nonsus)) +
+  geom_point() +
+  geom_point(dat=dat_all %>% filter(!summary), shape=1, size=0.5) +
+  geom_smooth(dat=dat_all %>% filter(!summary), method='glm', se=FALSE, col='gray') +
+  geom_smooth(method='glm', se=FALSE) +
+  ylim(c(0, 75)) +
+  xlab('ciprofloxacin claims per 1,000 people per year') + ylab('percent cipro. non-susceptible E. coli') +
+  theme_minimal()
+```
+
+S. pneumoniae against azithromycin consumption and erythromycin resistance.
+
+```{r strep_azi}
+cons = state_consumption %>%
+  filter(consumption_drug=='azithromycin')
+
+res = abg %>%
+  filter(resistance_drug=='erythromycin', bug=='Streptococcus pneumoniae (non-meningitis)') %>%
+  mutate(pct_nonsus=100-percent_susceptible)
+
+res_sum = res %>%
+  group_by(state) %>%
+  summarize(mean_pct_nonsus=mean(pct_nonsus))
+
+full_join(cons, res_sum, by='state') %>%
+  filter(!is.na(mean_pct_nonsus), !is.na(cpkp)) %>%
+  ggplot(aes(x=cpkp, y=mean_pct_nonsus)) +
+  geom_point() +
+  geom_smooth(method='glm', se=FALSE) +
+  ylim(c(0, 75)) +
+  xlab('azithromycin claims per 1,000 people per year') + ylab('mean percent azith. non-susceptible S. pneumoniae') +
+  theme_minimal()
+```
+
+```{r strep_azi_all}
+dat_all = bind_rows(
+  res %>% mutate(summary=FALSE),
+  res_sum %>% rename(pct_nonsus=mean_pct_nonsus) %>% mutate(summary=TRUE)
+) %>% 
+  full_join(cons, by='state') %>% 
+  filter(!is.na(pct_nonsus), !is.na(cpkp))
+  ggplot(dat_all %>% filter(summary), aes(x=cpkp, y=pct_nonsus)) +
+  geom_point() +
+  geom_point(dat=dat_all %>% filter(!summary), shape=1, size=0.5) +
+  geom_smooth(dat=dat_all %>% filter(!summary), method='glm', se=FALSE, col='gray') +
+  geom_smooth(method='glm', se=FALSE) +
+  ylim(c(0, 75)) +
+  xlab('azithromycin claims per 1,000 people per year') + ylab('percent eryth. non-susceptible S. pneumoniae') +
+  theme_minimal()
+```
