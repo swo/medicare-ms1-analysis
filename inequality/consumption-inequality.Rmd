@@ -164,6 +164,29 @@ inequality_by_state %>%
   kable
 ```
 
+These data break down, to some degree, by region: the fraction nonzero is highest for states in the South, but the inequality among users is highest for users in the Midwest.
+
+```{r show_inequality_by_region}
+regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
+  select(state, region)
+
+inequality_by_region = inequality_by_state %>%
+  filter(consumption_metric=='n_claims') %>%
+  left_join(regions, by='state')
+
+inequality_by_region %>%
+  ggplot(aes(x=n_bene, y=fraction_nonzero, color=region)) +
+  geom_point() +
+  xlab('number of beneficiaries in state') + ylab('fraction of beneficiaries with at least one claim') +
+  theme_minimal()
+
+inequality_by_region %>%
+  ggplot(aes(x=n_bene, y=juran_nonzero, color=region)) +
+  geom_point() +
+  xlab('number of beneficiaries in state') + ylab('Juran index for days of antibiotics among users') +
+  theme_minimal()
+```
+
 ## Characteristics by consumption
 
 I broke down the beneficiaries based on their consumption: those who had no antibiotic claims were in one "tile", and I separated the rest into $n$-tiles.
