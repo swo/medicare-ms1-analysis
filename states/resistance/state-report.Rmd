@@ -75,19 +75,20 @@ I performed this matching by hand.
 coherence = read_tsv('../../../../antibiogram/analysis/geographic-coherence/coherences.tsv') %>%
   rename(resistance_drug=drug) %>%
   mutate(resistance_drug=tolower(resistance_drug),
-         state_coherent=level %in% c('state', 'hrr', 'zipcode'),
-         hrr_coherent=level %in% c('hrr', 'zipcode')) %>%
-  select(bug, resistance_drug, state_coherent, hrr_coherent)
+         state=level %in% c('state', 'hrr', 'zipcode'),
+         hrr=level %in% c('hrr', 'zipcode')) %>%
+  select(bug, resistance_drug, state, hrr) %>%
+  gather('place', 'coherent', state, hrr)
 
 hrr = read_tsv('../../../db/hrr/hrr_2011.tsv') %>%
   select(zipcode, hrr)
 
 # Antibiogram data, with individual records
 abg = read_tsv('../../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c')) %>%
-  mutate(drug=tolower(drug)) %>%
+  mutate(drug=tolower(drug), percent_nonsusceptible=100-percent_susceptible) %>%
   rename(resistance_drug=drug) %>%
   left_join(hrr, by='zipcode') %>%
-  select(bug, resistance_drug, state, hrr, percent_susceptible)
+  select(bug, resistance_drug, state, hrr, percent_nonsusceptible)
 
 # swo> State beneficiary information could be used as control variables
 # in regressions
@@ -121,15 +122,12 @@ safe_spearman = function(df, expl, indep) {
   }
 }
 
-models = function(df, indep) {
-  out = data_frame()
-  for (expl in c('cpkp', 'did')) {
-    new_rows = safe_spearman(df, expl, indep) %>%
+models = function(df, indep, keep=NULL) {
+  lapply(c('cpkp', 'did'), function(expl) {
+    safe_spearman(df, expl, indep) %>%
       mutate(explanatory=expl)
-
-    out = bind_rows(out, new_rows)
-  }
-  out
+  }) %>%
+    bind_rows
 }
 
 pvalue_stars = function(x) {
@@ -140,91 +138,71 @@ pvalue_stars = function(x) {
             TRUE ~ '')
 }
 
-state_res = state_dat %>%
-  group_by(bug, resistance_drug, state) %>%
-  summarize(mean_sus=mean(percent_susceptible, na.rm=TRUE)) %>%
-  left_join(bug_drug, by=c('bug', 'resistance_drug')) %>%
-  left_join(state_consumption, by=c('state', 'consumption_drug')) %>%
-  mutate_at(vars(cpkp, did), function(x) if_else(is.na(x), 0, x)) %>%
-  group_by(bug, resistance_drug, consumption_drug) %>%
-  do(models(., 'mean_sus')) %>%
-  ungroup %>%
-  filter(!is.na(estimate)) %>%
-  mutate(adj.p.value=p.adjust(p.value, method='BH'),
-         sig=pvalue_stars(adj.p.value)) %>%
-  left_join(coherence, by=c('bug', 'resistance_drug')) %>%
-  mutate(record_number=1:n(),
-         plot_fn=sprintf('plots/%03i.pdf', record_number),
-         plot_link=pandoc.link.return(url=plot_fn, text='plot')) %>%
-  select(bug, consumption_drug, resistance_drug, state_coherent,
-         explanatory, correlation=estimate, p.value,
-         adj.p.value, sig,
-         plot_fn, plot_link)
-
-hrr_res = hrr_dat %>%
-  group_by(bug, resistance_drug, hrr) %>%
-  summarize(mean_sus=mean(percent_susceptible, na.rm=TRUE)) %>%
-  left_join(bug_drug, by=c('bug', 'resistance_drug')) %>%
-  left_join(hrr_consumption, by=c('hrr', 'consumption_drug')) %>%
-  mutate_at(vars(cpkp, did), function(x) if_else(is.na(x), 0, x)) %>%
-  group_by(bug, resistance_drug, consumption_drug) %>%
-  do(models(., 'mean_sus')) %>%
-  ungroup %>%
-  filter(!is.na(estimate)) %>%
-  mutate(adj.p.value=p.adjust(p.value, method='BH'),
-         sig=pvalue_stars(adj.p.value)) %>%
-  left_join(coherence, by=c('bug', 'resistance_drug')) %>%
-  mutate(record_number=1:n(),
-         plot_fn=sprintf('plots/hrr-%03i.pdf', record_number),
-         plot_link=pandoc.link.return(url=plot_fn, text='plot')) %>%
-  select(bug, consumption_drug, resistance_drug, hrr_coherent,
-         explanatory, correlation=estimate, p.value,
-         adj.p.value, sig,
-         plot_fn, plot_link)
-
-coherent_state_res = state_res %>%
-  filter(state_coherent) %>%
-  mutate(adj.p.value=p.adjust(p.value, method='BH'),
-         sig=pvalue_stars(adj.p.value))
-
-coherent_hrr_res = hrr_res %>%
-  filter(hrr_coherent) %>%
-  mutate(adj.p.value=p.adjust(p.value, method='BH'),
-         sig=pvalue_stars(adj.p.value))
-```
-
-```{r make_plots, cache=TRUE}
-unlink('plots/*.pdf')
-
-for (i in 1:nrow(state_res)) {
-  row = state_res[i,]
-
-  plot_dat = state_dat %>%
-    filter(bug==row$bug, consumption_drug==row$consumption_drug)
-
-  p = plot_dat %>%
-    filter(bug==row$bug, consumption_drug==row$consumption_drug) %>%
-    ggplot(aes_string(row$explanatory, 'percent_susceptible')) +
-    geom_point(shape=1) +
-    xlab(row$explanatory) +
-    ylab('percent susceptible') +
-    theme_minimal()
-
-  ggsave(row$plot_fn, plot=p)
+models_result = function(x, this_place, consumption) {
+  result = x %>%
+    group_by_('bug', 'resistance_drug', this_place) %>%
+    summarize(mean_nonsus=mean(percent_nonsusceptible, na.rm=TRUE)) %>%
+    left_join(bug_drug, by=c('bug', 'resistance_drug')) %>%
+    left_join(consumption, by=c(this_place, 'consumption_drug')) %>%
+    mutate_at(vars(cpkp, did), function(x) if_else(is.na(x), 0, x)) %>%
+    group_by(bug, resistance_drug, consumption_drug) %>%
+    do(models(., 'mean_nonsus')) %>%
+    ungroup %>%
+    filter(!is.na(estimate)) %>%
+    mutate(adj.p.value=p.adjust(p.value, method='BH'),
+           sig=pvalue_stars(adj.p.value)) %>%
+    left_join(filter(coherence, place==this_place), by=c('bug', 'resistance_drug')) %>%
+    mutate(record_number=1:n(),
+           plot_fn=sprintf('plots/%s_%03i.pdf', this_place, record_number),
+           plot_link=pandoc.link.return(url=plot_fn, text='plot')) %>%
+    select(bug, consumption_drug, resistance_drug, coherent,
+           explanatory, correlation=estimate, p.value,
+           adj.p.value, sig,
+           plot_fn, plot_link)
+  
+  # add adjusted p-values for just the coherent stuff
+  # swo> there's probably a more elegant way to do this
+  coherent.adj.p.value = result %>%
+    filter(coherent) %$%
+    p.adjust(p.value, method='BH')
+  coherent.sig = pvalue_stars(coherent.adj.p.value)
+  result$coherent.adj.p.value = NA
+  result$coherent.sig = NA
+  result$coherent.adj.p.value[result$coherent] = coherent.adj.p.value
+  result$coherent.sig[result$coherent] = coherent.sig
+  
+  result
 }
 
-for (i in 1:nrow(hrr_res)) {
-  row = hrr_res[i,]
+state_res = models_result(state_dat, 'state', state_consumption)
+hrr_res = models_result(hrr_dat, 'hrr', hrr_consumption)
 
-  plot_dat = hrr_dat %>%
-    filter(bug==row$bug, consumption_drug==row$consumption_drug)
+result = bind_rows(
+  state_res %>% mutate(place='state'),
+  hrr_res %>% mutate(place='hrr')
+)
+```
+
+```{r make_plots}
+unlink('plots/*.pdf')
+
+for (i in 1:nrow(result)) {
+  row = result[i,]
+  
+  if (row$place == 'state') {
+    plot_dat = state_dat
+  } else if (row$place == 'hrr') {
+    plot_dat = hrr_dat
+  } else {
+    plot_dat = NULL
+  }
 
   p = plot_dat %>%
     filter(bug==row$bug, consumption_drug==row$consumption_drug) %>%
-    ggplot(aes_string(row$explanatory, 'percent_susceptible')) +
+    ggplot(aes_string(row$explanatory, 'percent_nonsusceptible')) +
     geom_point(shape=1) +
     xlab(row$explanatory) +
-    ylab('percent susceptible') +
+    ylab('percent non-susceptible') +
     theme_minimal()
 
   ggsave(row$plot_fn, plot=p)
@@ -233,18 +211,36 @@ for (i in 1:nrow(hrr_res)) {
 
 ## Consumption and resistance
 
-First, I show the results from all correlations:
+Here a relationship where increased consumption leads to increased nonsusceptibility is encoded in a positive correlation.
 
-### State
+### Geography-averaged results
 
-```{r display_results}
-state_res %>%
+In these results, the percent nonsusceptible in each geography (state or HRR) was averaged, and the averages of the nonsusceptibilities were compared against the consumption data.
+
+#### State-level geography-averaged correlations
+
+```{r state_average_results_table}
+results %>%
+  filter(place=='state') %>%
   mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
   select(bug, consumption_drug,
-         state_coherent, explanatory, correlation,
+         coherent, explanatory, correlation,
          adj.p.value, sig,
          plot_link) %>%
   kable
+```
+
+There correlations are mostly positive, but only a small number are significant (red line marks $p = 0.05$):
+
+```{r state_average_histogram}
+result %>%
+  filter(place=='state') %>%
+  ggplot(aes(x=correlation, y=adj.p.value)) +
+  geom_point() +
+  geom_hline(yintercept=0.05, col='red') +
+  xlab('correlation coefficient') + ylab('p value (reversed)') +
+  scale_y_reverse() +
+  theme_minimal()
 ```
 
 ### HRR
