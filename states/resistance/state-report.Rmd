@@ -51,7 +51,7 @@ resistance_groups = read_tsv('resistance_groups.tsv')
 
 I selected a list of organisms from the ones that were most abundant in the data:
 
-`r data_frame(organsisms=organisms) %>% kable`
+`r organisms`
 
 ## Matching consumption and resistance drugs
 
@@ -67,16 +67,9 @@ I chose not to merge the penicillin and amoxicillin groups because antibiograms 
 
 ## Consumption and resistance data
 
+I used the 2011 Medicare data.
+
 ```{r load_data}
-
-coherence = read_tsv('../../../../antibiogram/analysis/geographic-coherence/coherences.tsv') %>%
-  rename(resistance_drug=drug) %>%
-  mutate(resistance_drug=tolower(resistance_drug),
-         state=level %in% c('state', 'hrr', 'zipcode'),
-         hrr=level %in% c('hrr', 'zipcode')) %>%
-  select(bug, resistance_drug, state, hrr) %>%
-  gather('place', 'coherent', state, hrr)
-
 hrr = read_tsv('../../../db/hrr/hrr_2011.tsv') %>%
   select(zipcode, hrr)
 
@@ -124,19 +117,15 @@ To ensure coherence, I only use the bug/drug combinations that appear in antibio
 
 ```{r run_models}
 safe_spearman = function(df, expl, indep) {
-  if (dim(df)[1] < 3L) {
-    data_frame(estimate=NA, statistic=NA, p.value=NA, method=NA, alternative=NA)
-  } else {
-    cor.test(df[[indep]], df[[expl]], method='spearman') %>% tidy
-  }
+  try(return(cor.test(df[[indep]], df[[expl]], method='spearman') %>% tidy), silent=TRUE)
+  data_frame(estimate=NA, statistic=NA, p.value=NA, method=NA, alternative=NA)
 }
 
 models = function(df, indep, keep=NULL) {
   lapply(c('cpkp', 'did'), function(expl) {
     safe_spearman(df, expl, indep) %>%
       mutate(explanatory=expl)
-  }) %>%
-    bind_rows
+  }) %>% bind_rows
 }
 
 pvalue_stars = function(x) {
@@ -147,44 +136,29 @@ pvalue_stars = function(x) {
             TRUE ~ '')
 }
 
-models_result = function(x, this_place, consumption) {
-  result = x %>%
-    group_by_('bug', 'resistance_drug', this_place) %>%
-    summarize(mean_nonsus=mean(percent_nonsusceptible, na.rm=TRUE)) %>%
-    left_join(bug_drug, by=c('bug', 'resistance_drug')) %>%
-    left_join(consumption, by=c(this_place, 'consumption_drug')) %>%
-    mutate_at(vars(cpkp, did), function(x) if_else(is.na(x), 0, x)) %>%
-    group_by(bug, resistance_drug, consumption_drug) %>%
+models_result = function(x, this_place) {
+  x %>%
+    group_by_('bug', 'drug_group', this_place) %>%
+    summarize(mean_nonsus=mean(percent_nonsusceptible, na.rm=TRUE),
+              cpkp=head(cpkp, 1),
+              did=head(did, 1)) %>%
+    group_by(bug, drug_group) %>%
     do(models(., 'mean_nonsus')) %>%
     ungroup %>%
     filter(!is.na(estimate)) %>%
     mutate(adj.p.value=p.adjust(p.value, method='BH'),
            sig=pvalue_stars(adj.p.value)) %>%
-    left_join(filter(coherence, place==this_place), by=c('bug', 'resistance_drug')) %>%
     mutate(record_number=1:n(),
            plot_fn=sprintf('plots/%s_%03i.pdf', this_place, record_number),
            plot_link=pandoc.link.return(url=plot_fn, text='plot')) %>%
-    select(bug, consumption_drug, resistance_drug, coherent,
+    select(bug, drug_group,
            explanatory, correlation=estimate, p.value,
            adj.p.value, sig,
            plot_fn, plot_link)
-  
-  # add adjusted p-values for just the coherent stuff
-  # swo> there's probably a more elegant way to do this
-  coherent.adj.p.value = result %>%
-    filter(coherent) %$%
-    p.adjust(p.value, method='BH')
-  coherent.sig = pvalue_stars(coherent.adj.p.value)
-  result$coherent.adj.p.value = NA
-  result$coherent.sig = NA
-  result$coherent.adj.p.value[result$coherent] = coherent.adj.p.value
-  result$coherent.sig[result$coherent] = coherent.sig
-  
-  result
 }
 
-state_res = models_result(state_dat, 'state', state_consumption)
-hrr_res = models_result(hrr_dat, 'hrr', hrr_consumption)
+state_res = models_result(state_dat, 'state')
+hrr_res = models_result(hrr_dat, 'hrr')
 
 result = bind_rows(
   state_res %>% mutate(place='state'),
@@ -207,7 +181,7 @@ for (i in 1:nrow(result)) {
   }
 
   p = plot_dat %>%
-    filter(bug==row$bug, consumption_drug==row$consumption_drug) %>%
+    filter(bug==row$bug, drug_group==row$drug_group) %>%
     ggplot(aes_string(row$explanatory, 'percent_nonsusceptible')) +
     geom_point(shape=1) +
     xlab(row$explanatory) +
@@ -224,24 +198,24 @@ for (i in 1:nrow(result)) {
 
 Here a relationship where increased consumption leads to increased nonsusceptibility is encoded in a positive correlation.
 
-### All resistance-averaged results
+### Resistance-averaged results
 
 In these results, the percent nonsusceptible in each geography (state or HRR) was averaged, and the averages of the nonsusceptibilities were compared against the consumption data.
 
-#### All state-level averaged-resistance correlations
+#### State-level resistance-averaged correlations
 
 ```{r state_average_results_table}
 result %>%
   filter(place=='state') %>%
   mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
-  select(bug, consumption_drug,
-         coherent, explanatory, correlation,
+  select(bug, drug_group,
+         explanatory, correlation,
          adj.p.value, sig,
          plot_link) %>%
   kable
 ```
 
-There correlations are mostly positive, but only a small number are significant (red line marks $p = 0.05$). The significant negative correlation is for MRSA and TMP-SMX.
+(red line marks $p = 0.05$).
 
 ```{r state_average_volcano}
 result %>%
@@ -254,20 +228,20 @@ result %>%
   theme_minimal()
 ```
 
-#### All HRR-level averaged-resistance
+#### HRR-level resistance-averaged
 
 ```{r hrr_average_results_table}
 result %>%
   filter(place=='hrr') %>%
   mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
-  select(bug, consumption_drug,
-         coherent, explanatory, correlation,
+  select(bug, drug_group,
+         explanatory, correlation,
          adj.p.value, sig,
          plot_link) %>%
   kable
 ```
 
-Like with the state-level data, only a small number are significant (red line marks $p = 0.05$), but the correlations seem more split positive and negative.
+(red line marks $p = 0.05$)
 
 ```{r hrr_average_histogram}
 result %>%
@@ -280,95 +254,25 @@ result %>%
   theme_minimal()
 ```
 
-The results from the HRR level differ: both identified a relationship between *E. coli* and cipro and MSSA and azithromycin. However, the state-level data  identified a negative relationship between MRSA and Bactrim while the HRR data identified a negative relationship between *K. pneumoniae* and Bactrim. The state-level data also identified *S. pneumoniae* and azithromycin.
+**swo adjust** The results from the HRR level differ: both identified a relationship between *E. coli* and cipro and MSSA and azithromycin. However, the state-level data  identified a negative relationship between MRSA and Bactrim while the HRR data identified a negative relationship between *K. pneumoniae* and Bactrim. The state-level data also identified *S. pneumoniae* and azithromycin.
 
-### Coherent resistance-averaged
-
-Second, I show the results from the coherent tests only. The $p$-values here are different because I adjusted those values using only this subset of tests.
-
-The plots (in the links) here are the same as before. They're actually showing all the data. I should probably have plots that show just the averaged points.
-
-#### Coherent state-level averaged-resistance correlations
-
-```{r coherent_state_average_results_table}
-result %>%
-  filter(place=='state', coherent) %>%
-  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
-  select(bug, consumption_drug,
-         explanatory, correlation,
-         coherent.adj.p.value, coherent.sig,
-         plot_link) %>%
-  kable
-```
-
-There correlations are mostly positive, and one or two more are significant (red line marks $p = 0.05$):
-
-```{r coherent_state_average_histogram}
-result %>%
-  filter(place=='state', coherent) %>%
-  ggplot(aes(x=correlation, y=coherent.adj.p.value)) +
-  geom_point() +
-  geom_hline(yintercept=0.05, col='red') +
-  xlab('correlation coefficient') + ylab('p value (reversed)') +
-  scale_y_reverse() +
-  theme_minimal()
-```
-
-#### All HRR-level averaged-resistance
-
-```{r coherent_hrr_average_results_table}
-result %>%
-  filter(place=='hrr', coherent) %>%
-  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
-  select(bug, consumption_drug,
-         explanatory, correlation,
-         coherent.adj.p.value, coherent.sig,
-         plot_link) %>%
-  kable
-```
-
-```{r coherent_hrr_average_histogram}
-result %>%
-  filter(place=='hrr', coherent) %>%
-  ggplot(aes(x=correlation, y=coherent.adj.p.value)) +
-  geom_point() +
-  geom_hline(yintercept=0.05, col='red') +
-  xlab('correlation coefficient') + ylab('p value (reversed)') +
-  scale_y_reverse() +
-  theme_minimal()
-```
-
-### All bug/drug, all-antibiogram results
+### All-antibiogram results
 
 In these data, I don't average the resistance before running the correlation, but I do associate each antibiogram with the same geography-wide consumption.
 
 ```{r}
 all_models_result = function(x, this_place, consumption) {
-  result = x %>%
+  x %>%
     mutate_at(vars(cpkp, did), function(x) if_else(is.na(x), 0, x)) %>%
-    group_by(bug, resistance_drug, consumption_drug) %>%
+    group_by(bug, drug_group) %>%
     do(models(., 'percent_nonsusceptible')) %>%
     ungroup %>%
     filter(!is.na(estimate)) %>%
     mutate(adj.p.value=p.adjust(p.value, method='BH'),
            sig=pvalue_stars(adj.p.value)) %>%
-    left_join(filter(coherence, place==this_place), by=c('bug', 'resistance_drug')) %>%
-    select(bug, consumption_drug, resistance_drug, coherent,
+    select(bug, drug_group,
            explanatory, correlation=estimate, p.value,
            adj.p.value, sig)
-  
-  # add adjusted p-values for just the coherent stuff
-  # swo> there's probably a more elegant way to do this
-  coherent.adj.p.value = result %>%
-    filter(coherent) %$%
-    p.adjust(p.value, method='BH')
-  coherent.sig = pvalue_stars(coherent.adj.p.value)
-  result$coherent.adj.p.value = NA
-  result$coherent.sig = NA
-  result$coherent.adj.p.value[result$coherent] = coherent.adj.p.value
-  result$coherent.sig[result$coherent] = coherent.sig
-  
-  result
 }
 
 all_state_res = all_models_result(state_dat, 'state', state_consumption)
@@ -380,7 +284,7 @@ all_result = bind_rows(
 )
 ```
 
-#### All bug/drug, state-wide consumption, all-antibiogram
+#### State-wide consumption, all-antibiogram
 
 ```{r}
 all_result %>%
@@ -392,7 +296,7 @@ all_result %>%
   kable
 ```
 
-#### All bug/drug, HRR-wide consumption, all-antibiogram
+#### HRR-wide consumption, all-antibiogram
 
 ```{r}
 all_result %>%
@@ -401,40 +305,6 @@ all_result %>%
   select(bug, consumption_drug, 
          explanatory, correlation, p.value,
          adj.p.value, sig) %>%
-  kable
-```
-
-#### Coherent, state-wide consumption, all-antibiogram
-
-```{r}
-all_result %>%
-  filter(place=='state', coherent) %>%
-  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
-  select(bug, consumption_drug,
-         explanatory, correlation,
-         coherent.adj.p.value, coherent.sig) %>%
-  kable
-```
-
-```{r}
-all_result %>%
-  filter(place=='state', coherent, explanatory=='cpkp') %>%
-  ggplot(aes(x=correlation, y=coherent.adj.p.value)) +
-  geom_point() +
-  geom_hline(yintercept=0.05, col='red') +
-  scale_y_reverse() +
-  theme_minimal()
-```
-
-#### Coherent, HRR-wide consumption, all-antibiogram
-
-```{r}
-all_result %>%
-  filter(place=='hrr', coherent) %>%
-  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
-  select(bug, consumption_drug,
-         explanatory, correlation,
-         coherent.adj.p.value, coherent.sig) %>%
   kable
 ```
 
