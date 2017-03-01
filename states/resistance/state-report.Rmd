@@ -32,6 +32,7 @@ knitr::opts_chunk$set(fig.width=7, fig.height=4, cache=TRUE,
 ```{r setup}
 library(broom)
 library(pander)
+library(assertr)
 
 gram_negs = c('Escherichia coli', 'Klebsiella pneumoniae',
               'Proteus mirabilis', 'Enterobacter cloacae',
@@ -79,14 +80,14 @@ abg = read_tsv('../../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c
   left_join(hrr, by='zipcode') %>%
   right_join(resistance_groups, by='drug') %>%
   filter(bug %in% organisms) %>%
-  select(bug, drug_group, state, hrr, percent_nonsusceptible)
+  select(bug, drug_group, state, hrr, percent_nonsusceptible, n_isolates)
 
 # Keep only those bug/drug combinations that are in at least 20 states
 abg %<>%
   select(bug, drug_group, state) %>%
   distinct %>%
-  count(bug, drug_group) %>%
-  filter(n >= 20) %>%
+  count(bug, drug_group) %>% rename(n_states=n) %>%
+  filter(n_states >= 20) %>%
   left_join(abg, by=c('bug', 'drug_group'))
 
 # swo> State beneficiary information could be used as control variables
@@ -165,6 +166,47 @@ result = bind_rows(
   hrr_res %>% mutate(place='hrr')
 )
 ```
+
+Linear models:
+
+```{r}
+safe_lm = function(data, indep, expl) {
+  try(return(lm(sprintf('%s ~ %s', indep, expl), data) %>% tidy), silent=TRUE)
+  data_frame(term=expl, estimate=NA, std.error=NA, statistic=NA, p.value=1.0)
+}
+
+linear_models = function(df, indep) {
+  lapply(c('cpkp', 'did'), function(expl) {
+    safe_lm(df, indep, expl) %>%
+      filter(term==expl) %>%
+      rename(explanatory=term) %>%
+      verify(nrow(.) == 1)
+  }) %>% bind_rows
+}
+
+linear_models_result = function(x, this_place) {
+  x %>%
+    group_by_('bug', 'drug_group', this_place) %>%
+    summarize(mean_nonsus=mean(percent_nonsusceptible, na.rm=TRUE),
+              cpkp=head(cpkp, 1),
+              did=head(did, 1)) %>%
+    group_by(bug, drug_group) %>%
+    do(linear_models(., 'mean_nonsus')) %>%
+    ungroup %>%
+    filter(!is.na(estimate)) %>%
+    mutate(adj.p.value=p.adjust(p.value, method='BH'),
+           sig=pvalue_stars(adj.p.value)) %>%
+    select(bug, drug_group,
+           explanatory, slope=estimate, p.value,
+           adj.p.value, sig)
+}
+
+linear_state_res = linear_models_result(state_dat, 'state')
+
+linear_state_res %>% kable
+```
+
+end linear models
 
 ```{r make_plots}
 unlink('plots/*.pdf')
@@ -290,7 +332,7 @@ all_result = bind_rows(
 all_result %>%
   filter(place=='state') %>% 
   mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
-  select(bug, consumption_drug, 
+  select(bug, drug_group, 
          explanatory, correlation, p.value,
          adj.p.value, sig) %>%
   kable
@@ -302,7 +344,7 @@ all_result %>%
 all_result %>%
   filter(place=='hrr') %>% 
   mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
-  select(bug, consumption_drug, 
+  select(bug, drug_group, 
          explanatory, correlation, p.value,
          adj.p.value, sig) %>%
   kable
