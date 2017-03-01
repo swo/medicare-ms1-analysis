@@ -42,6 +42,9 @@ gram_poss = c('Coagulase-negative staphylococci',
               'Streptococcus pneumoniae (non-meningitis)',
               'Staphylococcus aureus')
 organisms = c(gram_negs, gram_poss)
+
+consumption_groups = read_tsv('consumption_groups.tsv')
+resistance_groups = read_tsv('resistance_groups.tsv')
 ```
 
 ## Organisms
@@ -65,8 +68,6 @@ I chose not to merge the penicillin and amoxicillin groups because antibiograms 
 ## Consumption and resistance data
 
 ```{r load_data}
-consumption_groups = read_tsv('consumption_groups.tsv')
-resistance_groups = read_tsv('resistance_groups.tsv')
 
 coherence = read_tsv('../../../../antibiogram/analysis/geographic-coherence/coherences.tsv') %>%
   rename(resistance_drug=drug) %>%
@@ -84,8 +85,16 @@ abg = read_tsv('../../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c
   mutate(drug=tolower(drug), percent_nonsusceptible=100-percent_susceptible) %>%
   left_join(hrr, by='zipcode') %>%
   right_join(resistance_groups, by='drug') %>%
-  filter(big %in% organisms) %>%
+  filter(bug %in% organisms) %>%
   select(bug, drug_group, state, hrr, percent_nonsusceptible)
+
+# Keep only those bug/drug combinations that are in at least 20 states
+abg %<>%
+  select(bug, drug_group, state) %>%
+  distinct %>%
+  count(bug, drug_group) %>%
+  filter(n >= 20) %>%
+  left_join(abg, by=c('bug', 'drug_group'))
 
 # swo> State beneficiary information could be used as control variables
 # in regressions
@@ -111,7 +120,7 @@ hrr_dat = left_join(abg, hrr_consumption, by=c('drug_group', 'hrr'))
 
 ## Coherence of bug/drug combinations in resistance data
 
-I want to be able to filter the bug/drug combinations by whether they are coherent in the resistance data. Does the geography (state or HRR) actually have any effect on the 
+To ensure coherence, I only use the bug/drug combinations that appear in antibiograms in at least 20 states. This is equivalent to filtering those bug/drug combinations that have at least 125 records. 
 
 ```{r run_models}
 safe_spearman = function(df, expl, indep) {
@@ -412,7 +421,7 @@ all_result %>%
   filter(place=='state', coherent, explanatory=='cpkp') %>%
   ggplot(aes(x=correlation, y=coherent.adj.p.value)) +
   geom_point() +
-  geom_abline(yintercept=0.05, col='red') +
+  geom_hline(yintercept=0.05, col='red') +
   scale_y_reverse() +
   theme_minimal()
 ```
