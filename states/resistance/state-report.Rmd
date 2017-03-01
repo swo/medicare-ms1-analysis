@@ -24,8 +24,6 @@ For each bug, consumption/resistance drug, and state, I ran a Spearman correlati
 
 The explanatory variable in the correlation was either claims per 1,000 people per year (CPKP) or days' supply (my proxy for daily defined dose) per 1,000 people per day (DID). The dependent variable was always mean percent susceptibility of that bug to that resistance drug across antibiograms from that state/HRR.
 
-# Results
-
 ```{r global_options, include=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, cache=TRUE,
                       echo=FALSE, warning=FALSE, message=FALSE)
@@ -44,35 +42,32 @@ gram_poss = c('Coagulase-negative staphylococci',
               'Streptococcus pneumoniae (non-meningitis)',
               'Staphylococcus aureus')
 organisms = c(gram_negs, gram_poss)
-
-consumption_drugs=c('trimethoprim/sulfamethoxazole', 'ciprofloxacin',
-                    'levofloxacin', 'ceftriaxone', 'nitrofurantoin',
-                    'amoxicillin', 'penicillin', 'doxycycline',
-                    'azithromycin')
-resistance_drugs=c('trimethoprim-sulfamethoxazole', 'ciprofloxacin',
-                   'levofloxacin', 'ceftriaxone', 'nitrofurantoin',
-                   'ampicillin', 'penicillin',
-                   'tetracycline/doxycycline', 'erythromycin')
-
-consumption_resistance = data_frame(consumption_drug=consumption_drugs,
-                                    resistance_drug=resistance_drugs)
-
-# get all bug/drug combos (i.e., all bug/cons drug combos with appropriate res drugs)
-bug_drug = expand.grid(bug=organisms,
-                       consumption_drug=consumption_drugs,
-                       stringsAsFactors=FALSE) %>%
-  as_data_frame() %>%
-  left_join(consumption_resistance, by='consumption_drug') %>%
-  select(bug, consumption_drug, resistance_drug)
 ```
+
+## Organisms
+
+I selected a list of organisms from the ones that were most abundant in the data:
+
+`r data_frame(organsisms=organisms) %>% kable`
 
 ## Matching consumption and resistance drugs
 
-I performed this matching by hand.
+I performed this matching by hand. I placed the consumption drugs into groups:
 
-`r consumption_resistance %>% kable`
+`r consumption_groups %>% kable`
+
+And did the same with the resistance drugs:
+
+`r resistance_groups %>% kable`
+
+I chose not to merge the penicillin and amoxicillin groups because antibiograms often reported very different susceptibilities for the two drugs.
+
+## Consumption and resistance data
 
 ```{r load_data}
+consumption_groups = read_tsv('consumption_groups.tsv')
+resistance_groups = read_tsv('resistance_groups.tsv')
+
 coherence = read_tsv('../../../../antibiogram/analysis/geographic-coherence/coherences.tsv') %>%
   rename(resistance_drug=drug) %>%
   mutate(resistance_drug=tolower(resistance_drug),
@@ -87,9 +82,10 @@ hrr = read_tsv('../../../db/hrr/hrr_2011.tsv') %>%
 # Antibiogram data, with individual records
 abg = read_tsv('../../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c')) %>%
   mutate(drug=tolower(drug), percent_nonsusceptible=100-percent_susceptible) %>%
-  rename(resistance_drug=drug) %>%
   left_join(hrr, by='zipcode') %>%
-  select(bug, resistance_drug, state, hrr, percent_nonsusceptible)
+  right_join(resistance_groups, by='drug') %>%
+  filter(big %in% organisms) %>%
+  select(bug, drug_group, state, hrr, percent_nonsusceptible)
 
 # swo> State beneficiary information could be used as control variables
 # in regressions
@@ -98,21 +94,24 @@ abg = read_tsv('../../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c
 
 # State-level consumption data
 state_consumption = read_tsv('../bene-consumption/state_usage_2011.tsv') %>%
-  rename(consumption_drug=antibiotic) %>%
-  select(state, consumption_drug, cpkp, did)
+  filter(!is.na(state)) %>%
+  right_join(consumption_groups, by=c('antibiotic'='drug')) %>%
+  group_by(state, drug_group) %>%
+  summarize_at(vars(cpkp, did), sum)
 
 hrr_consumption = read_tsv('../bene-consumption/hrr_usage_2011.tsv') %>%
-  rename(consumption_drug=antibiotic) %>%
-  select(hrr, consumption_drug, cpkp, did)
+  filter(!is.na(hrr)) %>%
+  right_join(consumption_groups, by=c('antibiotic'='drug')) %>%
+  group_by(hrr, drug_group) %>%
+  summarize_at(vars(cpkp, did), sum)
 
-state_dat = bug_drug %>%
-  left_join(abg, by=c('bug', 'resistance_drug')) %>%
-  left_join(state_consumption, by=c('state', 'consumption_drug'))
-
-hrr_dat = bug_drug %>%
-  left_join(abg, by=c('bug', 'resistance_drug')) %>%
-  left_join(hrr_consumption, by=c('hrr', 'consumption_drug'))
+state_dat = left_join(abg, state_consumption, by=c('drug_group', 'state'))
+hrr_dat = left_join(abg, hrr_consumption, by=c('drug_group', 'hrr'))
 ```
+
+## Coherence of bug/drug combinations in resistance data
+
+I want to be able to filter the bug/drug combinations by whether they are coherent in the resistance data. Does the geography (state or HRR) actually have any effect on the 
 
 ```{r run_models}
 safe_spearman = function(df, expl, indep) {
@@ -209,6 +208,8 @@ for (i in 1:nrow(result)) {
   ggsave(row$plot_fn, plot=p)
 }
 ```
+
+# Results
 
 ## Consumption and resistance
 
@@ -447,7 +448,6 @@ There were only a few significant results from these tests:
 - Potentially, a backward relationship for *S. aureus* and TMP-SMX
 - *S. pneumoniae* and azithromycin
 - *E. coli* and quinolones
-
 Interestingly, this accords with some of the conclusions from @bell-systematic-2014, namely:
 
 - the relationship between antibiotic consumption and resistance inside the US is weak (compared to across European countries, especially southern European countries)
