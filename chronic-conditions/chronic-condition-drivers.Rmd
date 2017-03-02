@@ -1,5 +1,5 @@
 ---
-title: "What chronic conditions are associated with increased antibiotic consumption?"
+title: "Chronic conditions and increased antibiotic consumption"
 author: "Scott Olesen"
 date: "2/27/2017"
 output: html_document
@@ -14,7 +14,7 @@ interesting, from the data's viewpoint.
 
 # Methods
 
-I'll use the Medicare 2011 data.
+I'll use the Medicare 2011 data with normal filters (age 65 or above, only beneficiaries on Medicare for 12 months of the year).
 
 For each chronic condition, I did a Poisson regression of the number of claims for a beneficiary against the beneficiary's age and their status for that condition. I hoped that including age in the regression would prevent a confounding between age, conditions, and consumption.
 
@@ -73,5 +73,15 @@ res %>%
   mutate(pct.increase=round((exp(estimate)-1.0)*100)) %>%
   select(condition, pct.increase, estimate, p.value) %>%
   arrange(desc(estimate)) %>%
+  kable
+```
+
+As a verification, I'll look at the distribution of number of claims among patients who have COPD or not. The mean for patients with COPD is more than double than that for patients without, which makes the age-adjusted 2.23 fold increase seem reasonable.
+
+```{r copd}
+usage_summary %>%
+  mutate(has_copd=COPD==3) %>%
+  group_by(has_copd) %>%
+  do(summary(.$n_claims) %>% tidy) %>%
   kable
 ```

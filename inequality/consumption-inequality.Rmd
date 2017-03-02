@@ -104,6 +104,23 @@ usage %>%
   theme_minimal()
 ```
 
+```{r inequality_cumrelfreq}
+normalize = function(x) x / max(x)
+usage %>%
+  group_by(bene_id) %>%
+  summarize(n_claims=sum(n_claims)) %>%
+  arrange(n_claims) %>%
+  mutate(cdf_x=cume_dist(n_claims), cdf_y=normalize(cumsum(n_claims))) %>%
+  group_by(cdf_x) %>%
+  summarize(cdf_y=max(cdf_y)) %>%
+  ggplot(aes(x=cdf_x, y=cdf_y)) +
+  geom_point() + geom_line() +
+  xlab('cumulative fraction of beneficiaries') +
+  ylab('cumulative fraction of claims') +
+  xlim(0, 1) + ylim(0, 1) +
+  theme_minimal()
+```
+
 Breaking down these results by region shows that the South, which consumed the most antibiotic per capita, has a slightly more even usage (Juran index of 79% versus 80% in other regions). I'm not sure that's a meaningful difference.
 
 ```{r inequality_by_region}
@@ -149,6 +166,8 @@ inequality_by_state = usage %>%
 The distribution of inequalities seems small: all states have (non-zero) Juran
 indices that fall between about 0.7 and 0.75. That being said, there does seem
 to be a trend by region: the fraction nonzero is highest in the South?
+
+These results all show inequalities measured using number of days.
 
 ```{r show_inequality_by_state}
 inequality_by_state %>%
@@ -237,8 +256,8 @@ usage %>%
   kable
 ```
 
+As expected, greater consumption is correlated with greater age and comorbidity. There are strange trends among gender and race (higher consumption is associated with more female and more white until 10--20 claims, after which point those trends reverse).
+
 # Discussion
 
 I used only the 2011 data in this analysis. I intend to extend the analysis to other years. Data from other years could help confirm any of the (relatively small) differences in inequality in consumption.
-
-Surprisingly, the characteristics of the beneficiaries are fairly constant by consumption $n$-tile among those who took antibiotics. Those who took no antibiotics where more male and less white.
