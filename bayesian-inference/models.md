@@ -140,3 +140,68 @@ $$
 
 This presents a difficulty: the integrals will be very small. It's probably
 possible to do.
+
+# Another parameterization
+
+We assume that consumption correlates with resistance according to $\mu_i = m C_i$,
+where $\mu_i$ is the average resistance in state $i$, $C_i$ is the
+resistance in that state, and $m$ is the slope of the linear relationship.
+
+We assume that each state has some true distribution of hospital-level
+resistances $p_{ij}$, which are nuisance parameters. Those resistance
+probabilities are drawn from a beta distribution with mean $m C_i$ and a
+variance $V_i \in (0, \tfrac{1}{4}]$ that we also consider a nuisance
+parameter.
+
+Each hospital $j$ in state $i$ has $n_{ij}$ isolates for a bug/drug combination.
+The probability of finding $s_{ij}$ "successes" among those $n_{ij}$ isolates is
+determined by the binomial distribution.
+
+Thus, the likelihood of the data, the $s_{ij}$, given the undetermined parameter
+of interest $m$ is
+
+$$
+P(\{s_{ij}\} | m) = \prod_i \int_{V_i} \prod_j \int_{p_{ij}}
+  \mathrm{Beta}(p_{ij}; \alpha_i, \beta_i) \mathrm{Bin}(s_{ij}; n_{ij}, p_{ij})
+  \,\mathrm{d}p_{ij} \,\mathrm{d}V_i
+$$
+
+where the parameters in the beta function are
+
+$$
+\begin{gathered}
+\alpha_i = \frac{1}{V_i}(\mu_i^2 - \mu_i^3 - \mu_i V_i) \\
+\beta_i = \frac{1}{V_i}(\mu_i - 1)(\mu_i^2 - \mu_i + V_i)
+\end{gathered}
+$$
+
+Note that
+
+$$
+\begin{gathered}
+\mathrm{Beta}(p; \alpha, \beta) = \frac{1}{\mathrm{B}(\alpha, \beta)}
+  p^{\alpha-1} (1-p)^{\beta-1} \\
+\mathrm{Bin}(s; n, p) = \binom{n}{s} p^s (1-p)^{n-s}
+\end{gathered}
+$$
+
+where $\mathrm{B}(\alpha, \beta)$ is the beta function, from which
+we see that we can combine the powers of $p$ and $1-p$:
+
+$$
+P(\{s_{ij}\} | m) \propto \prod_i \int_{V_i}
+  [\mathrm{B}(\alpha_i, \beta_i)]^{-N_i}
+  \prod_j \mathrm{B}(\alpha_i + s_{ij}, \beta_i + n_{ij} - s_{ij})
+  \,\mathrm{d}V_i
+$$
+
+where $N_i$ is the number of hospitals in state $i$.
+
+We can remove the first product by taking the logarithm:
+
+$$
+\log P(\{s_{ij}\} | m) \propto \sum_i \log\left\{ \int_{V_i}
+  [\mathrm{B}(\alpha_i, \beta_i)]^{-N_i}
+  \prod_j \mathrm{B}(\alpha_i + s_{ij}, \beta_i + n_{ij} - s_{ij})
+  \,\mathrm{d}V_i \right\}
+$$
