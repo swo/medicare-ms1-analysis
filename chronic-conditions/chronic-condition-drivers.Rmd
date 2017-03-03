@@ -27,6 +27,8 @@ due to that $x_i$ being true is $\exp(\beta_i)$.
 ```{r global_options, include=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, 
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
+library(psych)
+library(gplots)
 ```
 
 ```{r load_data}
@@ -41,8 +43,17 @@ condition_names = read_tsv('names.txt', col_names=c('condition', 'condition_name
 usage_summary = usage %>%
   filter(age >= 65) %>%
   group_by(bene_id) %>%
-  summarize(n_claims=sum(n_claims), age=max(age)) %>%
+  summarize(n_claims=sum(n_claims), age=max(age), sex=head(sex, 1)) %>%
+  mutate(is_female=if_else(sex=='female', 1L, 0L)) %>%
+  select(-sex) %>%
   left_join(chronic_conditions, by='bene_id')
+```
+
+```{r compute_correlations}
+tetra = chronic_conditions %>%
+  select(-bene_id) %>%
+  mutate_all(function(x) x == 3) %>%
+  tetrachoric()
 ```
 
 ```{r compute_models}
@@ -53,7 +64,7 @@ summarize_condition = function(x, condition) {
   has_condition = x[[condition]] == 3
   
   x %>%
-    glm(n_claims ~ has_condition + age, family='poisson', data=.) %>%
+    glm(n_claims ~ has_condition, family='poisson', data=.) %>%
     tidy %>%
     mutate(condition=condition)
 }
@@ -65,9 +76,42 @@ res = lapply(conditions, function(cond) summarize_condition(usage_summary, cond)
   rename(condition=condition_name)
 ```
 
+```{r multivariate_model}
+multivariate_formula = paste(c('n_claims ~ age + is_female', conditions), collapse=' + ') %>%
+  formula
+
+multivariate_res = usage_summary %>%
+  lm(multivariate_formula, family='poisson', data=.) %>%
+  tidy
+```
+
+## Correlations
+
+Presumably many of the conditions are correlated. I computed tetrachoric correlations, which is a method designed to deal with correlations of dichotomous variables.
+
+```{r, cache=FALSE}
+tetra$rho %>% heatmap
+```
+
+Thankfully, Alzheimer's correlates strongly with Alzheimer's and dementia, and prostatic hyperplasia and prostate cancer correlate strongly negatively with breast cancer and endometrial cancer. Unfortunately, the negative correlations make everything else harder to see, so here's the same thing but without the male conditions.
+
+```{r fig.width=7, fig.height=7, cache=FALSE}
+(!(rownames(tetra$rho) %in% c('CNCRPRST', 'HYPERP'))) %>%
+  { tetra$rho[., .] } %>%
+  heatmap.2(trace='none')
+```
+
+COPD correlates strongly with asthma and lung cancer, but lung cancer and asthma do not correlate strongly with one another. There is a block of correlations focused around hypertension that includes ischemic heart disease, heart failure, anemia, chronic kidney disease, diabetes, hypertension, hyperlipidemia, and, importantly, COPD.
+
+## Regression
+
+### Univariate
+
+First, I performed univariate regressions. In each case, the explanatory variable was the presence of the chronic condition.
+
 Almost all the conditions are significantly associated with greater consumption. Here I show the results of the Poisson regression: the column `estimate` is the estimate for the parameters associated with each condition, and `p.value` measures whether the data are consistent with that parameter being zero. The column `pct.increase` shows that percent increase in number of claims derived from that estimate.
 
-```{r show_poisson}
+```{r show_poisson, cache=FALSE}
 res %>%
   filter(term=='has_conditionTRUE') %>%
   mutate(pct.increase=round((exp(estimate)-1.0)*100)) %>%
@@ -83,5 +127,18 @@ usage_summary %>%
   mutate(has_copd=COPD==3) %>%
   group_by(has_copd) %>%
   do(summary(.$n_claims) %>% tidy) %>%
+  kable
+```
+
+### Multivariate
+
+I also performed a multivariate Poisson regression, keeping all the chronic conditions as well as age and sex (coded as "is female") as explanatory variables.
+
+Not surprisingly, COPD tops the list. However, asthma does provide explanatory power beyond COPD, coming in second. (Lung cancer, however, now has a negative effect on consumption.) Strangely, depression and anemia are next. Age, kindney disease, and diabetes have coefficients very near zero!
+
+```{r cache=FALSE}
+multivariate_res %>%
+  mutate(pct.increase=round((exp(estimate)-1.0)*100)) %>%
+  arrange(desc(pct.increase)) %>%
   kable
 ```
