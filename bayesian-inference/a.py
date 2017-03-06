@@ -3,38 +3,47 @@
 import numpy as np
 import scipy, scipy.optimize
 
-def bvar(a, b):
-    return a * b / ((a + b) ** 2 * (a + b + 1))
+dat = {}
+with open('ecoli_quin.tsv') as f:
+    header = next(f)
+    for line in f:
+        state, nr, ni = line.rstrip().split('\t')
 
-def log_likelihood(alpha, beta, data):
-    return sum([scipy.special.betaln(si + alpha, ni - si + beta) for si, ni in data]) - \
+        if ni == 'NA':
+            continue
+
+        nr = int(float(nr))
+        ni = int(ni)
+        if state not in dat:
+            dat[state] = []
+
+        dat[state].append((nr, ni))
+
+def log_likelihood(mu, nu, data):
+    alpha = mu * nu
+    beta = (1.0 - mu) * nu
+    return sum([scipy.special.betaln(alpha + s, beta + n - s) for s, n in data]) - \
             len(data) * scipy.special.betaln(alpha, beta)
 
 def mle(data):
-    f = lambda x: -log_likelihood(x[0], x[1], data)
-    x0 = np.array([1.0, 1.0])
+    prior = lambda m, n: np.exp(-n)
+    f = lambda x: -prior(x[0], x[1]) * log_likelihood(x[0], x[1], data)
 
-    res = scipy.optimize.minimize(f, x0, bounds=[(1e-6, np.inf)] * 2, options={'disp': False})
+    total_r = sum([x[0] for x in data])
+    total_i = sum([x[1] for x in data])
+    grand_mean = total_r / total_i
+
+    x0 = np.array([grand_mean, 1.0])
+
+    res = scipy.optimize.minimize(f, x0, bounds=[(0, 1), (0, np.inf)], options={'disp': False})
     return res
 
-ns = np.random.random_integers(low=1, high=500, size=10)
+results = {}
+for state in dat:
+    res = mle(dat[state])
+    mu, nu = res.x
+    results[state] = (mu, nu)
 
-print('true_alpha', 'true_beta', 'true_mean', 'true_var', 'mle_alpha', 'mle_beta', 'mle_mean', 'mle_var', sep='\t')
-for i in range(100):
-    alpha, beta = np.random.uniform(low=1e-6, high=10, size=2)
-    ps = np.random.beta(alpha, beta, size=len(ns))
-    data = [(np.random.binomial(n, p), n) for n, p in zip(ns, ps)]
-    res = mle(data)
-
-    print(alpha, beta, alpha / (alpha + beta), bvar(alpha, beta), \
-            res.x[0], res.x[1], res.x[0] / sum(res.x), bvar(*res.x), sep='\t')
-
-# print('mle ab', res.x)
-# print('mle mean', res.x[0] / sum(res.x))
-# print('mle var', bvar(*res.x))
-# print('true ab', alpha, beta)
-# print('true mean', alpha / (alpha + beta))
-# print('true var', bvar(alpha, beta))
-# print('ns', ns)
-# print('ps', ps)
-# print('data', data)
+print('state', 'mu', 'nu', sep='\t')
+for state in sorted(results.keys()):
+    print(state, results[state][0], results[state][1], sep='\t')

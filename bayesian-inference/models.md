@@ -196,6 +196,7 @@ P(\{s_{ij}\} | m) \propto \prod_i \int_{V_i}
 $$
 
 where $N_i$ is the number of hospitals in state $i$.
+This is called the "beta binomial" distribution.
 
 We can remove the first product by taking the logarithm:
 
@@ -204,4 +205,16 @@ $$
   [\mathrm{B}(\alpha_i, \beta_i)]^{-N_i}
   \prod_j \mathrm{B}(\alpha_i + s_{ij}, \beta_i + n_{ij} - s_{ij})
   \,\mathrm{d}V_i \right\}
+$$
+
+# Parameterizing by strength
+
+Define the strength $\nu = \alpha + \beta$ so that $\alpha = \mu\nu$ and
+$\beta = (1-\mu)\nu$. Then
+
+$$
+\log P(\{s_{ij}\} | m) \propto
+  \sum_i \log \left[ \int_0^\infty \prod_j
+  \frac{\mathrm{B}(\alpha_i + s_{ij}, \beta_i + n_{ij} - s_{ij})}{\mathrm{B}(\alpha_i, \beta_i)}
+  \,\mathrm{d}\nu \right]
 $$
