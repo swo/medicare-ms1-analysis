@@ -1,0 +1,77 @@
+---
+title: ""
+author: "Scott Olesen"
+date: ""
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, 
+                      echo=TRUE, warning=FALSE, message=FALSE, cache=TRUE)
+```
+
+First, load the relevant data. I need the usage and antibiograms.
+
+```{r load_groups}
+resistance_groups = read_tsv('../states/resistance/resistance_groups.tsv')
+consumption_groups = read_tsv('../states/resistance/consumption_groups.tsv')
+```
+
+```{r load_antibiogram}
+organisms = c('Escherichia coli')
+
+hrr = read_tsv('../../db/hrr/hrr_2011.tsv') %>%
+  select(zipcode, hrr)
+
+abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c')) %>%
+  mutate(drug=tolower(drug), percent_nonsusceptible=100-percent_susceptible) %>%
+  left_join(hrr, by='zipcode') %>%
+  right_join(resistance_groups, by='drug') %>%
+  filter(bug %in% organisms) %>%
+  select(bug, drug_group, state, hrr, percent_nonsusceptible, n_isolates)
+
+# Keep only those bug/drug combinations that are in at least 20 states
+abg %<>%
+  select(bug, drug_group, state) %>%
+  distinct %>%
+  count(bug, drug_group) %>% rename(n_states=n) %>%
+  filter(n_states >= 20) %>%
+  left_join(abg, by=c('bug', 'drug_group'))
+```
+
+```{r load_consumption}
+usage = read_tsv('../bene_usage_2011.tsv') %>%
+  rename(drug=antibiotic)
+
+denom = usage %>% select(bene_id, state) %>% distinct
+
+consumption = usage %>%
+  left_join(consumption_groups, by='drug') %>%
+  group_by(bene_id, drug_group) %>%
+  summarize(n_claims=sum(n_claims)) %>%
+  ungroup
+
+consumption_of = function(drug_group0) {
+  consumption %>%
+    filter(drug_group==drug_group0) %>%
+    select(bene_id, n_claims) %>%
+    right_join(denom, by='bene_id') %>%
+    mutate(n_claims=if_else(is.na(n_claims), 0L, n_claims))
+}
+```
+
+```{r inequality_functions}
+library(ineq)
+is_nonzero = function(x) x > 0
+nonzero = function(x) x[is_nonzero(x)]
+fraction_nonzero = function(x) sum(is_nonzero(x)) / length(x)
+gini = function(x) ineq(x, type='Gini')
+
+normalize = function(x) x / max(x)
+juran = function(x) {
+  # better to do with percent_rank and cume_dist
+  fraction_consumed = cumsum(sort(x, decreasing=TRUE)) %>% normalize
+  fraction_users = 1:length(x) %>% normalize
+  fraction_nonzero(fraction_consumed + fraction_users - 1)
+}
+```
