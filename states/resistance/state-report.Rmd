@@ -8,6 +8,11 @@ output:
     fig_height: 3
 ---
 
+# To do
+
+- Implement weights in the linear correlations
+- Join multiple results into one table, or do pairwise comparisons of analytical methods
+
 # Background
 
 Here I report results of comparisons antibiotic consumption and resistance across states and HRRs.

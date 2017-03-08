@@ -133,6 +133,33 @@ usage %>%
   kable
 ```
 
+```{r inequality_by_region2}
+# This uses code from inequality-resistance
+normalize = function(x) x / max(x)
+cumrelfreq = function(df, var) {
+  n = sort(df[[var]], decreasing=FALSE)
+  data_frame(x=cume_dist(n), y=normalize(cumsum(n))) %>%
+    group_by(x) %>%
+    summarize(y=max(y))
+}
+
+m = consumption_of('macrolide')
+
+x = m %>%
+  left_join(census_regions, by='state') %>%
+  group_by(region) %>%
+  do(cumrelfreq(., 'n_claims'))
+
+p = x %>%
+  ggplot(aes(x=x, y=y, color=region, group=region)) +
+  geom_line() + geom_point() +
+  xlab('cumulative fraction of users') +
+  ylab('cumulative fraction of drugs consumed') +
+  theme_minimal()
+
+show(p)
+```
+
 Among the most popular drugs, unevenness varies only slightly. Among users, azithromycin consumption has an approximately 60% Juran index, and ciprofloxacin has 65%, while TMP-SMX and vancomycin have 70%.
 
 ```{r inequality_by_drug}

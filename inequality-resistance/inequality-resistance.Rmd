@@ -15,10 +15,18 @@ First, load the relevant data. I need the usage and antibiograms.
 ```{r load_groups}
 resistance_groups = read_tsv('../states/resistance/resistance_groups.tsv')
 consumption_groups = read_tsv('../states/resistance/consumption_groups.tsv')
+drug_groups = resistance_groups$drug_group
 ```
 
 ```{r load_antibiogram}
-organisms = c('Escherichia coli')
+organisms = c('Escherichia coli',
+              'Proteus mirabilis', 'Enterobacter cloacae',
+              'Enterococcus faecium',
+              'Coagulase-negative staphylococci',
+              'Methicillin-resistant S. aureus (MRSA)',
+              'Methicillin-susceptible S. aureus (MSSA)',
+              'Streptococcus pneumoniae (non-meningitis)',
+              'Staphylococcus aureus')
 
 hrr = read_tsv('../../db/hrr/hrr_2011.tsv') %>%
   select(zipcode, hrr)
@@ -49,7 +57,9 @@ consumption = usage %>%
   left_join(consumption_groups, by='drug') %>%
   group_by(bene_id, drug_group) %>%
   summarize(n_claims=sum(n_claims)) %>%
-  ungroup
+  ungroup %>%
+  complete(bene_id, drug_group, fill=list('n_claims'=0L)) %>%
+  left_join(denom, by='bene_id')
 
 consumption_of = function(drug_group0) {
   consumption %>%
@@ -74,4 +84,80 @@ juran = function(x) {
   fraction_users = 1:length(x) %>% normalize
   fraction_nonzero(fraction_consumed + fraction_users - 1)
 }
+
+klasma = function(x, threshold) {
+  if (!between(threshold, 0.0, 1.0)) stop("bad threshold")
+  data_frame(x=sort(x, decreasing=TRUE)) %>%
+    mutate(csx=cumsum(x), cd=cume_dist(csx)) %$%
+    sum(x[cd <= 0.1]) / sum(x)
+}
 ```
+
+```{r}
+mean_abg = abg %>%
+  group_by(bug, drug_group, state) %>%
+  summarize(mpr=mean(percent_nonsusceptible),
+            wmpr=weighted.mean(percent_nonsusceptible, sqrt(n_isolates)))
+
+state_consumption = consumption %>%
+  group_by(state, drug_group) %>%
+  summarize(f_nz=fraction_nonzero(n_claims),
+            pct_nz=100*f_nz,
+            juran0=juran(n_claims),
+            juran_nz=juran(nonzero(n_claims)),
+            gini0=gini(n_claims),
+            gini_nz=gini(nonzero(n_claims)),
+            k10_nz=klasma(nonzero(n_claims), 0.1),
+            n_bene=n(),
+            n_claims=sum(n_claims),
+            cpkp=n_claims/n_bene*1000,
+            cpku=cpkp/f_nz)
+  
+```
+
+```{r do_models}
+models = function(x, independent) {
+  univariate_formula = paste(independent, '~ cpkp') %>% formula
+  univariate_results = lm(univariate_formula, data=x) %>%
+    anova %>% tidy %>% mutate(model='univariate')
+  multivariate_formula = paste(independent, '~ pct_nz + cpku') %>% formula
+  multivariate_results = lm(multivariate_formula, data=x) %>%
+    anova %>% tidy %>% mutate(model='multivariate')
+  bind_rows(univariate_results, multivariate_results)
+}
+
+results = left_join(mean_abg, state_consumption, by=c('state', 'drug_group')) %>%
+  group_by(bug, drug_group) %>%
+  do(models(., 'mpr')) %>%
+  select(bug, drug_group, model, term, estimate, p.value)
+
+results2 = left_join(abg, state_consumption, by=c('state', 'drug_group')) %>%
+  group_by(bug, drug_group) %>%
+  do(models(., 'percent_nonsusceptible')) %>%
+  select(bug, drug_group, model, term, estimate, p.value)
+```
+
+# Results
+
+## Correlations between metrics
+
+In general,
+
+- CPKP correlates strongly with `f_nz` (makes sense, since most users take ~1 rx)
+- Intensive metrics correlate with one another (`gini_nz` and `juran_nz`)
+- Extensive metrics correlate (e.g., `juran` with `f_nz`)
+- Intensive and extensive metrics correlation (`juran_nz` with `f_nz`)
+
+Thus, in general, increased consumption goes with increased inequality.
+
+## Klasma 10
+
+Klasma 10 is the fraction of the drugs consumed by the top 10% of users. Consider bug/drug combos where `k10_nz` in the model `percent_susceptible` (or mean r) `~ pct_nz + k10_nz` is significant. Those are all either tmp-smx or tetracycline, and in each case, the estimate for `cpkp` in the univariate model matches the sign of `pct_nz` in the multivariate model, and `k10_nz` in the multivariate model is always negative.
+
+## Using CPKU
+
+I tried to use CPKU as an intensive measure: what's the average consump (CPK) among users (U)? I got similar results to when I was using other intensive metrics.
+
+## f_nz vs. CPKP
+
+In general, the fraction nonzero is a better predictor of resistance than CPKP, i.e., the extensive metric is better than the garbled intensive metric.
