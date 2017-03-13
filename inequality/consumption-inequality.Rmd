@@ -104,30 +104,6 @@ usage %>%
   theme_minimal()
 ```
 
-```{r improved_inequality_cumrelfreq}
-normalize = function(x) x / max(x)
-cumrelfreq = function(df, var) {
-  n = sort(df[[var]], decreasing=FALSE)
-  data_frame(x=cume_dist(n), y=normalize(cumsum(n))) %>%
-    group_by(x) %>%
-    summarize(y=max(y))
-}
-
-x = m %>%
-  left_join(census_regions, by='state') %>%
-  group_by(region) %>%
-  do(cumrelfreq(., 'n_claims'))
-
-p = x %>%
-  ggplot(aes(x=x, y=y, color=region, group=region)) +
-  geom_line() + geom_point() +
-  xlab('cumulative fraction of users') +
-  ylab('cumulative fraction of drugs consumed') +
-  theme_minimal()
-
-show(p)
-```
-
 ```{r inequality_cumrelfreq}
 normalize = function(x) x / max(x)
 usage %>%
@@ -167,21 +143,21 @@ cumrelfreq = function(df, var) {
     summarize(y=max(y))
 }
 
-m = consumption_of('macrolide')
+#m = consumption_of('macrolide')
 
-x = m %>%
-  left_join(census_regions, by='state') %>%
-  group_by(region) %>%
-  do(cumrelfreq(., 'n_claims'))
+#x = m %>%
+#  left_join(census_regions, by='state') %>%
+#  group_by(region) %>%
+#  do(cumrelfreq(., 'n_claims'))
 
-p = x %>%
-  ggplot(aes(x=x, y=y, color=region, group=region)) +
-  geom_line() + geom_point() +
-  xlab('cumulative fraction of users') +
-  ylab('cumulative fraction of drugs consumed') +
-  theme_minimal()
+#p = x %>%
+#  ggplot(aes(x=x, y=y, color=region, group=region)) +
+#  geom_line() + geom_point() +
+#  xlab('cumulative fraction of users') +
+#  ylab('cumulative fraction of drugs consumed') +
+#  theme_minimal()
 
-show(p)
+#show(p)
 ```
 
 Among the most popular drugs, unevenness varies only slightly. Among users, azithromycin consumption has an approximately 60% Juran index, and ciprofloxacin has 65%, while TMP-SMX and vancomycin have 70%.
@@ -262,6 +238,14 @@ inequality_by_region %>%
 I broke down the beneficiaries based on their consumption: those who had no antibiotic claims were in one "tile", and I separated the rest into $n$-tiles.
 
 ```{r chars_by_consumption}
+# load the encounters claim data
+carrier_count = read_tsv('../../data/carrier_count_2011.tsv') %>%
+  rename(bene_id=BENE_ID, n_carrier_dates=n_from_dates)
+inpatient_count = read_tsv('../../data/inpatient_count_2011.tsv') %>%
+  rename(bene_id=BENE_ID, n_inpatient_dates=n_from_dates)
+outpatient_count = read_tsv('../../data/outpatient_count_2011.tsv') %>%
+  rename(bene_id=BENE_ID, n_outpatient_dates=n_from_dates)
+
 ntile_zero = function(x, n) {
   out = x
   out[x > 0] = ntile(out[x > 0], n)
@@ -288,11 +272,17 @@ bounds_group = function(x, upper_limits) {
     factor(levels=levels, ordered=TRUE)
 }
 
+na_to_zero = function(x) if_else(is.na(x), 0L, x)
+
 usage %>%
-  group_by(age, sex, race, chronic, bene_id) %>%
+  group_by(bene_id) %>%
   summarize(n_claims=sum(n_claims),
             n_days=sum(n_days)) %>%
-  ungroup() %>%
+  left_join(select(usage, bene_id, sex, age, race, chronic), by='bene_id') %>%
+  left_join(carrier_count, by='bene_id') %>%
+  left_join(outpatient_count, by='bene_id') %>%
+  left_join(inpatient_count, by='bene_id') %>%
+  mutate_at(vars(n_carrier_dates, n_outpatient_dates, n_inpatient_dates), na_to_zero) %>%
   mutate(claims_group=bounds_group(n_claims, c(0, 1, 2, 5, 10, 20, 50, 100)),
          is_female=if_else(sex=='female', 1, 0),
          is_white=if_else(race=='white', 1, 0)) %>%
@@ -302,7 +292,10 @@ usage %>%
             percent_female=mean(is_female)*100,
             percent_white=mean(is_white)*100,
             mean_n_chronic_cond=mean(chronic),
-            mean_n_claims=mean(n_claims)) %>%
+            mean_n_claims=mean(n_claims),
+            mean_n_carrier_dates=mean(n_carrier_dates),
+            mean_n_outpatient_dates=mean(n_outpatient_dates),
+            mean_n_inpatient_dates=mean(n_inpatient_dates)) %>%
   mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
   kable
 ```
