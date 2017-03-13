@@ -1,0 +1,158 @@
+---
+title: "Drivers of sex differences in consumption"
+author: "Scott Olesen"
+date: "2/24/2017"
+output: html_document
+---
+
+# Background
+
+Why do females account for 25% more antibiotic claims per capita than males? I have two easy explanations:
+
+- More females are alive at later ages, and older people consume more antibiotics.
+- Females consume more of the same antibiotics.
+- Females consume different antibiotics.
+
+# Methods
+
+I'll use the Medicare 2011 data.
+
+# Results
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/',
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
+```
+
+```{r load_data, cache=TRUE}
+usage = read_tsv('../bene_usage_2011.tsv')
+```
+
+## Consumption by age and sex
+
+It seems that females consume more antibiotics even within each age bracket (except for those over 95).
+
+```{r compute_consumption_by_age_and_sex}
+bounds_group = function(x, upper_limits) {
+  upper_limits = as.integer(upper_limits)
+  levels = lapply(seq(from=1, to=length(upper_limits)), function(i) {
+    if (i == 1) {
+      sprintf('<= %i', upper_limits[i])
+    } else {
+      sprintf('> %i and <= %i', upper_limits[i - 1], upper_limits[i])
+    }
+  })
+  top_level = sprintf('> %i', tail(upper_limits, 1))
+  formula_list = mapply(function(str, lim) as.formula(sprintf('x <= %i ~ "%s"', lim, str)),
+                        levels, upper_limits) %>%
+    c(as.formula(sprintf('TRUE ~ "%s"', top_level)))
+  
+  levels = c(levels, top_level)
+  
+  do.call(case_when, formula_list) %>%
+    factor(levels=levels, ordered=TRUE)
+}
+
+usage %>%
+  mutate(age_group=bounds_group(age, c(65, 75, 85, 95))) %>%
+  group_by(age_group, sex, bene_id) %>%
+  summarize_at(vars(n_claims, n_days), sum) %>%
+  summarize(mean_n_claims=mean(n_claims),
+            mean_n_days=mean(n_days),
+            n_bene=n()) %>%
+  kable
+```
+
+## Consumption of drugs by sex
+
+Looking at top drugs by sex.
+
+```{r drugs_by_sex, cache=TRUE}
+bene_by_sex = usage %>%
+  #sample_frac(0.01) %>%
+  select(bene_id, sex) %>%
+  distinct %>%
+  count(sex) %>%
+  rename(n_bene=n)
+
+dbs = usage %>%
+  #sample_frac(0.01) %>%
+  filter(age >= 65, sex %in% c('male', 'female')) %>%
+  group_by(antibiotic, sex, bene_id) %>%
+  summarize_at(vars(n_claims, n_days), sum) %>%
+  summarize(n_claims=sum(n_claims), n_days=sum(n_days)) %>%
+  left_join(bene_by_sex, by='sex') %>%
+  mutate(cpkp=n_claims*1000/n_bene, did=n_days*1000/(365*n_bene))
+
+dbs %>%
+  filter(sex=='female') %>%
+  arrange(desc(cpkp)) %>%
+  head(10) %>%
+  kable
+
+dbs %>%
+  filter(sex=='male') %>% 
+  arrange(desc(cpkp)) %>%
+  head(10) %>%
+  kable
+```
+
+```{r drug_by_sex_plot}
+dbs %>%
+  select(antibiotic, sex, cpkp) %>%
+  spread(sex, cpkp) %>%
+  ggplot(aes(x=male, y=female, label=antibiotic)) +
+  geom_label() +
+  geom_point() +
+  geom_abline() +
+  xlab('claims per 1,000 male beneficiaries') +
+  ylab('claims per 1,000 female beneficiaries') +
+  theme_minimal()
+```
+
+For a more quantitative approach, this is a table showing, for each antibiotic, the CPKP for female and males, the difference (residual) between the two, and the residual fraction (the residual over the mean of the female and male consumptions). Positive residuals means more consumption by females.
+
+```{r drug_by_sex_residuals}
+dbs %>%
+  select(antibiotic, sex, cpkp) %>%
+  spread(sex, cpkp) %>%
+  mutate(residual=female-male, residual_fraction=residual/(0.5 * (male + female))) %>%
+  arrange(desc(abs(residual))) %>%
+  head(10) %>%
+  kable
+```
+
+## Azithromycin
+
+Nitrofurantoin, ciprofloxacin, and TMP-SMX are all used as urinary anti-infectives, and UTIs more commonly affect women. This does not explain, however, the increased consumption of azithromycin.
+
+```{r women_azithro_vs_uai}
+any_in = function(lst, elts) match(elts, lst) %>% { .[!is.na(.)] } %>% { length(.) > 0 }
+
+usage %>%
+  filter(age >= 65, sex=='female') %>%
+  group_by(bene_id) %>%
+  mutate(used_azithro='azithromycin' %in% antibiotic,
+         used_uai=any_in(antibiotic, c('nitrofurantoin', 'trimethoprim/sulfamethoxazole', 'ciprofloxacin')),
+         used_both=used_azithro && used_uai,
+         is_white=race=='white') %>%
+  ungroup() %>%
+  mutate(user_type=case_when(.$used_both ~ 'both',
+                             .$used_azithro ~ 'azithro',
+                             .$used_uai ~ 'UAI',
+                             TRUE ~ 'none')) %>%
+  group_by(bene_id) %>%
+  summarize(age=age[1],
+            is_white=is_white[1],
+            chronic=chronic[1],
+            user_type=user_type[1],
+            n_claims=sum(n_claims)) %>%
+  group_by(user_type) %>%
+  summarize(n_beneficiaries=n(),
+            mean_age=mean(age),
+            percent_white=mean(is_white)*100,
+            mean_n_chronic_cond=mean(chronic),
+            mean_n_claims=mean(n_claims)) %>%
+  arrange(desc(n_beneficiaries)) %>%
+  kable
+```
