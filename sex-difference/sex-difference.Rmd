@@ -54,6 +54,7 @@ bounds_group = function(x, upper_limits) {
 }
 
 usage %>%
+  filter(sex %in% c('male', 'female')) %>%
   mutate(age_group=bounds_group(age, c(65, 75, 85, 95))) %>%
   group_by(age_group, sex, bene_id) %>%
   summarize_at(vars(n_claims, n_days), sum) %>%
@@ -156,3 +157,91 @@ usage %>%
   arrange(desc(n_beneficiaries)) %>%
   kable
 ```
+
+Does that mean that:
+
+- women are older and therefore use more azithromycin,
+- women have more chronic conditions (esp. COPD) and therefore use more, or
+- women have more encounters with doctors and therefore are prescribed more?
+
+### Sex by age
+
+The older people are more female: age 65 is about 60% female. This stays constant around 60% (or dips slightly) until age 75, when it steadily increases up to 85-90% female at age 100. So we'll need to account for this age difference.
+
+```{r}
+plot_dat = usage %>%
+  select(age, sex) %>%
+  filter(sex %in% c('male', 'female')) %>%
+  group_by(age) %>% count(sex) %>% ungroup() %>%
+  spread(sex, n, fill=0L) %>%
+  mutate(total=female+male, grand_total=sum(total),
+         fraction_year=total/grand_total, fraction_female=female/total)
+
+ggplot(mapping=aes(x=age, y=fraction)) +
+  geom_point(data=rename(plot_dat, fraction=fraction_female)) +
+  geom_line(data=mutate(plot_dat, fraction=fraction_year*10), col='red') +
+  ylab('fraction female') + ylim(0, 1) +
+  theme_minimal()
+```
+
+### Chronic conditions
+
+Cf. the chronic conditions report.
+
+### Encounters by sex
+
+Do women have more encounters than men? Does that explain their increased usage?
+
+```{r load_carrier_data}
+carrier = read_tsv('../../data/carrier_count_2011.tsv') %>%
+  rename(bene_id=BENE_ID, n_carrier_dates=n_from_dates)
+
+inpatient = read_tsv('../../data/inpatient_count_2011.tsv') %>%
+  rename(bene_id=BENE_ID, n_inpatient_dates=n_from_dates)
+
+outpatient = read_tsv('../../data/outpatient_count_2011.tsv') %>%
+  rename(bene_id=BENE_ID, n_outpatient_dates=n_from_dates)
+
+denom = usage %>% select(bene_id, sex, age) %>% distinct
+```
+
+```{r azithromycin_usage}
+na_to_zero = function(x) if_else(is.na(x), 0L, x)
+
+azi_usage = usage %>%
+  filter(antibiotic=='azithromycin') %>%
+  group_by(bene_id) %>%
+  summarize(n_claims=sum(n_claims)) %>%
+  left_join(denom, by='bene_id') %>%
+  filter(age >= 65, sex %in% c('male', 'female')) %>%
+  left_join(carrier, by='bene_id') %>%
+  left_join(inpatient, by='bene_id') %>%
+  left_join(outpatient, by='bene_id') %>%
+  mutate(age_group=bounds_group(age, c(65, 75, 85, 95))) %>%
+  mutate_at(vars(n_claims, n_carrier_dates, n_inpatient_dates, n_outpatient_dates), na_to_zero)
+```
+
+```{r azithromycin_usage_table}
+azi_usage %>%
+  group_by(age_group, sex) %>%
+  summarize(n_beneficiaries=n(),
+            mean_n_azithromycin_claims=mean(n_claims),
+            med_n_carrier_dates=median(n_carrier_dates),
+            med_n_outpatient_dates=median(n_outpatient_dates),
+            med_n_inpatient_dates=median(n_inpatient_dates)) %>%
+  kable
+```
+
+And I'll do a Poisson regression of number of azithromycin claims against age, being female, and number of carrier dates:
+
+```{r azithromycin_usage_model}
+library(broom)
+azi_usage %>%
+  mutate(is_female=sex=='female') %>%
+  glm(n_claims ~ age + is_female + n_carrier_dates + n_inpatient_dates + n_outpatient_dates, data=., family='poisson') %>%
+  tidy %>%
+  mutate(pct.increase=round((exp(estimate)-1.0)*100, 2)) %>%
+  kable
+```
+
+The coefficient for being female (0.05) accounts for almost the entire difference in consumption between men and women (56 per thousand). Note that age has an approximately zero correlation (i.e., 
