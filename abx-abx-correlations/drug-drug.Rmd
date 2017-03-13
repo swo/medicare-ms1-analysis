@@ -1,0 +1,123 @@
+---
+title: "Drug-drug correlations"
+author: "Scott Olesen"
+date: "8 March 2017"
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, 
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
+```
+
+# Background
+
+Does taking one drug make you more likely to take another one? Or less likely?
+
+# Methods
+
+I use the 2011 data and tetrachoric correlations. I look at only the top 10 drugs (and I group amox and amox/clav under amox).
+
+## Tetrachoric correlation
+
+Consider two dichotomous variables $X$ and $Y$. Each joint observation ($x_i$, $y_i$) can be one of $(0, 0)$, $(0, 1)$, $(1, 0)$, or $(1, 1)$. The tetrachoric correlation finds a correlation $\rho$ by finding the "cutpoints" $tau_X$ and $tau_Y$ such that the bivariate standard normal distribution with correlation $\rho$ has "quadrants" with masses that best match the relative frequencies of the joint observations. For example, the "lower-left" quadrant has mass
+
+$$
+\int_{-\infty}^{\tau_Y} \int_{-\infty}^{\tau_X} \mathcal{N}(x, y; \rho) \,\mathrm{d}x \,\mathrm{d}y
+$$
+
+and should match the relative frequency of observations $(0, 0)$. The $\rho$ of the best-fitting bivariate normal distribution is the $\rho$ for those two variables. For more than two variables, a multivariate normal distribution is used.
+
+This method can be extend to a *polychoric* method where the variables are ordinal (rather than dichotomous) by adding multiple cutpoints for the various categories.
+
+```{r load_data}
+usage = read_tsv('../bene_usage_2011.tsv') %>%
+  select(bene_id, drug=antibiotic)
+
+denom = usage %>% select(bene_id) %>% distinct
+```
+
+# Results
+
+```{r set_drug_levels}
+drugs = c(
+  'ciprofloxacin',
+  'trimethoprim/sulfamethoxazole',
+  'nitrofurantoin',
+  'cephalexin',
+  'metronidazole',
+  'levofloxacin',
+  'azithromycin',
+  'clindamycin',
+  'amoxicillin', 'amoxicillin/clavulanate',
+  'doxycycline'
+)
+
+drugs_short = c(
+  'cpro', 'tpsx', 'ntro', 'cphx', 'mtro', 'levo', 'azth', 'clnd', 'amox',
+  'amox/clav', 'doxy')
+```
+
+```{r do_correlation}
+library(psych)
+# convert all amox/clav entries into amox
+res = usage %>%
+  mutate(drug=if_else(
+    drug %in% c('amoxicillin', 'amoxicillin/clavulanate'),
+    'amoxicillin', drug)) %>%
+  filter(drug %in% drugs) %>%
+  distinct %>% # only care if had at least one claim
+  right_join(denom, by='bene_id') %>% # keep benes with no claims
+  mutate(has=TRUE) %>% # fill with TRUEs
+  spread(drug, has, fill=FALSE) %>% # but with FALSE is they don't have
+  select(-`<NA>`) %>% # drop the no-having column
+  select(-bene_id) %>%
+  tetrachoric
+```
+
+First, a table of the results.
+
+```{r show_table}
+res$rho %>%
+  as.data.frame() %>%
+  mutate(drug1=rownames(.)) %>%
+  mutate_at(vars(-drug1), function(x) round(x, 2)) %>%
+  select(drug1,
+         amox=amoxicillin,
+         azth=azithromycin,
+         cphx=cephalexin,
+         cipr=ciprofloxacin,
+         clnd=clindamycin,
+         doxy=doxycycline,
+         levo=levofloxacin,
+         mtro=metronidazole,
+         ntro=nitrofurantoin,
+         tpsx=`trimethoprim/sulfamethoxazole`) %>%
+  kable
+```
+
+Then, a heatmap showing the same things. I picked the order of the rows/columns by hand.
+
+```{r show_heatmap}
+drug_factor = function(x) factor(x, levels=drugs, labels=drugs_short, ordered=TRUE)
+
+res$rho %>%
+  as.data.frame %>%
+  mutate(drug1=rownames(.)) %>%
+  mutate_at(vars(-drug1), function(x) round(x, 2)) %>%
+  gather('drug2', 'corr', -drug1) %>%
+  filter(drug1 != drug2) %>%
+  mutate_at(vars(drug1, drug2), drug_factor) %>%
+  ggplot(aes(y=drug1, x=drug2, fill=corr)) +
+  geom_tile() +
+  scale_fill_distiller(palette='RdGy') +
+  theme_classic()
+```
+
+# Discussion
+
+Notably, all the correlations are positive: taking one drug means you are more likely to take another.
+
+The strongest correlations are between ciprofloxacin and each of metronidazole, nitrofurantoin, and TMP/SMX. TMP/SMX and nitrofurantoin also correlate.
+
+Levofloxacin has a weaker correlation with metronidazole than ciprofloxacin does, but azithromycin's strongest correlation is with azithromycin.
