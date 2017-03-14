@@ -52,10 +52,6 @@ usage_summary = usage %>%
   left_join(chronic_conditions, by='bene_id')
 ```
 
-```{r}
-chronic_conditions %>% head(100) %>% write_tsv('tmp')
-```
-
 ```{r compute_correlations}
 tetra = chronic_conditions %>%
   select(-bene_id) %>%
@@ -85,12 +81,16 @@ res = lapply(conditions, function(cond) summarize_condition(usage_summary, cond)
 
 ```{r lasso}
 library(glmnet)
+require(doMC)
+registerDoMC(cores=3)
+
 lasso_x = usage_summary %>%
   select(age, is_female, AMI:HYPOTH) %>%
-  mutate_at(vars(AMI:HYPOTH), function(x) if_else(x==3, 1L, 0L)) %>%
   as.matrix
 lasso_y = usage_summary$n_claims
-lasso_model = glmnet(lasso_x, lasso_y, family='poisson')
+
+lasso_cv = cv.glmnet(lasso_x, lasso_y, parallel=TRUE, family='poisson')
+#lasso_model = glmnet(lasso_x, lasso_y, family='poisson')
 ```
 
 ```{r multivariate_linear_model}
@@ -100,12 +100,9 @@ multivariate_formula = paste(c('n_claims ~ age + is_female', conditions), collap
 multivariate_linear_res = usage_summary %>%
   lm(multivariate_formula, data=.) %>%
   tidy
-```
 
-```{r multivariate_poisson_model}
-multivariate_poisson_res = usage_summary %>%
-  glm(multivariate_formula, family='poisson', data=.) %>%
-  tidy
+# For multivariate Poisson:
+# glm(multivariate_formula, family='poisson', data=.)
 ```
 
 ## Summary
@@ -157,13 +154,11 @@ usage_summary %>%
   kable
 ```
 
-### Multivariate models
+### Multivariate linear model
 
 I also performed multivariate regressions, keeping all the chronic conditions as well as age and sex (coded as "is female") as explanatory variables.
 
-#### Multivariate linear
-
-I don't expect a linear model to work well, since the output is count data.
+I don't expect a linear model to work well, since the output is count data, but doing a Poisson regression took a really long time.
 
 Not surprisingly, COPD tops the list. However, asthma does provide explanatory power beyond COPD, coming in second. (Lung cancer, however, now has a negative effect on consumption.) Strangely, depression and anemia are next. Age, kindney disease, and diabetes have coefficients very near zero!
 
@@ -174,24 +169,38 @@ multivariate_linear_res %>%
   kable
 ```
 
-#### Multivariate Poisson
+### Lasso
 
-This should be more accurate.
+I also performed a lasso regression with the Poisson model. I started with 10-fold cross-validation to pick the $\lambda$.
 
 ```{r cache=FALSE}
-multivariate_poisson_res %>%
-  mutate(pct.increase=round((exp(estimate)-1.0)*100)) %>%
-  arrange(desc(pct.increase)) %>%
+plot(lasso_cv)
+```
+
+Although the error continues to fall with decreasing $\lambda$, it seems like there are diminishing returns after the first 8 or 10 variables are included.
+
+```{r cache=FALSE}
+lasso_df = lasso_cv$glmnet.fit %>%
+  tidy %>%
+  filter(estimate > 0) %>%
+  group_by(step) %>%
+  summarize(df=n() - 1)
+
+lasso_cv$glmnet.fit %>%
+  tidy %>%
+  select(step, lambda, dev.ratio) %>%
+  distinct() %>%
+  left_join(lasso_df, by='step') %>%
+  select(step, df, lambda) %>%
+  mutate_at(vars(lambda), function(x) signif(x, digits=2)) %>%
   kable
 ```
 
-#### Lasso
-
-I also performed a lasso regression with the Poisson model. I'm not sure how to display the results sensibly. I picked a value of $s$ that limited me to just a few nonzero model coefficients.
+It looks like this corresponds to $\lambda \sim 0.1$. For that value, the coefficients are:
 
 ```{r cache=FALSE}
-lasso_model %>%
-  coef(s=0.25) %>%
+lasso_cv %>%
+  coef(s=0.1) %>%
   tidy %>%
   select(term=row, coefficient=value) %>%
   kable
