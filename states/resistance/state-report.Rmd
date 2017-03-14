@@ -271,6 +271,47 @@ linear_state_res = linear_models_result(state_dat, 'state')
 linear_state_res %>% kable
 ```
 
+#### State-level resistance-averaged robust regressions
+
+```{r}
+library(mblm)
+
+safe_mblm = function(data, indep, expl) {
+  try(return(mblm(sprintf('%s ~ %s', indep, expl), data) %>% tidy), silent=TRUE)
+  data_frame(term=expl, estimate=NA, std.error=NA, statistic=NA, p.value=1.0)
+}
+
+ts_models = function(df, indep) {
+  lapply(c('cpkp', 'did'), function(expl) {
+    safe_mblm(df, indep, expl) %>%
+      filter(term==expl) %>%
+      rename(explanatory=term) %>%
+      verify(nrow(.) == 1)
+  }) %>% bind_rows
+}
+
+ts_models_result = function(x, this_place) {
+  x %>%
+    group_by_('bug', 'drug_group', this_place) %>%
+    summarize(mean_nonsus=mean(percent_nonsusceptible, na.rm=TRUE),
+              cpkp=head(cpkp, 1),
+              did=head(did, 1)) %>%
+    group_by(bug, drug_group) %>%
+    do(linear_models(., 'mean_nonsus')) %>%
+    ungroup %>%
+    filter(!is.na(estimate)) %>%
+    mutate(adj.p.value=p.adjust(p.value, method='BH'),
+           sig=pvalue_stars(adj.p.value)) %>%
+    select(bug, drug_group,
+           explanatory, slope=estimate, p.value,
+           adj.p.value, sig)
+}
+
+ts_state_res = linear_models_result(state_dat, 'state')
+
+ts_state_res %>% kable
+```
+
 #### HRR-level resistance-averaged
 
 ```{r hrr_average_results_table}
