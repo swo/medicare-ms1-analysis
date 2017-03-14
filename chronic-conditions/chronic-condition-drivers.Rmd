@@ -35,36 +35,43 @@ library(gplots)
 usage = read_tsv('../bene_usage_2011.tsv')
 chronic_conditions = read_tsv('cc_2011.tsv') %>%
   rename(bene_id=BENE_ID) %>%
-  select(-STRCTFLG)
+  select(-STRCTFLG) %>%
+  mutate_at(vars(AMI:HYPOTH), function(x) x==3)
 condition_names = read_tsv('names.txt', col_names=c('condition', 'condition_name'))
 ```
 
 ```{r summarize_users}
+denom = usage %>% select(bene_id, age, sex) %>% distinct
+
 usage_summary = usage %>%
   filter(age >= 65) %>%
   group_by(bene_id) %>%
-  summarize(n_claims=sum(n_claims), age=max(age), sex=head(sex, 1)) %>%
-  mutate(is_female=if_else(sex=='female', 1L, 0L)) %>%
-  select(-sex) %>%
+  summarize(n_claims=sum(n_claims)) %>%
+  left_join(denom, by='bene_id') %>%
+  mutate(is_female=sex=='female') %>% select(-sex) %>%
   left_join(chronic_conditions, by='bene_id')
+```
+
+```{r}
+chronic_conditions %>% head(100) %>% write_tsv('tmp')
 ```
 
 ```{r compute_correlations}
 tetra = chronic_conditions %>%
   select(-bene_id) %>%
-  mutate_all(function(x) x == 3) %>%
   tetrachoric()
 ```
 
-```{r compute_models}
+```{r univariate_models}
 conditions = c("AMI", "ALZH", "ALZHDMTA", "ATRIALFB", "CATARACT", "CHRNKIDN", "COPD", "CHF", "DIABETES", "GLAUCOMA", "HIPFRAC", "ISCHMCHT", "DEPRESSN", "OSTEOPRS", "RA_OA", "STRKETIA", "CNCRBRST", "CNCRCLRC", "CNCRPRST", "CNCRLUNG", "CNCRENDM", "ANEMIA", "ASTHMA", "HYPERL", "HYPERP", "HYPERT", "HYPOTH")
 
 library(broom)
 summarize_condition = function(x, condition) {
-  has_condition = x[[condition]] == 3
+  univariate_formula = paste0('n_claims ~ age + is_female + ', condition) %>%
+    formula
   
   x %>%
-    glm(n_claims ~ has_condition, family='poisson', data=.) %>%
+    glm(univariate_formula, family='poisson', data=.) %>%
     tidy %>%
     mutate(condition=condition)
 }
@@ -76,14 +83,34 @@ res = lapply(conditions, function(cond) summarize_condition(usage_summary, cond)
   rename(condition=condition_name)
 ```
 
-```{r multivariate_model}
+```{r lasso}
+library(glmnet)
+lasso_x = usage_summary %>%
+  select(age, is_female, AMI:HYPOTH) %>%
+  mutate_at(vars(AMI:HYPOTH), function(x) if_else(x==3, 1L, 0L)) %>%
+  as.matrix
+lasso_y = usage_summary$n_claims
+lasso_model = glmnet(lasso_x, lasso_y, family='poisson')
+```
+
+```{r multivariate_linear_model}
 multivariate_formula = paste(c('n_claims ~ age + is_female', conditions), collapse=' + ') %>%
   formula
 
-multivariate_res = usage_summary %>%
-  lm(multivariate_formula, family='poisson', data=.) %>%
+multivariate_linear_res = usage_summary %>%
+  lm(multivariate_formula, data=.) %>%
   tidy
 ```
+
+```{r multivariate_poisson_model}
+multivariate_poisson_res = usage_summary %>%
+  glm(multivariate_formula, family='poisson', data=.) %>%
+  tidy
+```
+
+## Summary
+
+`r usage_summary %>% kable`
 
 ## Correlations
 
@@ -130,15 +157,42 @@ usage_summary %>%
   kable
 ```
 
-### Multivariate
+### Multivariate models
 
-I also performed a multivariate Poisson regression, keeping all the chronic conditions as well as age and sex (coded as "is female") as explanatory variables.
+I also performed multivariate regressions, keeping all the chronic conditions as well as age and sex (coded as "is female") as explanatory variables.
+
+#### Multivariate linear
+
+I don't expect a linear model to work well, since the output is count data.
 
 Not surprisingly, COPD tops the list. However, asthma does provide explanatory power beyond COPD, coming in second. (Lung cancer, however, now has a negative effect on consumption.) Strangely, depression and anemia are next. Age, kindney disease, and diabetes have coefficients very near zero!
 
 ```{r cache=FALSE}
-multivariate_res %>%
+multivariate_linear_res %>%
   mutate(pct.increase=round((exp(estimate)-1.0)*100)) %>%
   arrange(desc(pct.increase)) %>%
+  kable
+```
+
+#### Multivariate Poisson
+
+This should be more accurate.
+
+```{r cache=FALSE}
+multivariate_poisson_res %>%
+  mutate(pct.increase=round((exp(estimate)-1.0)*100)) %>%
+  arrange(desc(pct.increase)) %>%
+  kable
+```
+
+#### Lasso
+
+I also performed a lasso regression with the Poisson model. I'm not sure how to display the results sensibly. I picked a value of $s$ that limited me to just a few nonzero model coefficients.
+
+```{r cache=FALSE}
+lasso_model %>%
+  coef(s=0.25) %>%
+  tidy %>%
+  select(term=row, coefficient=value) %>%
   kable
 ```
