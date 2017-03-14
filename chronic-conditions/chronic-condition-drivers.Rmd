@@ -79,7 +79,7 @@ res = lapply(conditions, function(cond) summarize_condition(usage_summary, cond)
   rename(condition=condition_name)
 ```
 
-```{r lasso}
+```{r lasso_poisson}
 library(glmnet)
 require(doMC)
 registerDoMC(cores=3)
@@ -90,19 +90,6 @@ lasso_x = usage_summary %>%
 lasso_y = usage_summary$n_claims
 
 lasso_cv = cv.glmnet(lasso_x, lasso_y, parallel=TRUE, family='poisson')
-#lasso_model = glmnet(lasso_x, lasso_y, family='poisson')
-```
-
-```{r multivariate_linear_model}
-multivariate_formula = paste(c('n_claims ~ age + is_female', conditions), collapse=' + ') %>%
-  formula
-
-multivariate_linear_res = usage_summary %>%
-  lm(multivariate_formula, data=.) %>%
-  tidy
-
-# For multivariate Poisson:
-# glm(multivariate_formula, family='poisson', data=.)
 ```
 
 ## Summary
@@ -154,24 +141,10 @@ usage_summary %>%
   kable
 ```
 
-### Multivariate linear model
+### Multivariate lasso
 
-I also performed multivariate regressions, keeping all the chronic conditions as well as age and sex (coded as "is female") as explanatory variables.
-
-I don't expect a linear model to work well, since the output is count data, but doing a Poisson regression took a really long time.
-
-Not surprisingly, COPD tops the list. However, asthma does provide explanatory power beyond COPD, coming in second. (Lung cancer, however, now has a negative effect on consumption.) Strangely, depression and anemia are next. Age, kindney disease, and diabetes have coefficients very near zero!
-
-```{r cache=FALSE}
-multivariate_linear_res %>%
-  mutate(pct.increase=round((exp(estimate)-1.0)*100)) %>%
-  arrange(desc(pct.increase)) %>%
-  kable
-```
-
-### Lasso
-
-I also performed a lasso regression with the Poisson model. I started with 10-fold cross-validation to pick the $\lambda$.
+I also performed a multivariate lasso regression with the Poisson model, keeping all the chronic conditions as well as age and sex (coded as "is female") as explanatory variables.
+I started with 10-fold cross-validation to pick the lasso $\lambda$.
 
 ```{r cache=FALSE}
 plot(lasso_cv)
@@ -205,3 +178,5 @@ lasso_cv %>%
   select(term=row, coefficient=value) %>%
   kable
 ```
+
+Not surprisingly, COPD tops the list. However, asthma does provide explanatory power beyond COPD, coming in second. (Lung cancer, however, now has a negative effect on consumption.) Strangely, depression and anemia are next. Age, kindney disease, and diabetes have coefficients very near zero!
