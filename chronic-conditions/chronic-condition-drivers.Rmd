@@ -24,32 +24,37 @@ due to that $x_i$ being true is $\exp(\beta_i)$.
 
 # Results
 
-```{r global_options, include=FALSE}
+```{r global_options, include=FALSE, cache=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, 
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
 library(psych)
 library(gplots)
+library(broom)
+library(glmnet)
+require(doMC)
+library(stringr)
 ```
 
 ```{r load_data}
-usage = read_tsv('../bene_usage_2011.tsv')
+denom = read_tsv('../bene_2011.tsv') %>%
+  filter(age >= 65) %>%
+  mutate(is_female=sex=='female') %>%
+  select(bene_id, age, is_female)
 chronic_conditions = read_tsv('cc_2011.tsv') %>%
   rename(bene_id=BENE_ID) %>%
   select(-STRCTFLG) %>%
   mutate_at(vars(AMI:HYPOTH), function(x) x==3)
+usage = read_tsv('../pde_2011.tsv') %>%
+  count(bene_id) %>% rename(n_claims=n)
+
+na_to_0 = function(x) if_else(is.na(x), 0L, x)
+
+usage_summary = denom %>%
+  left_join(chronic_conditions, by='bene_id') %>%
+  left_join(usage, by='bene_id') %>%
+  mutate(n_claims=na_to_0(n_claims))
+
 condition_names = read_tsv('names.txt', col_names=c('condition', 'condition_name'))
-```
-
-```{r summarize_users}
-denom = usage %>% select(bene_id, age, sex) %>% distinct
-
-usage_summary = usage %>%
-  filter(age >= 65) %>%
-  group_by(bene_id) %>%
-  summarize(n_claims=sum(n_claims)) %>%
-  left_join(denom, by='bene_id') %>%
-  mutate(is_female=sex=='female') %>% select(-sex) %>%
-  left_join(chronic_conditions, by='bene_id')
 ```
 
 ```{r compute_correlations}
@@ -61,13 +66,9 @@ tetra = chronic_conditions %>%
 ```{r univariate_models}
 conditions = c("AMI", "ALZH", "ALZHDMTA", "ATRIALFB", "CATARACT", "CHRNKIDN", "COPD", "CHF", "DIABETES", "GLAUCOMA", "HIPFRAC", "ISCHMCHT", "DEPRESSN", "OSTEOPRS", "RA_OA", "STRKETIA", "CNCRBRST", "CNCRCLRC", "CNCRPRST", "CNCRLUNG", "CNCRENDM", "ANEMIA", "ASTHMA", "HYPERL", "HYPERP", "HYPERT", "HYPOTH")
 
-library(broom)
 summarize_condition = function(x, condition) {
-  univariate_formula = paste0('n_claims ~ age + is_female + ', condition) %>%
-    formula
-  
-  x %>%
-    glm(univariate_formula, family='poisson', data=.) %>%
+  rename_(x, .dots=setNames(condition, 'has_condition')) %>%
+    glm(n_claims ~ age + is_female + has_condition, family='poisson', data=.) %>%
     tidy %>%
     mutate(condition=condition)
 }
@@ -79,9 +80,16 @@ res = lapply(conditions, function(cond) summarize_condition(usage_summary, cond)
   rename(condition=condition_name)
 ```
 
+```{r multivariate_poisson}
+multivariate_formula = paste(c('n_claims ~ age + is_female', conditions), collapse=' + ') %>% formula
+
+multivariate_res = usage_summary %>%
+  select(n_claims, age, is_female, AMI:HYPOTH) %>%
+  glm(multivariate_formula, data=., family='poisson') %>%
+  tidy
+```
+
 ```{r lasso_poisson}
-library(glmnet)
-require(doMC)
 registerDoMC(cores=3)
 
 lasso_x = usage_summary %>%
@@ -94,7 +102,7 @@ lasso_cv = cv.glmnet(lasso_x, lasso_y, parallel=TRUE, family='poisson')
 
 ## Summary
 
-`r usage_summary %>% kable`
+**XXX**
 
 ## Correlations
 
@@ -135,9 +143,26 @@ As a verification, I'll look at the distribution of number of claims among patie
 
 ```{r copd}
 usage_summary %>%
-  mutate(has_copd=COPD==3) %>%
-  group_by(has_copd) %>%
+  group_by(COPD) %>%
   do(summary(.$n_claims) %>% tidy) %>%
+  kable
+```
+
+### Multivariate
+
+```{r show_multivariate, cache=FALSE}
+# Here I need to do some fancy footwork to get the condition names in
+# The terms look like (Intercept), age, is_female, AMITRUE, COPDTRUE, etc.
+# So chop off TRUE where it is, then match with the known names, and
+# keep the (Intercept), etc. if it didn't match
+
+multivariate_res %>%
+  mutate(pct.increase=round((exp(estimate)-1.0)*100)) %>%
+  mutate(condition=str_replace(term, 'TRUE$', '')) %>%
+  left_join(condition_names, by='condition') %>%
+  mutate(term=if_else(is.na(condition_name), condition, condition_name)) %>%
+  select(term, pct.increase, estimate, p.value) %>%
+  arrange(desc(abs(estimate))) %>%
   kable
 ```
 
@@ -166,6 +191,7 @@ lasso_cv$glmnet.fit %>%
   left_join(lasso_df, by='step') %>%
   select(step, df, lambda) %>%
   mutate_at(vars(lambda), function(x) signif(x, digits=2)) %>%
+  filter(df < 12) %>%
   kable
 ```
 
@@ -175,8 +201,16 @@ It looks like this corresponds to $\lambda \sim 0.1$. For that value, the coeffi
 lasso_cv %>%
   coef(s=0.1) %>%
   tidy %>%
-  select(term=row, coefficient=value) %>%
+  select(condition=row, coefficient=value) %>%
+  left_join(condition_names, by='condition') %>%
+  mutate(term=if_else(is.na(condition_name), condition, condition_name)) %>%
+  select(term, coefficient) %>%
+  arrange(desc(coefficient)) %>%
   kable
 ```
 
-Not surprisingly, COPD tops the list. However, asthma does provide explanatory power beyond COPD, coming in second. (Lung cancer, however, now has a negative effect on consumption.) Strangely, depression and anemia are next. Age, kindney disease, and diabetes have coefficients very near zero!
+# Discussion
+
+Not surprisingly, COPD tops the list of chronic conditions associated with increased consumption. Interestingly, asthma does provide explanatory power beyond COPD, coming in second. Depression and anemia are next. Kidney disease has a middling effect, while age and diabetes have almost no effect!
+
+The lasso results seem to be the nicest: they sum up the major findings very well but seem to avoid some of the weird noise (e.g., enlarged prostate as the #2 coefficient in the multivariate Poisson model, lung cancer as the #3 coefficient in the univariate models).
