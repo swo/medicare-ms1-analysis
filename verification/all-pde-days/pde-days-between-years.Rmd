@@ -12,7 +12,8 @@ library(knitr)
 read_data = function(fn) {
   read_tsv(fn) %>%
     mutate(date=dmy(date)) %>%
-    mutate(week_n=week(date))
+    mutate(week_n=week(date)) %>%
+    mutate(month_n=month(date))
 }
 
 read_data_year = function(y) {
@@ -29,17 +30,19 @@ sum_by_week = function(x) {
 dat = 2011:2014 %>%
   lapply(read_data_year) %>%
   bind_rows() %>%
-  mutate(data_year=factor(data_year)) %>%
-  group_by(data_year, year(date), week_n) %>%
-  do(sum_by_week(.)) %>%
-  ungroup
+  mutate(data_year=factor(data_year))
+
+week_dat = dat %>%
+  group_by(data_year, year(date), week(date)) %>%
+  summarize(n_days=n(), count=sum(count), date=head(date, 1)) %>%
+  filter(n_days == 7)
+  
+month_dat = dat %>%
+  group_by(data_year, year(date), month(date)) %>%
+  summarize(count=sum(count), date=head(date, 1))
 ```
 
-The Medicare data on the server contains Medicare Part D data for 2011 through 2014. I've been focusing on analyzing this data, especially in the files ``pdesaf2011.sas7bdat`` through ``pdesaf2014.sas7bdat``. These files contain the Part D events (PDEs), which are individual prescription drug claim records.
-
-It seems like there is something wrong with the 2012 data. I'm hoping you can help me understand what is going on.
-
-First, I noticed that the number of PDEs is greater in the 2012 data than in the other years:
+I'm now concerned about the 2013-2014 data (or the 2011-2012 data). It seems like the increase in the number of PDEs between 2012 and 2013 is larger than the 2011-2012 increase or the 2013-2014 increase.
 
 <style type="text/css">
 .table {
@@ -51,35 +54,27 @@ First, I noticed that the number of PDEs is greater in the 2012 data than in the
 dat %>%
   group_by(data_year) %>%
   summarize(n=sum(count)) %>%
-  mutate(n=round(n/1e6, 1)) %>%
+  mutate(n=round(n/1e6, 1), `diff. since prev. year`=c(0, diff(n))) %>%
   rename(`data year`=data_year, `number of PDEs (millions)`=n) %>%
   kable(align='l')
 ```
 
-This makes it seem like there were many more claims in 2012 than in the other years. However, the 2012 data file includes claims from 2011.
+Looking week-by-week, I see a discontinuity between December 2012 and January 2013:
 
-```{r plot_days, echo=FALSE}
-dat %>%
-  filter(week_n < 53) %>%
+```{r plot_weeks, echo=FALSE}
+week_dat %>%
   ggplot(aes(x=date, y=count, group=data_year, color=data_year)) +
   geom_line() + geom_point() +
   ylab('PDEs in that week') +
   theme_minimal()
 ```
 
-This plot shows the number of PDEs that occurred during each week, colored by the year of the data file. The 2012 data file (``pdesaf2012.sas7bdat``) contains claims information for both 2011 and 2011, while the other three files only contain claims from their years.
+I wondered if this was an artifact of the way the busy days (e.g., the first of the month and the first days after holidays tend to have a larger number of PDEs) fell into the weeks. However, I see the same pattern even grouping by month:
 
-Furthermore, the number of claims in the 2012 data doesn't match up with the number of claims from the other years. The 2013 and 2014 data match up nicely, but it looks like there are missing claims for 2012.
-
-```{r compute_mean_missing, echo=FALSE}
-mean_missing_percent = dat %>%
-  filter(year(date) == 2011) %>%
-  select(date, count, data_year) %>%
-  spread(data_year, count) %>%
-  mutate(f=`2011`/`2012`) %$%
-  mean(f) %>%
-  { (. - 1) * 100 } %>% round
+```{r plot_months, echo=FALSE}
+month_dat %>%
+  ggplot(aes(x=date, y=count, group=data_year, color=data_year)) +
+  geom_line() + geom_point() +
+  ylab('PDEs in that month') +
+  theme_minimal()
 ```
-
-To see how many claims are "missing", I looked at PDEs from 2011. In the 2011 data file, there are on average `r mean_missing_percent`% more claims in the 2011 data file than in the 2012 data file. I'm not sure what this means. Do we have a 20% sample for the 2011, 2013, and 2014 data but only a 15% sample for the 2012 data (such that the 2011 data has $20/15 = 4/3$ fold, or 33% more, claims as the 2012 data)?
-
