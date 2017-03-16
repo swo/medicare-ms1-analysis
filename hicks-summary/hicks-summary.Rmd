@@ -5,14 +5,14 @@ date: "2/13/2017"
 output: html_document
 ---
 
-```{r global_options, include=FALSE}
+```{r global_options, include=FALSE, cache=FALSE}
 knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='fig/',
-                      echo=FALSE, warning=FALSE, message=FALSE)
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
+library(knitr)
+library(assertive)
 ```
 
 ```{r setup}
-library(assertive)
-
 # Group values in x into ranges determined by upper_limits.
 # Values below the lowest limit are named as the lowest limit, and so forth.
 # You should probably put Inf as the last limit.
@@ -30,70 +30,61 @@ bounds_group = function(x, upper_limits) {
     factor(levels=levels, ordered=TRUE)
 }
 
-summarize_by = function(usage, bene, by) {
-  denom = group_by_(bene, by) %>%
-    summarize(n_ppl=n())
+summarize_by = function(bene, pde, by) {
+  # e.g., by='sex'
+  # count number of beneficiaries in each group
+  denom = count_(bene, by) %>% rename(n_bene=n)
   
-  group_by_(usage, by) %>%
-    summarize(n_claims=n()) %>%
-    left_join(denom, by=by) %>%
-    mutate(cpkp=n_claims*1000/n_ppl) %>%
+  pde %>%
+    left_join(select_(bene, 'bene_id', by), by='bene_id') %>% # join information about the bene's sex (e.g.)
+    count_(by) %>% # count claims
+    left_join(denom, by=by) %>% # join n_bene
+    mutate(cpkp=n*1000/n_bene) %>%
     select_(by, 'cpkp')
 }
 ```
 
-```{r load_db}
-
+```{r load_db, cache=FALSE}
 regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
   select(state, region)
-
-antibiotic_class = read_tsv('../abx_class.tsv') %>%
-  select(antibiotic, antibiotic_class) %>%
-  distinct
-
-assert_has_no_duplicates(antibiotic_class$antibiotic)
 ```
 
-```{r analyze_data, cache=TRUE}
+```{r analyze_function}
 analyze = function(this_year) {
+  # bene file is already filtered for plan coverage months and good geographies
   bene = read_tsv(sprintf('../bene_%i.tsv', this_year)) %>%
-    mutate_at(vars(age, plan_coverage_months), as.integer) %>%
-    filter(!is.na(state), plan_coverage_months == 12, age >= 65) %>%
+    filter(age >= 65, hmo_months==12) %>%
     left_join(regions, by='state')
   
   assert_has_no_duplicates(bene$bene_id)
   total_n_bene = nrow(bene)
   
   pde = read_tsv(sprintf('../pde_%i.tsv', this_year)) %>%
-    mutate_at(vars(days_supply), as.integer) %>%
-    left_join(antibiotic_class, by='antibiotic')
+    semi_join(bene, by='bene_id') # keep only PDEs for known beneficiaries
   
-  usage = pde %>%
-    inner_join(bene, by='bene_id') # inner join to keep only matching rows
+  total_n_pde = nrow(pde)
   
-  # usage only has PDEs from beneficiaries in our list,
-  # so there should be fewer
-  is_greater_than_or_equal_to(nrow(pde), nrow(usage))
+  totals = data_frame(key=c('n_bene', 'n_pde'),
+                      value=c(total_n_bene, total_n_pde),
+                      year=this_year)
 
   # claims per 1,000 people by abx class
-  claims_by_class = usage %>%
-    group_by(antibiotic_class) %>%
-    summarize(n_claims=n()) %>%
-    mutate(cpkp=n_claims*1000/total_n_bene) %>%
+  claims_by_class = pde %>%
+    count(antibiotic_class) %>%
+    mutate(cpkp=n*1000/total_n_bene) %>%
     select(antibiotic_class, cpkp) %>%
     mutate(year=this_year)
 
   # the top few inidividual antibiotics
-  top_abx = usage %>%
-    group_by(antibiotic) %>%
-    summarize(n_claims=n()) %>%
-    mutate(cpkp=n_claims*1000/total_n_bene) %>%
+  top_abx = pde %>%
+    count(antibiotic) %>%
+    mutate(cpkp=n*1000/total_n_bene) %>%
     select(antibiotic, cpkp) %>% 
     mutate(year=this_year)
 
   # from here on, the denominators are taken from the beneficiary data grouped
   # in the same way as the consumption data, so we can use the summarize_by function
-  claims_by_sex = summarize_by(usage, bene, 'sex') %>%
+  claims_by_sex = summarize_by(bene, pde, 'sex') %>%
     mutate(year=this_year)
 
   # then by age group
@@ -101,20 +92,20 @@ analyze = function(this_year) {
   # not just by raw age)
   age_group_f = function(x) bounds_group(x, c(65, 75, 85, Inf))
   claims_by_age = summarize_by(
-    usage %>% mutate(age_group=age_group_f(age)),
     bene %>% mutate(age_group=age_group_f(age)),
-    'age_group') %>%
+    pde, 'age_group') %>%
     mutate(year=this_year)
 
   # then by census region
-  claims_by_region = summarize_by(usage, bene, 'region') %>%
+  claims_by_region = summarize_by(bene, pde, 'region') %>%
     mutate(year=this_year)
 
   # claims by state (broken into sextiles)
-  claims_by_state = summarize_by(usage, bene, 'state') %>%
+  claims_by_state = summarize_by(bene, pde, 'state') %>%
     mutate(sextile=ntile(cpkp, 6), year=this_year)
 
-  list(claims_by_class=claims_by_class,
+  list(totals=totals,
+       claims_by_class=claims_by_class,
        top_abx=top_abx,
        claims_by_sex=claims_by_sex,
        claims_by_age=claims_by_age,
@@ -129,13 +120,20 @@ data_2014 = analyze(2014)
 ```
 
 ```{r arrange_data}
-library(knitr)
 data = list("2011"=data_2011,
             "2012"=data_2012,
             "2013"=data_2013,
             "2014"=data_2014)
 
 data_by_field = function(field) lapply(data, function(x) x[[field]]) %>% bind_rows()
+
+totals = data_by_field('totals') %>%
+  spread(key, value) %>%
+  mutate(cpkp=n_pde*1000/n_bene) %>%
+  mutate_at(vars(n_bene, n_pde), function(x) prettyNum(x, big.mark=',')) %>%
+  rename(`number of beneficiaries`=n_bene, `number of antibiotic PDEs`=n_pde, `CPKP`=cpkp) %>%
+  arrange(year) %>%
+  kable
 
 claims_by_class = data_by_field('claims_by_class')
 
@@ -185,7 +183,17 @@ state_sextiles_2011 = data_by_field('claims_by_state') %>%
   arrange(desc(sextile), state)
 ```
 
-This summary is modeled after @hicks-us-2015. That study, which used the IMS Health Xponent database to infer the number of prescriptions per capita, reported higher prescription rates than what we observe here. In that paper, the number of prescriptions per 1,000 people year (PKPY) is approximately 1,000 for people over 65. In this data, we find that number to be between 600 (in 2011) and 750 (in 2012). Our value is more similar to a report that used the National Ambulatory Care Survey (NAMCS) and National Hospital Ambulatory Care Survey (NHAMCS) rather than the Xponent data. That report estimated about 500 PKPY [@flemingdutra-prevalence-2016]. A third report, which used the Xponent database, reported that prescriptions fell from about 1,000 PKPY in 1996 to about 600 PKPY in 2003 [@hicks-outpatient-2011].
+**To do**: Rework conclusions, include references.
+
+This summary is modeled after @hicks-us-2015. That study, which used the IMS Health Xponent database to infer the number of prescriptions per capita, reported higher prescription rates than what we observe here. In that paper, the number of claims per 1,000 people year (CKPY) is approximately 1,000 for people over 65. In this data, we find that number to be between 600 (in 2011) and 750 (in 2012). Our value is more similar to a report that used the National Ambulatory Care Survey (NAMCS) and National Hospital Ambulatory Care Survey (NHAMCS) rather than the Xponent data. That report estimated about 500 PKPY [@flemingdutra-prevalence-2016]. A third report, which used the Xponent database, reported that prescriptions fell from about 1,000 PKPY in 1996 to about 600 PKPY in 2003 [@hicks-outpatient-2011].
+
+# Summary
+
+This data set is a 20% sample of Part D beneficiaries, which I have further filtered by age (only those at least 65 years old are included), for HMO membership (beneficiaries who were part of Medicare Advantage for any part of a year were excluded from that year), and for data quality (members with incomplete zipcodes were excluded).
+
+`r totals`
+
+There is a slight jump between the number of antibiotic claims in 2012 and 2013. This discontinuity appears between the December 2012 and January 2013, it is present among all PDE data (not just antibiotics), and it appears to be a real feature of the data.
 
 # Antibiotic consumption by class
 
@@ -225,19 +233,19 @@ When stratifying by age, @hicks-us-2015 places all people 65 or older into one s
 
 `r claims_by_age`
 
-```{r}
-# In Hicks, they also do:
-# logistic regression on...
-# dependent: county in top quartile for prescription rate
-# independent:
-#  - prescribers per capita above median,
-#  - proportion of people obese above median,
-#  - proportion of people <2 years old above median,
-#  - proportion of people black above median,
-#  - per capita income in top 2/3s,
-#  - proportion with college education in top 2/3s,
-#  - proportion female in top 3/4s
-#
-# Univariate regressions of each independent against the dependent
-# Multivariate regression somehow using adjusted ratios with confounders
-```
+# Other analysis in Hicks *et al.*
+
+In Hicks, they also do:
+
+- Logistic regression on...
+    - dependent: county in top quartile for prescription rate
+    - independent:
+        - prescribers per capita above median,
+        - proportion of people obese above median,
+        - proportion of people <2 years old above median,
+        - proportion of people black above median,
+        - per capita income in top 2/3s,
+        - proportion with college education in top 2/3s,
+        - proportion female in top 3/4s
+- Univariate regressions of each independent against the dependent
+- Multivariate regression somehow using adjusted ratios with confounders
