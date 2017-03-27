@@ -185,7 +185,7 @@ state_sextiles_2011 = data_by_field('claims_by_state') %>%
 
 **To do**: Rework conclusions, include references.
 
-This summary is modeled after @hicks-us-2015. That study, which used the IMS Health Xponent database to infer the number of prescriptions per capita, reported higher prescription rates than what we observe here. In that paper, the number of claims per 1,000 people year (CKPY) is approximately 1,000 for people over 65. In this data, we find that number to be between 600 (in 2011) and 750 (in 2012). Our value is more similar to a report that used the National Ambulatory Care Survey (NAMCS) and National Hospital Ambulatory Care Survey (NHAMCS) rather than the Xponent data. That report estimated about 500 PKPY [@flemingdutra-prevalence-2016]. A third report, which used the Xponent database, reported that prescriptions fell from about 1,000 PKPY in 1996 to about 600 PKPY in 2003 [@hicks-outpatient-2011].
+This summary is modeled after @hicks-us-2015. That study, which used the IMS Health Xponent database to infer the number of prescriptions per capita, reported higher prescription rates than what we observe here. In that paper, the number of claims per 1,000 people year (CKPY) is approximately 1,000 for people over 65. In this data, we find that number to be between 600 (in 2011) and 750 (in 2012). Our value is more similar to a report that used the National Ambulatory Care Survey (NAMCS) and National Hospital Ambulatory Care Survey (NHAMCS) rather than the Xponent data. That report estimated about` 500 PKPY [@flemingdutra-prevalence-2016]. A third report, which used the Xponent database, reported that prescriptions fell from about 1,000 PKPY in 1996 to about 600 PKPY in 2003 [@hicks-outpatient-2011].
 
 # Summary
 

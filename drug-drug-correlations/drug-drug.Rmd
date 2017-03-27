@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r global_options, include=FALSE}
-knitr::opts_chunk$set(fig.width=7, fig.height=4, 
+knitr::opts_chunk$set(fig.width=7, fig.height=4,
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
 ```
 
@@ -20,7 +20,7 @@ I use the 2011 data and tetrachoric correlations. I look at only the top 10 drug
 
 ## Tetrachoric correlation
 
-Consider two dichotomous variables $X$ and $Y$. Each joint observation ($x_i$, $y_i$) can be one of $(0, 0)$, $(0, 1)$, $(1, 0)$, or $(1, 1)$. The tetrachoric correlation finds a correlation $\rho$ by finding the "cutpoints" $tau_X$ and $tau_Y$ such that the bivariate standard normal distribution with correlation $\rho$ has "quadrants" with masses that best match the relative frequencies of the joint observations. For example, the "lower-left" quadrant has mass
+Consider two dichotomous variables $X$ and $Y$. Each joint observation ($x_i$, $y_i$) can be one of $(0, 0)$, $(0, 1)$, $(1, 0)$, or $(1, 1)$. The tetrachoric correlation finds a correlation $\rho$ by finding the "cutpoints" $\tau_X$ and $\tau_Y$ such that the bivariate standard normal distribution with correlation $\rho$ has "quadrants" with masses that best match the relative frequencies of the joint observations. For example, the "lower-left" quadrant has mass
 
 $$
 \int_{-\infty}^{\tau_Y} \int_{-\infty}^{\tau_X} \mathcal{N}(x, y; \rho) \,\mathrm{d}x \,\mathrm{d}y
@@ -114,6 +114,17 @@ res$rho %>%
   theme_classic()
 ```
 
+Yonatan has a number of interpretations and guesses:
+
+- Azithromycin and levofloxacin are used for pneumonia, and they will also go in that sequential order
+- Cipro, Bactrim, and nitro are for UTIs and will proceed in that order
+- Keflex/Bactrim is for skin and soft tissue infections
+- Cipro and metro are simulatenous
+- Levo and metro are simulatneous
+
+We should be able to compare these to what's actually happening, which is a
+statement about prescribing practice.
+
 # Discussion
 
 Notably, all the correlations are positive: taking one drug means you are more likely to take another.
@@ -121,3 +132,9 @@ Notably, all the correlations are positive: taking one drug means you are more l
 The strongest correlations are between ciprofloxacin and each of metronidazole, nitrofurantoin, and TMP/SMX. TMP/SMX and nitrofurantoin also correlate.
 
 Levofloxacin has a weaker correlation with metronidazole than ciprofloxacin does, but azithromycin's strongest correlation is with azithromycin.
+
+There is probably a technically-superior way to do this: I measured consumption
+as an on-off thing, and the polychoric only works well with a small number of
+categories. I may be able to reduce the number of claims into a small number of
+groups (e.g., 0, 1, 2--5, etc.). I wonder also if there is a "Poisson regression",
+where you postulate that the Poisson means are correlated.

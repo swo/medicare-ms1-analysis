@@ -14,7 +14,7 @@ interesting, from the data's viewpoint.
 
 # Methods
 
-I'll use the Medicare 2011 data with normal filters (age 65 or above, only beneficiaries on Medicare for 12 months of the year).
+I'll use the Medicare 2011 data with normal filters (age 65 or above, only beneficiaries on Medicare for 12 months of the year). I'll run separate analyses on those under 65.
 
 For each chronic condition, I did a Poisson regression of the number of claims for a beneficiary against the beneficiary's age and their status for that condition. I hoped that including age in the regression would prevent a confounding between age, conditions, and consumption.
 
@@ -36,7 +36,7 @@ library(stringr)
 ```
 
 ```{r load_data}
-denom = read_tsv('../bene_2011.tsv') %>%
+all_denom = read_tsv('../bene_2011.tsv') %>%
   filter(age >= 65) %>%
   mutate(is_female=sex=='female') %>%
   select(bene_id, age, is_female)

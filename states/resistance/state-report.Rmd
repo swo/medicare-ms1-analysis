@@ -29,16 +29,15 @@ For each bug, consumption/resistance drug, and state, I ran a Spearman correlati
 
 The explanatory variable in the correlation was either claims per 1,000 people per year (CPKP) or days' supply (my proxy for daily defined dose) per 1,000 people per day (DID). The dependent variable was always mean percent susceptibility of that bug to that resistance drug across antibiograms from that state/HRR.
 
-```{r global_options, include=FALSE}
+```{r global_options, include=FALSE, cache=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, cache=TRUE,
                       echo=FALSE, warning=FALSE, message=FALSE)
-```
-
-```{r setup}
 library(broom)
 library(pander)
 library(assertr)
+```
 
+```{r setup}
 # swo> I removed Klebsiella because it's mostly in immune-compromised people
 # and K. oxytoca because it's from neonatal septicemia?
 gram_negs = c('Escherichia coli',
@@ -101,13 +100,37 @@ abg %<>%
 # in regressions
 #state_bene = read_tsv('../../bene-consumption/state-bene-2011.tsv') %>%
   #filter(state %in% known_states)
+```
+
+```{r load_consumption_data}
+bene = read_tsv('../../bene_2011.tsv') %>%
+  left_join(hrr, by='zipcode')
+pde = read_tsv('../../pde_2011.tsv') %>%
+  select(bene_id, drug=antibiotic) %>%
+  left_join(select(bene, bene_id, state, hrr), by='bene_id')
+
+na20 = function(x) if_else(is.na(x), 0L, x)
+
+state_denom = bene %>% count(state) %>% rename(n_bene=n)
+state_consumption = pde %>%
+  group_by(state, drug) %>%
+  summarize(n_claims=n()) %>%
+  ungroup() %>%
+  left_join(state_denom, by='state')
+
+hrr_denom = bene %>% count(hrr) %>% rename(n_bene=n)
+hrr_consumption = pde %>%
+  group_by(hrr, drug) %>%
+  summarize(n_claims=n()) %>%
+  ungroup() %>%
+  left_join(hrr_denom, by='hrr')
 
 # State-level consumption data
-state_consumption = read_tsv('../bene-consumption/state_usage_2011.tsv') %>%
-  filter(!is.na(state)) %>%
-  right_join(consumption_groups, by=c('antibiotic'='drug')) %>%
-  group_by(state, drug_group) %>%
-  summarize_at(vars(cpkp, did), sum)
+#state_consumption = read_tsv('../bene-consumption/state_usage_2011.tsv') %>%
+  #filter(!is.na(state)) %>%
+  #right_join(consumption_groups, by=c('antibiotic'='drug')) %>%
+  #group_by(state, drug_group) %>%
+  #summarize_at(vars(cpkp, did), sum)
 
 hrr_consumption = read_tsv('../bene-consumption/hrr_usage_2011.tsv') %>%
   filter(!is.na(hrr)) %>%

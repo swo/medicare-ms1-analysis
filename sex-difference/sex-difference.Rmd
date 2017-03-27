@@ -20,7 +20,7 @@ I'll use the Medicare 2011 data.
 # Results
 
 ```{r global_options, include=FALSE}
-knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/',
+knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
 ```
 
@@ -168,7 +168,7 @@ Does that mean that:
 
 The older people are more female: age 65 is about 60% female. This stays constant around 60% (or dips slightly) until age 75, when it steadily increases up to 85-90% female at age 100. So we'll need to account for this age difference.
 
-```{r}
+```{r sex_by_age}
 plot_dat = usage %>%
   select(age, sex) %>%
   filter(sex %in% c('male', 'female')) %>%
