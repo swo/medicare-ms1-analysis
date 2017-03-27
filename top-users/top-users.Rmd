@@ -1,0 +1,164 @@
+---
+title: "Top antibiotic users"
+author: "Scott Olesen"
+date: "27 March 2017"
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, 
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
+```
+
+# Motivation
+
+What drugs are the top users taking? Are they different from the drugs that people take in general? Are the patterns of drug-drug correlations different among the top users?
+
+# Data
+
+I use the 2011 Medicare data. I will sometimes exclude claims for the anti-tuberculosis drugs (ethambutol, rifampin, isoniazid, pyrazinamide) because many of the "top" users, depending on the defintion, are taking these drugs, which constitute a different problem.
+
+```{r load_data}
+bene = read_tsv('../bene_2011.tsv')
+n_bene = nrow(bene)
+pde = read_tsv('../pde_2011.tsv') %>%
+  rename(drug=antibiotic) %>%
+  group_by(bene_id, drug) %>%
+  summarize(n_claims=n(), n_days=sum(days_supply)) %>%
+  ungroup()
+```
+
+# Results
+
+## Drug consumption sort-of follows a power law
+
+That is, the *exponent* of the number of beneficiaries with a certain of claims *n* (or days' supply of drug) falls with *n*.
+
+```{r drug_distribution}
+pde_total = pde %>%
+  group_by(bene_id) %>%
+  summarize(n_total_claims=sum(n_claims), n_total_days=sum(n_days))
+
+pde_total %>%
+  count(n_total_claims) %>%
+  ggplot(aes(x=n_total_claims, y=n)) +
+  geom_point() +
+  scale_y_log10() +
+  xlab('number of claims') + ylab('number of beneficiaries') +
+  theme_minimal()
+
+pde_total %>%
+  count(n_total_days) %>%
+  ggplot(aes(x=n_total_days, y=n)) +
+  geom_point() +
+  scale_y_log10() +
+  xlab('number of days\' supply') + ylab('number of beneficiaries') +
+  theme_minimal()
+```
+
+## Top users by claim are enriched for vancomycin
+
+- Merge amox, amox/clav
+- Exclude TB drugs? Do with and without?
+- Split people into top users (by # claims) or not
+- Analyze them that way (with CPKP)
+- Add zeros for people/drug combos? Or just find one denominator and pad out
+- Then repeat the same thing but using days (and DID)
+- Make plots & tables to compare both
+
+Expected punchlines:
+
+- TB drugs make up a lot of the top use
+- Top claims enrich for vancomycin, which people are taking with ~2 day claims
+- Top days are for mostly the same drugs
+
+```{r top_claims_use}
+top_claims_cutoff = 15
+
+pad_to = function(x, n) c(x, rep(0, n - length(x)))
+stopifnot(pad_to(c(1, 2, 3), 5) == c(1, 2, 3, 0, 0))
+
+# classify beneficiaries as in top bracket or not
+top_claims_bene = pde %>%
+  group_by(bene_id) %>%
+  summarize(top_user = sum(n_claims) >= top_claims_cutoff)
+
+n_top_claims_bene = sum(top_claims_bene$top)
+
+pde %>%
+  left_join(top_claims_bene, by='bene_id') %>%
+  group_by(drug, top) %>%
+  summarize(n_claims=sum(n_claims)) %>%
+  ungroup() %>%
+  mutate(n_bene=if_else(top, n_top_claims_bene, n_bene - n_top_claims_bene),
+         cpkp=n_claims*1000/n_bene) %>%
+  select(drug, top, cpkp) %>%
+  spread(top, cpkp) %>%
+  arrange(desc(`TRUE`)) %>%
+  head(20) %>%
+  rename(`non-top user CPKP`=`FALSE`, `top user CPKP`=`TRUE`) %>%
+  kable
+```
+
+Of `r nrow(bene)` total beneficiaries, there are `r n_top_bene` that had more than `r n_top_cutoff` claims. In aggregate, their consumption looks fairly different from the rest of the population:
+
+`r top_pde_table`
+
+
+```{r compute_user_overlap}
+# The idea here was to see about the overlap between drug users.
+# If you took drug 1, how likely was it for you to also take drug 2?
+# This is actually pretty similar to the tetrachoric analysis I did previously.
+# Instead, I summarized the confusion matrix with the Matthews correlations coefficient.
+
+drugs = pde$drug %>% unique
+
+user_overlap = function(pde, drug1_name, drug2_name) {
+  full_join(pde %>% filter(drug==drug1_name) %>% rename(drug1=drug),
+            pde %>% filter(drug==drug2_name) %>% rename(drug2=drug), by='bene_id') %>%
+    replace_na(list(drug1=0, drug2=0)) %>%
+    mutate(case=case_when(.$drug1 > 0 & .$drug2 > 0 ~ 'took_both',
+                          .$drug1 > 0 ~ 'took_drug1_only',
+                          .$drug2 > 0 ~ 'took_drug2_only',
+                          TRUE ~ 'took_neither')) %>%
+    count(case) %>%
+    spread(case, n) %>%
+    mutate(drug1=drug1_name, drug2=drug2_name)
+}
+
+mcc = function (tp, fp, fn, tn) {
+  # tp = true positive, fp = false positive, etc.
+  n = as.double(tp + fp + fn + tn)
+  s = (tp + fn) / n
+  p = (tp + fp) / n
+  return (tp / n - (s * p)) / sqrt(p * s * (1 - s) * (1 - p))
+  #return ((tp * tn) - (fp * fn)) / sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+}
+
+#drug_overlap = crossing(drug1=drugs, drug2=drugs) %>%
+#  filter(drug1 > drug2) %>%
+#  rowwise() %>% do(user_overlap(pde, .$drug1, .$drug2)) %>%
+#  mutate(took_neither=n_bene-(took_both + took_drug1_only + took_drug2_only)) %>%
+#  select(drug1, drug2, took_both, took_drug1_only, took_drug2_only, took_neither) %>%
+#  mutate(mcc=mcc(took_both, took_drug1_only, took_drug2_only, took_neither))
+```
+
+```{r top_user_overlap}
+# The idea here was to ask which users are the "top" users for that drug.
+# Then I would overlap them in the same way that I did for any-users above.
+
+pad_to = function(x, n, with=0) {
+  if (length(x) > n) stop('input longer than pad to length')
+  c(x, rep(0, n - length(x)))
+}
+
+top_bracket_limit = function(n, fraction) {
+  n[cume_dist(n) > (1 - fraction)] %>% min
+}
+
+#drug_upper_brackets = pde %>%
+#  inner_join(pde %>% group_by(bene_id) %>% summarize(n_claims=sum(n_claims)) %>% mutate(antibiotic='all'), by='bene_id') %>%
+#  group_by(antibiotic) %>%
+#  summarize(limit=top_bracket_limit(pad_to(n_claims, n_bene), 0.001)) %>%
+#  filter(limit > 0)
+``` 
