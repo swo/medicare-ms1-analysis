@@ -1,4 +1,4 @@
 .PHONY: tar
 
 tar:
-	tar cvaf temporal-data.tar.gz temporal-abx-201* README.md
+	tar cvaf temporal_data.tar.gz abx_class.tsv temporal_abx_201* README.md
