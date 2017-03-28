@@ -37,9 +37,10 @@ library(stringr)
 
 ```{r load_data}
 bene = read_tsv('../bene_2011.tsv') %>%
-  filter(age >= 65) %>%
-  mutate(is_female=sex=='female') %>%
-  select(bene_id, age, is_female)
+  filter(hmo_months==0) %>%
+  #filter(age >= 65) %>%
+  mutate(is_female=sex=='female', is_white=race=='white') %>%
+  select(bene_id, age, is_female, is_white, state)
 chronic_conditions = read_tsv('cc_2011.tsv') %>%
   rename(bene_id=BENE_ID) %>%
   select(-STRCTFLG) %>%
@@ -47,7 +48,12 @@ chronic_conditions = read_tsv('cc_2011.tsv') %>%
 pde = read_tsv('../pde_2011.tsv') %>%
   count(bene_id) %>% rename(n_claims=n)
 
+census_regions = read_tsv('../../db/census-regions/census-regions.tsv') %>% 
+  select(state, region)
+
 usage = bene %>%
+  filter(age >= 65) %>%
+  left_join(census_regions, by='state') %>%
   left_join(chronic_conditions, by='bene_id') %>%
   left_join(pde, by='bene_id') %>%
   replace_na(list(n_claims=0))
@@ -268,6 +274,36 @@ usage %>%
   MASS::glm.nb(n_claims ~ age + is_female + COPD, data=.) %>%
   broom::tidy %>%
   select(term, estimate)
+```
+
+### Including region and race
+
+I wanted to know if there was a confound with region or race: is it the case that, say, people of one race are consuming more antibiotics and also just happen to have more chronic conditions?
+
+```{r region_race}
+usage %>%
+  filter(age >= 65) %>%
+  mutate(region=factor(region, levels=c('Northeast', 'West', 'Midwest', 'South'))) %>%
+  glm(n_claims ~ age + is_female + is_white + region + COPD, family='poisson', data=.) %>%
+  broom::tidy() %>%
+  kable
+```
+
+This model treats the Northeast as the baseline region; all other regions have higher consumption. Notably, the effect of going to the south is about the same as being white (vs. any other race) or being female (vs. male).
+
+### Including young people
+
+I'm making the claim that chronic conditions explain consumption among the elderly. Maybe the effect of age among the elderly is weak, and we would see an effect if we included some younger people. I therefore tried keeping all the beneficiaries to see what would happen.
+
+```{r young_people}
+# remake the usage with young people
+bene %>%
+  left_join(chronic_conditions, by='bene_id') %>%
+  left_join(pde, by='bene_id') %>%
+  replace_na(list(n_claims=0)) %>%
+  glm(n_claims ~ age + is_female + is_white + COPD, family='poisson', data=.) %>%
+  broom::tidy() %>%
+  kable
 ```
 
 # Discussion
