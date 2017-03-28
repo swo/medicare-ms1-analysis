@@ -36,7 +36,7 @@ library(stringr)
 ```
 
 ```{r load_data}
-all_denom = read_tsv('../bene_2011.tsv') %>%
+bene = read_tsv('../bene_2011.tsv') %>%
   filter(age >= 65) %>%
   mutate(is_female=sex=='female') %>%
   select(bene_id, age, is_female)
@@ -44,15 +44,13 @@ chronic_conditions = read_tsv('cc_2011.tsv') %>%
   rename(bene_id=BENE_ID) %>%
   select(-STRCTFLG) %>%
   mutate_at(vars(AMI:HYPOTH), function(x) x==3)
-usage = read_tsv('../pde_2011.tsv') %>%
+pde = read_tsv('../pde_2011.tsv') %>%
   count(bene_id) %>% rename(n_claims=n)
 
-na_to_0 = function(x) if_else(is.na(x), 0L, x)
-
-usage_summary = denom %>%
+usage = bene %>%
   left_join(chronic_conditions, by='bene_id') %>%
-  left_join(usage, by='bene_id') %>%
-  mutate(n_claims=na_to_0(n_claims))
+  left_join(pde, by='bene_id') %>%
+  replace_na(list(n_claims=0))
 
 condition_names = read_tsv('names.txt', col_names=c('condition', 'condition_name'))
 ```
@@ -73,7 +71,7 @@ summarize_condition = function(x, condition) {
     mutate(condition=condition)
 }
 
-res = lapply(conditions, function(cond) summarize_condition(usage_summary, cond)) %>%
+res = lapply(conditions, function(cond) summarize_condition(usage, cond)) %>%
   bind_rows() %>%
   left_join(condition_names, by='condition') %>%
   select(-condition) %>%
@@ -83,7 +81,7 @@ res = lapply(conditions, function(cond) summarize_condition(usage_summary, cond)
 ```{r multivariate_poisson}
 multivariate_formula = paste(c('n_claims ~ age + is_female', conditions), collapse=' + ') %>% formula
 
-multivariate_res = usage_summary %>%
+multivariate_res = usage %>%
   select(n_claims, age, is_female, AMI:HYPOTH) %>%
   glm(multivariate_formula, data=., family='poisson') %>%
   tidy
@@ -92,17 +90,13 @@ multivariate_res = usage_summary %>%
 ```{r lasso_poisson}
 registerDoMC(cores=3)
 
-lasso_x = usage_summary %>%
+lasso_x = usage %>%
   select(age, is_female, AMI:HYPOTH) %>%
   as.matrix
-lasso_y = usage_summary$n_claims
+lasso_y = usage$n_claims
 
 lasso_cv = cv.glmnet(lasso_x, lasso_y, parallel=TRUE, family='poisson')
 ```
-
-## Summary
-
-**XXX**
 
 ## Correlations
 
@@ -112,15 +106,70 @@ Presumably many of the conditions are correlated. I computed tetrachoric correla
 tetra$rho %>% heatmap
 ```
 
-Thankfully, Alzheimer's correlates strongly with Alzheimer's and dementia, and prostatic hyperplasia and prostate cancer correlate strongly negatively with breast cancer and endometrial cancer. Unfortunately, the negative correlations make everything else harder to see, so here's the same thing but without the male conditions.
+Thankfully, Alzheimer's correlates strongly with Alzheimer's and dementia, and prostatic hyperplasia and prostate cancer correlate strongly negatively with breast cancer and endometrial cancer. Unfortunately, the negative correlations make everything else harder to see, so here's the same thing but without the male conditions. I also leave out Alzheimer's and dementia, because it's extremely well-correlated with Alzheimer's and leads to some confusing setup.
 
 ```{r fig.width=7, fig.height=7, cache=FALSE}
-(!(rownames(tetra$rho) %in% c('CNCRPRST', 'HYPERP'))) %>%
+(!(rownames(tetra$rho) %in% c('CNCRPRST', 'HYPERP', 'ALZHDMTA'))) %>%
   { tetra$rho[., .] } %>%
   heatmap.2(trace='none')
 ```
 
 COPD correlates strongly with asthma and lung cancer, but lung cancer and asthma do not correlate strongly with one another. There is a block of correlations focused around hypertension that includes ischemic heart disease, heart failure, anemia, chronic kidney disease, diabetes, hypertension, hyperlipidemia, and, importantly, COPD.
+
+### MCC correlations
+
+```{r mcc}
+mcc = function(true, pred) {
+  ut = true - mean(true)
+  up = pred - mean(pred)
+  
+  co = mean(ut * up)
+  vt = mean(ut ** 2)
+  vp = mean(up ** 2)
+  
+  if (vt * vp == 0) {
+    NA
+  } else {
+    co / sqrt(vt * vp)
+  }
+}
+
+mcc_cor = function(x) {
+  x = as.matrix(x)
+  labels = colnames(x)
+  n = length(labels)
+  out = matrix(nrow=n, ncol=n, dimnames=list(labels, labels))
+  
+  for (i in 1:n) out[i, i] = 1.0
+  
+  for (i in 1:(n-1)) {
+    ui = x[,i] - mean(x[,i])
+    vi = mean(ui ** 2)
+    for (j in (i+1):n) {
+      uj = x[,j] - mean(x[,j])
+      vj = mean(uj ** 2)
+      co = mean(ui * uj)
+      val = co / sqrt(vi * vj)
+      out[i, j] = val
+      out[j, i] = val
+    }
+  }
+  out
+}
+  
+mccs = chronic_conditions %>%
+  select(-bene_id) %>%
+  mcc_cor
+```
+
+Here is a heatmap using the square roots of the Matthews correlation coefficients. (I used square roots because it emphasizes that there are two clusters. Using just raw values is not as nice to look at.) Interestingly, all the correlations are positive.
+
+```{r fig.width=7, fig.height=7, cache=FALSE}
+(!(rownames(mccs) %in% c('CNCRPRST', 'HYPERP', 'ALZHDMTA'))) %>%
+  { mccs[., .] } %>%
+  sqrt %>%
+  gplots::heatmap.2(trace='none', symm=TRUE)
+```
 
 ## Regression
 
@@ -142,7 +191,7 @@ res %>%
 As a verification, I'll look at the distribution of number of claims among patients who have COPD or not. The mean for patients with COPD is more than double than that for patients without, which makes the age-adjusted 2.23 fold increase seem reasonable.
 
 ```{r copd}
-usage_summary %>%
+usage %>%
   group_by(COPD) %>%
   do(summary(.$n_claims) %>% tidy) %>%
   kable
