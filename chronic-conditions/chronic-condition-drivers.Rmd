@@ -258,6 +258,18 @@ lasso_cv %>%
   kable
 ```
 
+### Negative binomial
+
+The claims data are distributed more like a negative binomial than a Poisson (i.e., the variance in counts exceeds the mean). Negative binomial regressions give similar results to the Poisson results. For example, the COPD coefficient is 0.811 (vs. 0.806) and the rheumatoid arthritis coefficient is 0.466 (vs. 0.465).
+
+```{r negative_binomial}
+usage %>%
+  mutate(age=age-65) %>%
+  MASS::glm.nb(n_claims ~ age + is_female + COPD, data=.) %>%
+  broom::tidy %>%
+  select(term, estimate)
+```
+
 # Discussion
 
 Not surprisingly, COPD tops the list of chronic conditions associated with increased consumption. Interestingly, asthma does provide explanatory power beyond COPD, coming in second. Depression and anemia are next. Kidney disease has a middling effect, while age and diabetes have almost no effect!
