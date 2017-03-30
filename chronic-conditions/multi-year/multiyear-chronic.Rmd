@@ -1,0 +1,137 @@
+---
+title: ""
+author: "Scott Olesen"
+date: ""
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, 
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
+```
+
+```{r load_bene}
+parse_multi_files = function(parse_file_f, fns, labels=NULL) {
+  if (is.null(labels)) labels = fns
+  stopifnot(length(fns) == length(labels))
+ 
+  if (length(fns) == 1) return(mutate(parse_file_f(fns[1]), label=labels[1]))
+  stopifnot(length(fns) > 1)
+  
+  rest = parse_multi_files(parse_file_f, fns[-1], labels=labels[-1])
+  this = parse_file_f(fns[1]) %>% mutate(label=labels[1])
+    
+  # find the common bene IDs
+  common_bene = intersect(rest$bene_id, this$bene_id)
+    
+  bind_rows(this %>% filter(bene_id %in% common_bene),
+            rest %>% filter(bene_id %in% common_bene))
+}
+
+# Find only the good beneficiaries
+parse_bene = function(fn) {
+  read_tsv(fn) %>%
+  filter(hmo_months==0, age >= 65) %>%
+  mutate(is_female=sex=='female', is_white=race=='white') %>%
+  select(bene_id, age, is_female, is_white, state)
+}
+
+census_regions = read_tsv('../../../db/census-regions/census-regions.tsv') %>%
+  select(state, region)
+
+# convenience function: length(unique(.)) ==
+lueq = function(x, l) length(unique(x)) == l
+
+years = 2011:2014
+bene_fns = sapply(years, function(y) sprintf('../../bene_%i.tsv', y))
+bene = parse_multi_files(parse_bene, bene_fns, labels=years) %>%
+  left_join(census_regions, by='state') %>% # get census region
+  # keep only beneficiaries that change age every year but stay the same race/sex/region
+  group_by(bene_id) %>%
+  filter(lueq(age, 4), lueq(is_female, 1), lueq(is_white, 1), lueq(region, 1), lueq(label, 4)) %>%
+  ungroup() %>%
+  filter(label==years[1]) %>% # just take the first entry for each bene
+  select(-label, -state) # drop variables that are not representative of the whole
+```
+
+```{r load_cc}
+parse_cc = function(fn) {
+  read_tsv(fn) %>%
+  rename(bene_id=BENE_ID) %>%
+  select(-STRCTFLG) %>%
+  mutate_at(vars(AMI:HYPOTH), function(x) x==3)
+}
+
+cc_fns = sapply(years, function(y) sprintf('../../../data/cc_%i.tsv', y))
+cc = parse_multi_files(parse_cc, cc_fns, labels=years)
+```
+
+How often did beneficiaries change their chronic condition status?
+
+```{r}
+# I want to take the parallel maximum over the conditions columns
+# This is not very elegant. I make a list of dummy variables x1, x2, &c.
+# and then make a list that points from those dummy strings to my actual
+# variables. Then I use interp to run the pmax on the actual data frame.
+dummy_vars = sapply(1:length(conditions), function(i) sprintf('x%i', i)) # c('x1', 'x2')
+dummy_vars_s = paste0(dummy_vars, collapse=',') # 'x1,x2'
+dummy_formula = as.formula(paste0(c('~pmax(', dummy_vars_s, ')'), collapse='')) # ~pmax(x1,x2)
+dummy_vars_l = lapply(conditions, as.name) %>% setNames(dummy_vars) # list(x1=AMI, x2=COPD)
+
+# Maybe later we can worry about whether people who changed are not are generally more or less sick
+dummy_sum_formula = as.formula(paste0(c('~sum(', dummy_vars_s, ')'), collapse=''))
+
+cc_diff = cc %>%
+  group_by(bene_id) %>%
+  summarize_all(function(x) length(unique(x))) %>%
+  mutate_(max_len_unique=interp(dummy_formula, .values=dummy_vars_l))
+
+cc_diff %>%
+  count(max_len_unique) %>%
+  rename(status=max_len_unique, `number of beneficiaries`=n) %>%
+  mutate(status=case_when(.$status == 1 ~ 'no conditions changed',
+                          .$status == 2 ~ 'at least one condition changed',
+                          TRUE ~ 'other')) %>%
+  kable
+```
+
+We have 3 million people whose status for all chronic conditions did not change over the course of the four years, so let's start with just them.
+
+```{r}
+no_cc_change_benes = cc_diff %>% filter(max_len_unique==1) %$% bene_id
+cc_nochange = cc %>%
+  filter(bene_id %in% no_cc_change_benes, label==2011) %>%
+  select(-label)
+
+bene_nochange = inner_join(bene, cc_nochange, by='bene_id')
+```
+
+There are `r nrow(bene_nochange)` beneficiaries that pass both the demographic and chronic condition filters.
+
+```{r}
+parse_pde = function(fn) read_tsv(fn) %>% count(bene_id) %>% rename(n_claims=n)
+pde_fns = sapply(years, function(y) sprintf('../../pde_%i.tsv', y))
+pde = parse_multi_files(parse_pde, pde_fns, labels=years)
+```
+
+We can either run the mode using the claims from each year (treating each person as if they were independent) or by summing up their claims and looking at that.
+
+```{r}
+aggregate_pde = pde %>% group_by(bene_id) %>% summarize(n_claims=sum(n_claims))
+```
+
+```{r}
+year_model = function(y) {
+  left_join(bene_nochange, filter(pde, label==y), by='bene_id') %>%
+  replace_na(n_claims=0) %>%
+  glm(n_claims ~ age + is_female + COPD, family='poisson', data=.)
+}
+
+aggregate_model = left_join(bene_nochange, aggregate_pde, by='bene_id') %>%
+  replace_na(n_claims=0) %>%
+  glm(n_claims ~ age + is_female + ANEMIA, family='poisson', data=.)
+
+yearly_models = lapply(years, year_model)
+```
+
+

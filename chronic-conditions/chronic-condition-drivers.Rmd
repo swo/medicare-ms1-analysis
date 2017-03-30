@@ -90,7 +90,13 @@ multivariate_formula = paste(c('n_claims ~ age + is_female', conditions), collap
 multivariate_res = usage %>%
   select(n_claims, age, is_female, AMI:HYPOTH) %>%
   glm(multivariate_formula, data=., family='poisson') %>%
-  tidy
+  broom::tidy()
+```
+
+```{r multivariate_negbin}
+multivariate_negbin_res = usage %>%
+  MASS::glm.nb(multivariate_formula, data=.) %>%
+  broom::tidy()
 ```
 
 ```{r lasso_poisson}
@@ -210,7 +216,6 @@ usage %>%
 # The terms look like (Intercept), age, is_female, AMITRUE, COPDTRUE, etc.
 # So chop off TRUE where it is, then match with the known names, and
 # keep the (Intercept), etc. if it didn't match
-
 multivariate_res %>%
   mutate(pct.increase=round((exp(estimate)-1.0)*100)) %>%
   mutate(condition=str_replace(term, 'TRUE$', '')) %>%
@@ -219,6 +224,26 @@ multivariate_res %>%
   select(term, pct.increase, estimate, p.value) %>%
   arrange(desc(abs(estimate))) %>%
   kable
+```
+
+#### Comparison to negative binomial
+
+The negative binomial model gave almost exactly the same results. Here I show a plot comparing the coefficients estimates the two models. The one point that's deviated from the line is the intercept, which isn't comparable between the two models anyhow. Notably, the Poisson model appears to slightly underestimates the coefficients.
+
+```{r compare_poisson_negbin}
+bind_rows(mutate(multivariate_res, method='Poisson'),
+          mutate(multivariate_negbin_res, method='negbin')) %>%
+  mutate(condition=str_replace(term, 'TRUE$', '')) %>%
+  left_join(condition_names, by='condition') %>%
+  mutate(term=if_else(is.na(condition_name), condition, condition_name)) %>%
+  select(term, method, estimate) %>%
+  spread(method, estimate) %>%
+  ggplot(aes(x=Poisson, y=negbin)) +
+  geom_point() +
+  geom_abline() +
+  xlim(-0.2, 0.6) +
+  xlab('Poisson multivariate model coefficient') + ylab('negative binomial multivariate model coefficient') +
+  theme_minimal()
 ```
 
 ### Multivariate lasso
@@ -262,18 +287,6 @@ lasso_cv %>%
   select(term, coefficient) %>%
   arrange(desc(coefficient)) %>%
   kable
-```
-
-### Negative binomial
-
-The claims data are distributed more like a negative binomial than a Poisson (i.e., the variance in counts exceeds the mean). Negative binomial regressions give similar results to the Poisson results. For example, the COPD coefficient is 0.811 (vs. 0.806) and the rheumatoid arthritis coefficient is 0.466 (vs. 0.465).
-
-```{r negative_binomial}
-usage %>%
-  mutate(age=age-65) %>%
-  MASS::glm.nb(n_claims ~ age + is_female + COPD, data=.) %>%
-  broom::tidy %>%
-  select(term, estimate)
 ```
 
 ### Including region and race
