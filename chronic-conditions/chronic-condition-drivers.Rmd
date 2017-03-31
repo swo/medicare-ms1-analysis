@@ -319,6 +319,67 @@ bene %>%
   kable
 ```
 
+## On all years
+
+It seems like the multivariate model is the easiest one to understand and interpret. I therefore ran this one analysis on all the years.
+
+```{r}
+year_model = function(y) {
+  bene_fn = sprintf('../bene_%i.tsv', y)
+  pde_fn = sprintf('../pde_%i.tsv', y)
+  cc_fn = sprintf('../../data/cc_%i.tsv', y)
+
+  bene = read_tsv(bene_fn) %>%
+    filter(hmo_months==0, age >= 65) %>%
+    mutate(is_female=sex=='female', is_white=race=='white') %>%
+    select(bene_id, age, is_female, is_white, state)
+  chronic_conditions = read_tsv(cc_fn) %>%
+    rename(bene_id=BENE_ID) %>%
+    select(-STRCTFLG) %>%
+    mutate_at(vars(AMI:HYPOTH), function(x) x==3)
+  pde = read_tsv(pde_fn) %>%
+    count(bene_id) %>% rename(n_claims=n)
+
+  usage = bene %>%
+    left_join(census_regions, by='state') %>%
+    left_join(chronic_conditions, by='bene_id') %>%
+    left_join(pde, by='bene_id') %>%
+    replace_na(list(n_claims=0))
+
+  multivariate_res = usage %>%
+    glm(multivariate_formula, data=., family='poisson') %>%
+    broom::tidy() %>%
+    mutate(label=y)
+  
+  multivariate_res
+}
+
+yearly_models = lapply(2011:2014, year_model) %>%
+  bind_rows
+```
+
+```{r}
+#yearly_models %>%
+#  select(term, label, estimate) %>%
+#  spread(label, estimate) %>%
+#  arrange(desc(`2011`)) %>%
+#  kable
+```
+
+```{r}
+term_levels = yearly_models %>%
+  filter(label==2011) %>%
+  arrange(desc(estimate)) %$%
+  rev(term)
+
+yearly_models %>%
+  mutate(term=factor(term, levels=term_levels, ordered=TRUE)) %>%
+  ggplot(aes(x=term, y=estimate, color=factor(label))) +
+  geom_point() +
+  coord_flip() +
+  theme_minimal()
+```
+
 # Discussion
 
 Not surprisingly, COPD tops the list of chronic conditions associated with increased consumption. Interestingly, asthma does provide explanatory power beyond COPD, coming in second. Depression and anemia are next. Kidney disease has a middling effect, while age and diabetes have almost no effect!
