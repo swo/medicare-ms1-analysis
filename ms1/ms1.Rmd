@@ -58,12 +58,15 @@ multicol_sum = function(x, new_name, target_columns) {
     ungroup()
 }
 
-conditions = c("AMI", "ALZH", "ALZHDMTA", "ATRIALFB", "CATARACT", "CHRNKIDN", "COPD", "CHF", "DIABETES", "GLAUCOMA", "HIPFRAC", "ISCHMCHT", "DEPRESSN", "OSTEOPRS", "RA_OA", "STRKETIA", "CNCRBRST", "CNCRCLRC", "CNCRPRST", "CNCRLUNG", "CNCRENDM", "ANEMIA", "ASTHMA", "HYPERL", "HYPERP", "HYPERT", "HYPOTH")
+conditions = c("AMI", "ALZHDMTA", "ATRIALFB", "CATARACT", "CHRNKIDN", "COPD", "CHF", "DIABETES", "GLAUCOMA", "HIPFRAC", "ISCHMCHT", "DEPRESSN", "OSTEOPRS", "RA_OA", "STRKETIA", "CNCRBRST", "CNCRCLRC", "CNCRPRST", "CNCRLUNG", "CNCRENDM", "ANEMIA", "ASTHMA", "HYPERL", "HYPERP", "HYPERT", "HYPOTH")
 
-multivariate_formula = paste(c('n_claims ~ age + is_female + ', conditions), collapse=' + ') %>% formula
+multivariate_formula = paste(c('n_claims ~ age_over_65 + is_female + ', conditions), collapse=' + ') %>% formula
 
 all_condition_model = function(usage) {
-  glm(multivariate_formula, data=usage, family='poisson') %>% tidy()
+  usage %>%
+    mutate(age_over_65 = age - 65) %>%
+    glm(multivariate_formula, data=., family='poisson') %>%
+    tidy()
 }
 ```
 
@@ -78,15 +81,18 @@ condition_names = read_tsv('../chronic-conditions/names.txt',
 analyze = function(this_year) {
   # bene file is already filtered for plan coverage months and good geographies
   bene = read_tsv(sprintf('../bene_%i.tsv', this_year)) %>%
-    filter(age >= 65, hmo_months==0) %>%
+    filter(age >= 65, age < 116, hmo_months==0) %>%
     mutate(is_female=sex=='female', is_white=race=='white') %>%
     left_join(regions, by='state')
   
   assert_has_no_duplicates(bene$bene_id)
   total_n_bene = nrow(bene)
   
+  # keep only PDEs for known beneficiaries (semi join)
+  # convert all amox/clav to just amox
   pde = read_tsv(sprintf('../pde_%i.tsv', this_year)) %>%
-    semi_join(bene, by='bene_id') # keep only PDEs for known beneficiaries
+    semi_join(bene, by='bene_id') %>%
+    mutate(antibiotic=if_else(antibiotic=='amoxicillin/clavulanate', 'amoxicillin', antibiotic))
   
   total_n_pde = nrow(pde)
   
@@ -116,7 +122,7 @@ analyze = function(this_year) {
   # then by age group
   # (the input to summarize_by is modified, since we want to group by age *group*,
   # not just by raw age)
-  age_group_f = function(x) bounds_group(x, c(65, 75, 85, Inf))
+  age_group_f = function(x) bounds_group(x, c(65, 70, 75, 80, 85, 90, 95, 116))
   claims_by_age = summarize_by(
     bene %>% mutate(age_group=age_group_f(age)),
     pde, 'age_group') %>%
@@ -127,11 +133,12 @@ analyze = function(this_year) {
     mutate(year=this_year)
   
   # characteristics by consumption
-  cc = read_tsv(sprintf('../cc_%i.tsv', this_year))
+  cc = read_tsv(sprintf('../cc_%i.tsv', this_year)) %>%
+    select(-ALZH)
     
   usage = pde %>% count(bene_id) %>% rename(n_claims=n) %>%
     right_join(bene, by='bene_id') %>%
-    replace_na(n_claims=0) %>%
+    replace_na(list(n_claims=0)) %>%
     left_join(cc, by='bene_id') %>%
     multicol_sum('n_cc', conditions)
   
@@ -265,3 +272,17 @@ All consumption rates are reported as claims per thousand people per year (CPKP)
 # Table 3: Chronic conditions predict consumption
 
 `r condition_model`
+
+## Table 3 caption: model coefficient p-values
+
+Only $p$-values above (less significant than) $10^{-50}$ are shown. All the remaining values are more significant than the ones shown here.
+
+```{r p_values}
+data_by_field('condition_model') %>%
+  select(term, year, p.value) %>%
+  mutate(adj.p=p.adjust(p.value, method='bonferroni'),
+         log10.adj.p=log10(adj.p)) %>%
+  filter(adj.p > 10^(-50)) %>%
+  arrange(desc(log10.adj.p)) %>%
+  kable
+```
