@@ -5,25 +5,30 @@ date: "2/20/2017"
 output: html_document
 ---
 
-```{r load_data, message=FALSE}
-dat = 2011:2014 %>%
-  lapply(function(y) read_tsv(sprintf('../../data/pde_%i.tsv', y)) %>%
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4,
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
+```
+
+```{r load_formulary, message=FALSE}
+formulary = 2011:2014 %>%
+  lapply(function(y) read_tsv(sprintf('../../data/formulary/formulary_%i.tsv', y)) %>%
            select(brand_name=BN, generic_name=GNN, dosage_form_code=GCDF, dosage_form_desc=GCDF_DESC) %>%
            mutate(year=y)) %>%
   bind_rows()
 ```
 
+I no longer have the raw PDE data, so I can't use that!
+```{r load_pde, message=FALSE}
+# Start with just one year
+#pde = 2011:2012 %>%
+  #lapply(function(y) read_tsv(sprintf('../pde_%i.tsv', y)) %>% mutate(year=y)) %>%
+  #bind_rows()
+```
+
 Most codes have a unique descriptions.
 ```{r code_desc}
-filter_repeated_block = function(x) {
-  if (nrow(x) == 1) {
-    data_frame()
-  } else {
-    x
-  }
-}
-
-unique_combos = dat %>%
+unique_combos = formulary %>%
   select(dosage_form_code, dosage_form_desc) %>%
   distinct %>%
   arrange(dosage_form_code)
@@ -36,7 +41,7 @@ There are a few exceptions:
 ```{r repeated_codes}
 unique_combos %>%
   group_by(dosage_form_code) %>%
-  do(filter_repeated_block(.)) %>%
+  filter(length(dosage_form_desc) > 1) %>%
   arrange(dosage_form_code, dosage_form_desc) %>%
   kable
 ```
@@ -45,35 +50,42 @@ None of these repetitions are meaningfully different from one another, so I'll
 conclude that the code uniquely identifies the dosage type.
 
 ```{r codes_by_year}
-canonical_codes = unique_combos %>%
-  group_by(dosage_form_code) %>%
-  do(head(., 1))
-
-dat %>%
-  select(dosage_form_code, year) %>%
-  group_by(year) %>%
-  count(dosage_form_code) %>%
-  spread(year, n) %>%
-  left_join(canonical_codes, by='dosage_form_code') %>%
-  arrange(desc(`2011`)) %>%
-  kable
+#canonical_codes = unique_combos %>%
+#  group_by(dosage_form_code) %>%
+#  do(head(., 1))
+#
+#dat %>%
+#  select(dosage_form_code, year) %>%
+#  group_by(year) %>%
+#  count(dosage_form_code) %>%
+#  spread(year, n) %>%
+#  left_join(canonical_codes, by='dosage_form_code') %>%
+#  arrange(desc(`2011`)) %>%
+#  kable
 ```
 
 Which ones of the codes should I keep? Let's consider, for each code, the top drugs that match that code. Of these, I should only keep some.
 
 ```{r drugs_by_code, message=FALSE}
-
-drugs_by_code = dat %>%
-  filter(year == 2011) %>%
-  select(generic_name, brand_name, dosage_form_code) %>%
-  group_by(dosage_form_code) %>%
-  count(generic_name) %>%
-  group_by(dosage_form_code) %>%
-  do(head(., 3))
+#drugs_by_code = dat %>%
+#  filter(year == 2011) %>%
+#  select(generic_name, brand_name, dosage_form_code) %>%
+#  group_by(dosage_form_code) %>%
+#  count(generic_name) %>%
+#  group_by(dosage_form_code) %>%
+#  do(head(., 3))
 
 codes_to_keep = scan('oral_injected_codes.txt', what=character())
 
-drugs_by_code %>%
-  mutate(keep_code=dosage_form_code %in% codes_to_keep) %>%
-  kable
+#drugs_by_code %>%
+#  mutate(keep_code=dosage_form_code %in% codes_to_keep) %>%
+#  kable
+```
+
+For posterity, I export a list of the code/values that I kept.
+```{r save_codes}
+unique_combos %>%
+  filter(dosage_form_code %in% codes_to_keep) %>%
+  arrange(dosage_form_code) %>%
+  write_tsv('code_forms.tsv')
 ```
