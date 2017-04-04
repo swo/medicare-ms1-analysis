@@ -1,0 +1,281 @@
+---
+title: "Data for supplement to ms. 1"
+author: "Scott Olesen"
+output: html_document
+---
+
+```{r global_options, include=FALSE, cache=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='fig/', dev=c('png', 'pdf'),
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE,
+                      error=FALSE)
+import::from(knitr, kable)
+import::from(lazyeval, interp)
+import::from(broom, tidy)
+import::from(stringr, str_replace)
+import::from(doMC, registerDoMC)
+import::from(gplots, heatmap.2)
+library(glmnet)
+library(assertive)
+```
+
+```{r load_db, cache=FALSE}
+regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
+  select(state, region)
+condition_names = read_tsv('../chronic-conditions/names.txt',
+                           col_names=c('condition', 'condition_name'))
+
+conditions = c("AMI", "ALZHDMTA", "ATRIALFB", "CATARACT", "CHRNKIDN", "COPD", "CHF", "DIABETES", "GLAUCOMA", "HIPFRAC", "ISCHMCHT", "DEPRESSN", "OSTEOPRS", "RA_OA", "STRKETIA", "CNCRBRST", "CNCRCLRC", "CNCRPRST", "CNCRLUNG", "CNCRENDM", "ANEMIA", "ASTHMA", "HYPERL", "HYPERP", "HYPERT", "HYPOTH")
+```
+
+```{r mcc, cache=FALSE}
+mcc = function(true, pred) {
+  ut = true - mean(true)
+  up = pred - mean(pred)
+  
+  co = mean(ut * up)
+  vt = mean(ut ** 2)
+  vp = mean(up ** 2)
+  
+  if (vt * vp == 0) {
+    NA
+  } else {
+    co / sqrt(vt * vp)
+  }
+}
+
+mcc_cor = function(x) {
+  x = as.matrix(x)
+  labels = colnames(x)
+  n = length(labels)
+  out = matrix(nrow=n, ncol=n, dimnames=list(labels, labels))
+  
+  for (i in 1:n) out[i, i] = 1.0
+  
+  for (i in 1:(n-1)) {
+    ui = x[,i] - mean(x[,i])
+    vi = mean(ui ** 2)
+    for (j in (i+1):n) {
+      uj = x[,j] - mean(x[,j])
+      vj = mean(uj ** 2)
+      co = mean(ui * uj)
+      val = co / sqrt(vi * vj)
+      out[i, j] = val
+      out[j, i] = val
+    }
+  }
+  out
+}
+```
+
+```{r load_data}
+this_year = 2011
+
+bene = read_tsv(sprintf('../bene_%i.tsv', this_year)) %>%
+  filter(age >= 65, age < 116, hmo_months==0) %>%
+  mutate(is_female=sex=='female', is_white=race=='white') %>%
+  left_join(regions, by='state')
+  
+pde = read_tsv(sprintf('../pde_%i.tsv', this_year)) %>%
+  semi_join(bene, by='bene_id') # keep only PDEs for known beneficiaries
+  
+cc = read_tsv(sprintf('../cc_%i.tsv', this_year)) %>%
+  select(-ALZH)
+    
+usage = pde %>% count(bene_id) %>% rename(n_claims=n) %>%
+  right_join(bene, by='bene_id') %>%
+  replace_na(list(n_claims=0)) %>%
+  left_join(cc, by='bene_id') %>%
+  mutate(age_over_65 = age - 65)
+  
+stopifnot(all(usage$age >= 0))
+```
+
+# All-condition negative binomial model
+
+Each point represents a chronic condition. The coordinates are corresponding coefficients in the two models. The formula for the model is claims against age and sex.
+
+```{r all_condition_negbin}
+all_condition_formula_start = 'n_claims ~ age_over_65 + is_female + '
+all_condition_formula = formula(paste(c(all_condition_formula_start, conditions), collapse=' + '))
+
+all_condition_negbin_model = usage %>%
+  MASS::glm.nb(all_condition_formula, data=.) %>%
+  tidy()
+
+all_condition_poisson_model = usage %>%
+  glm(all_condition_formula, data=., family='poisson') %>%
+  tidy()
+```
+
+```{r cache=FALSE}
+bind_rows(mutate(all_condition_poisson_model, method='Poisson'),
+          mutate(all_condition_negbin_model, method='negbin')) %>%
+  mutate(condition=str_replace(term, 'TRUE$', '')) %>%
+  left_join(condition_names, by='condition') %>%
+  mutate(term=if_else(is.na(condition_name), condition, condition_name)) %>%
+  select(term, method, estimate) %>%
+  spread(method, estimate) %>%
+  ggplot(aes(x=Poisson, y=negbin)) +
+  geom_abline(col='gray') +
+  geom_point() +
+  xlim(-0.2, 0.6) + ylim(-0.2, 0.6) +
+  xlab('Poisson multivariate model coefficient') +
+  ylab('negative binomial multivariate model coefficient') +
+  coord_fixed() +
+  theme_minimal()
+```
+
+# Single-condition Poisson models
+
+```{r single_condition}
+summarize_condition = function(x, condition) {
+rename_(x, .dots=setNames(condition, 'has_condition')) %>%
+  glm(n_claims ~ age_over_65 + is_female + has_condition, family='poisson', data=.) %>%
+  tidy() %>%
+  mutate(condition=condition)
+}
+  
+single_condition_models = lapply(conditions, function(cond) summarize_condition(usage, cond)) %>%
+  bind_rows()
+```
+
+```{r cache=FALSE}
+single_condition_models %>%
+  left_join(condition_names, by='condition') %>%
+  select(-condition) %>%
+  rename(condition=condition_name) %>%
+  filter(term=='has_conditionTRUE') %>%
+  select(condition, estimate, p.value) %>%
+  mutate(adj.p.value=p.adjust(p.value, method='bonferroni')) %>%
+  arrange(desc(estimate)) %>%
+  kable
+```
+
+# All-condition Poisson lasso model
+
+I also performed a multivariate lasso regression with the Poisson model, keeping all the chronic conditions as well as age and sex (coded as "is female") as explanatory variables.
+I started with 10-fold cross-validation to pick the lasso $\lambda$.
+
+```{r all_condition_lasso}
+registerDoMC(cores=3)
+
+lasso_x = usage %>%
+  select(age_over_65, is_female, AMI:HYPOTH) %>%
+  as.matrix
+lasso_y = usage$n_claims
+
+lasso_cv = cv.glmnet(lasso_x, lasso_y, parallel=TRUE, family='poisson')
+```
+
+```{r cache=FALSE}
+plot(lasso_cv)
+```
+
+Although the error continues to fall with decreasing $\lambda$, it seems like there are diminishing returns after the first 8 or 10 variables are included.
+
+```{r cache=FALSE}
+lasso_df = lasso_cv$glmnet.fit %>%
+  tidy %>%
+  filter(estimate > 0) %>%
+  group_by(step) %>%
+  summarize(df=n() - 1)
+
+lasso_cv$glmnet.fit %>%
+  tidy %>%
+  select(step, lambda, dev.ratio) %>%
+  distinct() %>%
+  left_join(lasso_df, by='step') %>%
+  select(step, df, lambda) %>%
+  mutate_at(vars(lambda), function(x) signif(x, digits=2)) %>%
+  filter(df < 12) %>%
+  kable
+```
+
+```{r pick_lambda}
+lambda_lasso = 0.22
+```
+
+It looks like this corresponds to $\lambda \sim `r lambda_lasso`$. For that value, the coefficients are:
+
+```{r cache=FALSE}
+lasso_cv %>%
+  coef(s=lambda_lasso) %>%
+  tidy %>%
+  select(condition=row, coefficient=value) %>%
+  left_join(condition_names, by='condition') %>%
+  mutate(term=if_else(is.na(condition_name), condition, condition_name)) %>%
+  select(term, coefficient) %>%
+  arrange(desc(coefficient)) %>%
+  kable
+```
+
+# Single-condition Poisson models including race and geography for top conditions
+
+```{r race_geography}
+top_conditions = single_condition_models %>%
+  filter(term=='has_conditionTRUE') %>%
+  arrange(desc(estimate)) %$%
+  head(condition, 5)
+
+race_geography_model_f = function(condition) {
+  form = formula(paste0('n_claims ~ age_over_65 + is_female + is_white + region + ', condition))
+  usage %>%
+    mutate(region=factor(region, levels=c('Northeast', 'West', 'Midwest', 'South'))) %>%
+    glm(form, family='poisson', data=.) %>%
+    tidy() %>%
+    mutate(condition=condition)
+}
+
+race_geography_model = lapply(top_conditions, race_geography_model_f) %>%
+  bind_rows()
+```
+
+```{r cache=FALSE}
+transpose_tibble = function(x) {
+  gather(x, 'var_name', 'value', 2:ncol(x)) %>% 
+    spread_(names(x)[1], 'value')
+}
+
+single_condition_estimates = single_condition_models %>%
+  filter(term=='has_conditionTRUE') %>%
+  select(condition, single_estimate=estimate)
+
+race_geography_model %>%
+  select(condition, term, estimate) %>%
+  mutate(term=if_else(term==paste0(condition, 'TRUE'), 'racegeo_estimate', term)) %>%
+  spread(term, estimate) %>%
+  left_join(single_condition_estimates, by='condition') %>%
+  transpose_tibble %>%
+  kable
+```
+  
+# Correlations between chronic conditions
+
+```{r correlations}
+correlations = cc %>%
+  select(-bene_id) %>%
+  mcc_cor
+```
+
+Here I show Matthews correlation coefficients for all the conditions. The heatmap uses $\sqrt{c}$, where $c$ is the correlation; the second dendrogram figure uses $\sqrt{1 - |c|}$ as the distance metric.
+
+```{r fig.width=7, fig.height=7, cache=FALSE}
+male_conditions = c('CNCRPRST', 'HYPERP')
+#excluded_conditions = c()
+(!(rownames(correlations) %in% male_conditions)) %>%
+  { correlations[., .] } %>%
+  #sqrt %>%
+  gplots::heatmap.2(trace='none', symm=TRUE)
+```
+
+```{r fig.width=7, fig.height=7, cache=FALSE}
+female_conditions = c('CNCRENDM', 'CNCRBRST', 'OSTEOPRS')
+(!(rownames(correlations) %in% female_conditions)) %>%
+  { correlations[., .] } %>%
+  sqrt %>%
+  gplots::heatmap.2(trace='none', symm=TRUE)
+```
+
+```{r}
+plot(hclust(as.dist(sqrt(1.0 - abs(correlations)))))
+```
