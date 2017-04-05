@@ -91,8 +91,8 @@ analyze = function(this_year) {
   # keep only PDEs for known beneficiaries (semi join)
   # convert all amox/clav to just amox
   pde = read_tsv(sprintf('../pde_%i.tsv', this_year)) %>%
-    semi_join(bene, by='bene_id') %>%
-    mutate(antibiotic=if_else(antibiotic=='amoxicillin/clavulanate', 'amoxicillin', antibiotic))
+    semi_join(bene, by='bene_id') #%>%
+    #mutate(antibiotic=if_else(antibiotic=='amoxicillin/clavulanate', 'amoxicillin', antibiotic))
   
   total_n_pde = nrow(pde)
   
