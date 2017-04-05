@@ -21,7 +21,9 @@ In a separate analysis, I determined that the antibiogram data in certain locale
 
 # Methods
 
-I used the Medicare Part D data from 2011. Only beneficiaries greater than 65 years old were used. I also used the antibiogram data. I pooled the antiobiograms from all years.
+I used the Medicare Part D data from 2011. Normal filtering was applied to beneficiaries: at least 65 years old, no HMO, 12 months of coverage.
+
+I pooled the antiobiograms from all years.
 
 I selected a set of organisms in the antibiogram to examine. They mostly represent the most abundant organisms in the data. I also matched particular drugs in the consumption data to match to drugs in the resistance data.
 
@@ -33,6 +35,7 @@ The explanatory variable in the correlation was either claims per 1,000 people p
 knitr::opts_chunk$set(fig.width=7, fig.height=4, cache=TRUE,
                       echo=FALSE, warning=FALSE, message=FALSE)
 import::from(broom, tidy)
+import::from(mblm, mblm)
 library(pander)
 library(assertr)
 ```
@@ -95,6 +98,16 @@ abg %<>%
   filter(n_states >= 20) %>%
   left_join(abg, by=c('bug', 'drug_group'))
 
+summarize_abg = function(df, place_name) {
+  group_by_(df, 'bug', 'drug_group', place_name) %>%
+    summarize(mean_percent_nonsusceptible=weighted.mean(percent_nonsusceptible, sqrt(n_isolates)),
+              n_place_antibiograms=n()) %>%
+    mutate(place_weight=sqrt(n_place_antibiograms))
+}
+
+abg_state_dat = summarize_abg(abg, 'state')
+abg_hrr_dat = summarize_abg(abg, 'hrr')
+
 # swo> State beneficiary information could be used as control variables
 # in regressions
 #state_bene = read_tsv('../../bene-consumption/state-bene-2011.tsv') %>%
@@ -105,17 +118,21 @@ abg %<>%
 state_usage = read_tsv('../bene-consumption/state_usage.tsv') %>%
   filter(year==2011) %>%
   right_join(consumption_groups, by=c('antibiotic'='drug')) %>%
-  group_by(hrr, drug_group) %>%
-  summarize_at(vars(cpkp, did), sum)
+  group_by(state, drug_group) %>%
+  summarize_at(vars(cpkp, did), sum) %>%
+  ungroup()
 
 hrr_usage = read_tsv('../bene-consumption/hrr_usage.tsv') %>%
   filter(year==2011) %>%
   right_join(consumption_groups, by=c('antibiotic'='drug')) %>%
   group_by(hrr, drug_group) %>%
-  summarize_at(vars(cpkp, did), sum)
+  summarize_at(vars(cpkp, did), sum) %>%
+  ungroup()
 
-state_dat = left_join(abg, state_usage, by=c('drug_group', 'state'))
-hrr_dat = left_join(abg, hrr_usage, by=c('drug_group', 'hrr'))
+state_dat = left_join(abg_state_dat, state_usage, by=c('drug_group', 'state')) %>%
+  rename(place=state)
+hrr_dat = left_join(abg_hrr_dat, hrr_usage, by=c('drug_group', 'hrr')) %>%
+  rename(place=hrr)
 ```
 
 ```{r run_models}
@@ -127,33 +144,38 @@ pvalue_stars = function(x) {
             TRUE ~ '')
 }
 
-models_result = function(x, this_place) {
-  x %>%
-    group_by_('bug', 'drug_group', this_place) %>%
-    summarize(mean_nonsus=mean(percent_nonsusceptible, na.rm=TRUE),
-              cpkp=head(cpkp, 1),
-              did=head(did, 1)) %>%
-    group_by(bug, drug_group) %>%
-    do(models(., 'mean_nonsus')) %>%
-    ungroup %>%
-    filter(!is.na(estimate)) %>%
-    mutate(adj.p.value=p.adjust(p.value, method='BH'),
-           sig=pvalue_stars(adj.p.value)) %>%
-    mutate(record_number=1:n(),
-           plot_fn=sprintf('plots/%s_%03i.pdf', this_place, record_number),
-           plot_link=pandoc.link.return(url=plot_fn, text='plot')) %>%
-    select(bug, drug_group,
-           explanatory, correlation=estimate, p.value,
-           adj.p.value, sig,
-           plot_fn, plot_link)
+models = function(df, independent_var, explanatory_vars) {
+  f = paste0(independent_var, ' ~ ', paste0(explanatory_vars, collapse = ' + ')) %>% formula
+  lm(f, data=df) %>% tidy
 }
 
-state_res = models_result(state_dat, 'state')
-hrr_res = models_result(hrr_dat, 'hrr')
+models_result = function(df) {
+  group_by(df, bug, drug_group, place) %>%
+    summarize(mean_percent_nonsusceptible=weighted.mean(mean_percent_nonsusceptible, place_weight),
+              cpkp=unique(cpkp),
+              did=unique(did)) %>%
+    group_by(bug, drug_group) %>%
+    do(models(., 'mean_percent_nonsusceptible', 'cpkp')) %>%
+    ungroup %>%
+    filter(term=='cpkp') %>%
+    mutate(adj.p.value=p.adjust(p.value, method='BH'),
+           sig=pvalue_stars(adj.p.value))
+   # %>%
+    #mutate(record_number=1:n(),
+    #       plot_fn=sprintf('plots/%s_%03i.pdf', this_place, record_number),
+    #       plot_link=pandoc.link.return(url=plot_fn, text='plot')) %>%
+    #select(bug, drug_group,
+    #       explanatory, correlation=estimate, p.value,
+    #       adj.p.value, sig,
+    #       plot_fn, plot_link)
+}
+
+state_res = models_result(state_dat)
+hrr_res = models_result(hrr_dat)
 
 result = bind_rows(
-  state_res %>% mutate(place='state'),
-  hrr_res %>% mutate(place='hrr')
+  state_res %>% mutate(place_type='state'),
+  hrr_res %>% mutate(place_type='hrr')
 )
 ```
 
@@ -193,16 +215,17 @@ Here a relationship where increased consumption leads to increased nonsusceptibi
 
 In these results, the percent nonsusceptible in each geography (state or HRR) was averaged, and the averages of the nonsusceptibilities were compared against the consumption data.
 
-#### State-level resistance-averaged correlations
+#### State-level, resistance-averaged linear models
 
 ```{r state_average_results_table}
 result %>%
-  filter(place=='state') %>%
+  filter(place_type=='state') %>%
   mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
   select(bug, drug_group,
-         explanatory, correlation,
-         adj.p.value, sig,
-         plot_link) %>%
+         term, estimate, std.error,
+         adj.p.value, sig
+         #,plot_link
+         ) %>%
   kable
 ```
 
@@ -210,194 +233,45 @@ result %>%
 
 ```{r state_average_volcano}
 result %>%
-  filter(place=='state') %>%
-  ggplot(aes(x=correlation, y=adj.p.value)) +
+  filter(place_type=='state') %>%
+  ggplot(aes(x=estimate, y=adj.p.value)) +
   geom_point() +
   geom_hline(yintercept=0.05, col='red') +
-  xlab('correlation coefficient') + ylab('p value (reversed)') +
+  xlab('slope') + ylab('p value (reversed)') +
   scale_y_reverse() +
   theme_minimal()
 ```
 
-#### State-level resistance-averaged correlations using linear models
+#### HRR-level, resistance-averaged linear models
 
-```{r}
-safe_lm = function(data, indep, expl) {
-  try(return(lm(sprintf('%s ~ %s', indep, expl), data) %>% tidy), silent=TRUE)
-  data_frame(term=expl, estimate=NA, std.error=NA, statistic=NA, p.value=1.0)
-}
+```{r hrr_average_results_table}
+result %>%
+  filter(place_type=='hrr') %>%
+  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
+  select(bug, drug_group,
+         term, estimate, std.error,
+         adj.p.value, sig
+         #,plot_link
+         ) %>%
+  kable
+```
 
-linear_models = function(df, indep) {
-  lapply(c('cpkp', 'did'), function(expl) {
-    safe_lm(df, indep, expl) %>%
-      filter(term==expl) %>%
-      rename(explanatory=term) %>%
-      verify(nrow(.) == 1)
-  }) %>% bind_rows
-}
+(red line marks $p = 0.05$).
 
-linear_models_result = function(x, this_place) {
-  x %>%
-    group_by_('bug', 'drug_group', this_place) %>%
-    summarize(mean_nonsus=mean(percent_nonsusceptible, na.rm=TRUE),
-              cpkp=head(cpkp, 1),
-              did=head(did, 1)) %>%
-    group_by(bug, drug_group) %>%
-    do(linear_models(., 'mean_nonsus')) %>%
-    ungroup %>%
-    filter(!is.na(estimate)) %>%
-    mutate(adj.p.value=p.adjust(p.value, method='BH'),
-           sig=pvalue_stars(adj.p.value)) %>%
-    select(bug, drug_group,
-           explanatory, slope=estimate, p.value,
-           adj.p.value, sig)
-}
-
-linear_state_res = linear_models_result(state_dat, 'state')
-
-linear_state_res %>% kable
+```{r hrr_average_volcano}
+result %>%
+  filter(place_type=='hrr') %>%
+  ggplot(aes(x=estimate, y=adj.p.value)) +
+  geom_point() +
+  geom_hline(yintercept=0.05, col='red') +
+  xlab('slope') + ylab('p value (reversed)') +
+  scale_y_reverse() +
+  theme_minimal()
 ```
 
 #### State-level resistance-averaged robust regressions
 
-```{r}
-library(mblm)
-
-safe_mblm = function(data, indep, expl) {
-  try(return(mblm(sprintf('%s ~ %s', indep, expl), data) %>% tidy), silent=TRUE)
-  data_frame(term=expl, estimate=NA, std.error=NA, statistic=NA, p.value=1.0)
-}
-
-ts_models = function(df, indep) {
-  lapply(c('cpkp', 'did'), function(expl) {
-    safe_mblm(df, indep, expl) %>%
-      filter(term==expl) %>%
-      rename(explanatory=term) %>%
-      verify(nrow(.) == 1)
-  }) %>% bind_rows
-}
-
-ts_models_result = function(x, this_place) {
-  x %>%
-    group_by_('bug', 'drug_group', this_place) %>%
-    summarize(mean_nonsus=mean(percent_nonsusceptible, na.rm=TRUE),
-              cpkp=head(cpkp, 1),
-              did=head(did, 1)) %>%
-    group_by(bug, drug_group) %>%
-    do(linear_models(., 'mean_nonsus')) %>%
-    ungroup %>%
-    filter(!is.na(estimate)) %>%
-    mutate(adj.p.value=p.adjust(p.value, method='BH'),
-           sig=pvalue_stars(adj.p.value)) %>%
-    select(bug, drug_group,
-           explanatory, slope=estimate, p.value,
-           adj.p.value, sig)
-}
-
-ts_state_res = linear_models_result(state_dat, 'state')
-
-ts_state_res %>% kable
-```
-
-#### HRR-level resistance-averaged
-
-```{r hrr_average_results_table}
-result %>%
-  filter(place=='hrr') %>%
-  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
-  select(bug, drug_group,
-         explanatory, correlation,
-         adj.p.value, sig,
-         plot_link) %>%
-  kable
-```
-
-(red line marks $p = 0.05$)
-
-```{r hrr_average_histogram}
-result %>%
-  filter(place=='hrr') %>%
-  ggplot(aes(x=correlation, y=adj.p.value)) +
-  geom_point() +
-  geom_hline(yintercept=0.05, col='red') +
-  xlab('correlation coefficient') + ylab('p value (reversed)') +
-  scale_y_reverse() +
-  theme_minimal()
-```
-
-### All-antibiogram results
-
-In these data, I don't average the resistance before running the correlation, but I do associate each antibiogram with the same geography-wide consumption.
-
-```{r}
-all_models_result = function(x, this_place, consumption) {
-  x %>%
-    mutate_at(vars(cpkp, did), function(x) if_else(is.na(x), 0, x)) %>%
-    group_by(bug, drug_group) %>%
-    do(models(., 'percent_nonsusceptible')) %>%
-    ungroup %>%
-    filter(!is.na(estimate)) %>%
-    mutate(adj.p.value=p.adjust(p.value, method='BH'),
-           sig=pvalue_stars(adj.p.value)) %>%
-    select(bug, drug_group,
-           explanatory, correlation=estimate, p.value,
-           adj.p.value, sig)
-}
-
-all_state_res = all_models_result(state_dat, 'state', state_consumption)
-all_hrr_res = all_models_result(hrr_dat, 'hrr', hrr_consumption)
-
-all_result = bind_rows(
-  all_state_res %>% mutate(place='state'),
-  all_hrr_res %>% mutate(place='hrr')
-)
-```
-
-#### State-wide consumption, all-antibiogram
-
-```{r}
-all_result %>%
-  filter(place=='state') %>% 
-  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
-  select(bug, drug_group, 
-         explanatory, correlation, p.value,
-         adj.p.value, sig) %>%
-  kable
-```
-
-#### State-wide consumtion, all-antibiogram using linear models
-
-```{r}
-linear_all_models_result = function(x, this_place) {
-  x %>%
-    group_by(bug, drug_group) %>%
-    do(linear_models(., 'percent_nonsusceptible')) %>%
-    ungroup %>%
-    filter(!is.na(estimate)) %>%
-    mutate(adj.p.value=p.adjust(p.value, method='BH'),
-           sig=pvalue_stars(adj.p.value)) %>%
-    select(bug, drug_group,
-           explanatory, slope=estimate, p.value,
-           adj.p.value, sig)
-}
-
-linear_all_state_res = linear_all_models_result(state_dat, 'state')
-linear_all_hrr_res = linear_all_models_result(hrr_dat, 'hrr')
-
-linear_all_state_res %>% kable
-```
-
-#### HRR-wide consumption, all-antibiogram
-
-```{r}
-all_result %>%
-  filter(place=='hrr') %>% 
-  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
-  select(bug, drug_group, 
-         explanatory, correlation, p.value,
-         adj.p.value, sig) %>%
-  kable
-```
+swo> Copy the code, and allow a function pointer for lm function to use
 
 # Discussion
 
