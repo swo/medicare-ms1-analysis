@@ -1,5 +1,6 @@
 old/
 img/
+fig/
 *_files/
 *_cache/
 *.tsv
