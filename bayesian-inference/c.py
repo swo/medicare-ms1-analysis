@@ -13,6 +13,7 @@ def est(a, b):
     return exact, approx, err
 
 vals = [1, 10, 100]
+print('a', 'b', 'exact', 'approx', 'fractional error')
 for a in vals:
     for b in [x for x in vals if x <= a]:
         print(a, b, est(a, b))
