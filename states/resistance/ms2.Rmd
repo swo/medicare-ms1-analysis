@@ -10,26 +10,26 @@ output:
 
 # To do
 
-- Implement weights in the linear correlations
 - Join multiple results into one table, or do pairwise comparisons of analytical methods
+- How to use consumption data from multiple years?
+- Show that resistance doesn't have a pattern over years
+- more intelligently pooling data from the different *S. aureus* designations (in the antibiogram data, *S. aureus* is reported as one of *S. aureus*, MRSA, or MSSA)
+- do Spearman so we can compare with Goossens?
+- Get the right bug list
 
 # Background
 
 Here I report results of comparisons antibiotic consumption and resistance across states and HRRs.
 
-In a separate analysis, I determined that the antibiogram data in certain locales, separating the data into those locales decreased variance more than could be expected by chance. Thus, for some bug/drug combinations, it is sensible to break the antibiogram data from census regions down into states, while for other bug/drug combinations, it does not. Similarly, HRRs can be coherent or not.
-
 # Methods
 
 I used the Medicare Part D data from 2011. Normal filtering was applied to beneficiaries: at least 65 years old, no HMO, 12 months of coverage.
 
-I pooled the antiobiograms from all years.
+I pooled the antiobiograms from all years. To ensure coherence, I only use the bug/drug combinations that appear in antibiograms in at least 20 states. This is equivalent to filtering those bug/drug combinations that have at least 125 records. I selected a set of organisms in the antibiogram to examine. They mostly represent the most abundant organisms in the data. I also matched particular drugs in the consumption data to match to drugs in the resistance data.
 
-I selected a set of organisms in the antibiogram to examine. They mostly represent the most abundant organisms in the data. I also matched particular drugs in the consumption data to match to drugs in the resistance data.
+For each bug/drug/state, I computed a weighted mean resistance: the values are $r_i/n_i$, the number of resistant isolates over the total number of isolates, and the weights are $\sqrt{n_i}$. I similarly computed a mean resistance for each HRR.
 
-For each bug, consumption/resistance drug, and state, I ran a Spearman correlation test and adjusted the $p$-values using the Benjamini-Hochberg method. I also separately adjusted the $p$-values considering only the tests performed on coherent bug/drug/state combinations. I performed a similar analysis using HRRs.
-
-The explanatory variable in the correlation was either claims per 1,000 people per year (CPKP) or days' supply (my proxy for daily defined dose) per 1,000 people per day (DID). The dependent variable was always mean percent susceptibility of that bug to that resistance drug across antibiograms from that state/HRR.
+For each bug/drug, I ran a linear model predicting the state resistance means from the state consumptions, weighted by the square root of the number of antibiograms for that bug/drug/state. I adjusted the $p$-values for the slope terms using the Benjamini-Hochberg method. I performed a similar analysis using HRRs. The explanatory variable was claims per 1,000 people per year (CPKP).
 
 ```{r global_options, include=FALSE, cache=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, cache=TRUE,
@@ -75,8 +75,6 @@ I chose not to merge the penicillin and amoxicillin groups because antibiograms 
 
 ## Consumption and resistance data
 
-I used the 2011 Medicare data. To ensure coherence, I only use the bug/drug combinations that appear in antibiograms in at least 20 states. This is equivalent to filtering those bug/drug combinations that have at least 125 records.
-
 ```{r load_data}
 hrr = read_tsv('../../../db/hrr/hrr.tsv') %>%
   filter(year==2011) %>%
@@ -84,6 +82,7 @@ hrr = read_tsv('../../../db/hrr/hrr.tsv') %>%
 
 # Antibiogram data, with individual records
 abg = read_tsv('../../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c')) %>%
+  filter(!is.na(n_isolates), n_isolates > 0) %>%
   mutate(drug=tolower(drug), percent_nonsusceptible=100-percent_susceptible) %>%
   left_join(hrr, by='zipcode') %>%
   right_join(resistance_groups, by='drug') %>%
@@ -144,18 +143,18 @@ pvalue_stars = function(x) {
             TRUE ~ '')
 }
 
-models = function(df, independent_var, explanatory_vars) {
-  f = paste0(independent_var, ' ~ ', paste0(explanatory_vars, collapse = ' + ')) %>% formula
-  lm(f, data=df) %>% tidy
+linear_model_formula = function(independent_var, explanatory_vars) {
+  paste0(independent_var, ' ~ ', paste0(explanatory_vars, collapse = ' + ')) %>% formula
+}
+
+linear_models = function(df, independent_var, explanatory_vars) {
+  f = linear_model_formula(independent_var, explanatory_vars)
+  lm(formula=f, weights=place_weight, data=df) %>% tidy
 }
 
 models_result = function(df) {
-  group_by(df, bug, drug_group, place) %>%
-    summarize(mean_percent_nonsusceptible=weighted.mean(mean_percent_nonsusceptible, place_weight),
-              cpkp=unique(cpkp),
-              did=unique(did)) %>%
-    group_by(bug, drug_group) %>%
-    do(models(., 'mean_percent_nonsusceptible', 'cpkp')) %>%
+  group_by(df, bug, drug_group) %>%
+    do(linear_models(., 'mean_percent_nonsusceptible', 'cpkp')) %>%
     ungroup %>%
     filter(term=='cpkp') %>%
     mutate(adj.p.value=p.adjust(p.value, method='BH'),
@@ -179,7 +178,7 @@ result = bind_rows(
 )
 ```
 
-```{r make_plots}
+```{r make_plots, eval=FALSE}
 unlink('plots/*.pdf')
 
 for (i in 1:nrow(result)) {
@@ -271,27 +270,68 @@ result %>%
 
 #### State-level resistance-averaged robust regressions
 
-swo> Copy the code, and allow a function pointer for lm function to use
+```{r}
+mblm_model = function(df, independent_var, explanatory_vars) {
+  f = linear_model_formula(independent_var, explanatory_vars)
+  mblm(f, dataframe=df) %>% tidy
+}
+
+mblm_models = function(df) {
+  group_by(df, bug, drug_group) %>%
+    do(mblm_model(., 'mean_percent_nonsusceptible', 'cpkp')) %>%
+    ungroup %>%
+    filter(term=='cpkp') %>%
+    mutate(adj.p.value=p.adjust(p.value, method='BH'),
+           sig=pvalue_stars(adj.p.value))
+}
+
+mblm_state_res = mblm_models(state_dat)
+mblm_hrr_res = mblm_models(hrr_dat)
+
+mblm_result = bind_rows(
+  mblm_models(state_dat) %>% mutate(place_type='state'),
+  mblm_models(hrr_dat) %>% mutate(place_type='hrr')
+)
+```
+
+These results are fairly well-correlated with the linear models. I'll compare the slopes:
+
+```{r}
+left_join(result, mblm_result, by=c('bug', 'drug_group', 'place_type')) %>%
+  filter(estimate.y > 1e-9) %>%
+  ggplot(aes(x=estimate.x, y=estimate.y)) +
+  geom_point() +
+  geom_abline() + geom_smooth(method='lm') +
+  xlab('weighted least squares slope') + ylab('robust regression slope') +
+  theme_minimal()
+```
+
+And the $p$-values:
+
+```{r}
+left_join(result, mblm_result, by=c('bug', 'drug_group', 'place_type')) %>%
+  ggplot(aes(x=p.value.x, y=p.value.y)) +
+  geom_point() +
+  geom_abline() + geom_hline(yintercept = 0.05) + geom_vline(xintercept = 0.05) +
+  xlab('weighted least squares p') + ylab('robust regression p') +
+  scale_x_log10() + scale_y_log10() +
+  theme_minimal()
+```
 
 # Discussion
-
-## Future work
-
-In the future, I intend to refine this analysis by:
-
-- pooling various consumption drugs (e.g., cipro and levo consumption probably have comparable effects on cipro resistance)
-- more intelligently pooling data from the different *S. aureus* designations (in the antibiogram data, *S. aureus* is reported as one of *S. aureus*, MRSA, or MSSA)
-- comparing data from various years (i.e., is there any evidence that a consumption/resistance relationship changed drastically?)
-- pooling data from various years (i.e., if the relationship doesn't change over years, we might get more power by including
 
 ## Correlations are overall weak
 
 There were only a few significant results from these tests:
 
-- *S. aureus* and azithromycin
-- Potentially, a backward relationship for *S. aureus* and TMP-SMX
-- *S. pneumoniae* and azithromycin
-- *E. coli* and quinolones
+- CNST and quinolones (HRR only)
+- *E. faecium* and penicillin (state only)
+- *E. coli* with penicillin and quinolones (state & HRR)
+- MSSA and macrolides (state only)
+- MSSA and clindamycin (HRR only)
+- *P. mirabilis* and quinolones (HRR only)
+- Pneumococcus with macrolides (HRR; marginal in state)
+
 Interestingly, this accords with some of the conclusions from @bell-systematic-2014, namely:
 
 - the relationship between antibiotic consumption and resistance inside the US is weak (compared to across European countries, especially southern European countries)
