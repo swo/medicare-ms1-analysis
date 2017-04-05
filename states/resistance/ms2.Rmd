@@ -1,0 +1,425 @@
+---
+title: "Ms. 2: Consumption and resistance across states and HRRs"
+bibliography: refs.bib
+output:
+  html_document:
+    fig_height: 4
+  pdf_document:
+    fig_height: 3
+---
+
+# To do
+
+- Implement weights in the linear correlations
+- Join multiple results into one table, or do pairwise comparisons of analytical methods
+
+# Background
+
+Here I report results of comparisons antibiotic consumption and resistance across states and HRRs.
+
+In a separate analysis, I determined that the antibiogram data in certain locales, separating the data into those locales decreased variance more than could be expected by chance. Thus, for some bug/drug combinations, it is sensible to break the antibiogram data from census regions down into states, while for other bug/drug combinations, it does not. Similarly, HRRs can be coherent or not.
+
+# Methods
+
+I used the Medicare Part D data from 2011. Only beneficiaries greater than 65 years old were used. I also used the antibiogram data. I pooled the antiobiograms from all years.
+
+I selected a set of organisms in the antibiogram to examine. They mostly represent the most abundant organisms in the data. I also matched particular drugs in the consumption data to match to drugs in the resistance data.
+
+For each bug, consumption/resistance drug, and state, I ran a Spearman correlation test and adjusted the $p$-values using the Benjamini-Hochberg method. I also separately adjusted the $p$-values considering only the tests performed on coherent bug/drug/state combinations. I performed a similar analysis using HRRs.
+
+The explanatory variable in the correlation was either claims per 1,000 people per year (CPKP) or days' supply (my proxy for daily defined dose) per 1,000 people per day (DID). The dependent variable was always mean percent susceptibility of that bug to that resistance drug across antibiograms from that state/HRR.
+
+```{r global_options, include=FALSE, cache=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, cache=TRUE,
+                      echo=FALSE, warning=FALSE, message=FALSE)
+import::from(broom, tidy)
+library(pander)
+library(assertr)
+```
+
+```{r setup}
+gram_negs = c('Escherichia coli',
+              'Proteus mirabilis', 'Enterobacter cloacae',
+              'Enterococcus faecium')
+gram_poss = c('Coagulase-negative staphylococci',
+              'Methicillin-resistant S. aureus (MRSA)',
+              'Methicillin-susceptible S. aureus (MSSA)',
+              'Streptococcus pneumoniae (non-meningitis)',
+              'Staphylococcus aureus')
+organisms = c(gram_negs, gram_poss)
+
+consumption_groups = read_tsv('consumption_groups.tsv')
+resistance_groups = read_tsv('resistance_groups.tsv')
+```
+
+## Organisms
+
+I selected a list of organisms from the ones that were most abundant in the data:
+
+`r organisms`
+
+## Matching consumption and resistance drugs
+
+I performed this matching by hand. I placed the consumption drugs into groups:
+
+`r consumption_groups %>% kable`
+
+And did the same with the resistance drugs:
+
+`r resistance_groups %>% kable`
+
+I chose not to merge the penicillin and amoxicillin groups because antibiograms often reported very different susceptibilities for the two drugs.
+
+## Consumption and resistance data
+
+I used the 2011 Medicare data. To ensure coherence, I only use the bug/drug combinations that appear in antibiograms in at least 20 states. This is equivalent to filtering those bug/drug combinations that have at least 125 records.
+
+```{r load_data}
+hrr = read_tsv('../../../db/hrr/hrr.tsv') %>%
+  filter(year==2011) %>%
+  select(zipcode, hrr)
+
+# Antibiogram data, with individual records
+abg = read_tsv('../../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c')) %>%
+  mutate(drug=tolower(drug), percent_nonsusceptible=100-percent_susceptible) %>%
+  left_join(hrr, by='zipcode') %>%
+  right_join(resistance_groups, by='drug') %>%
+  filter(bug %in% organisms) %>%
+  select(bug, drug_group, state, hrr, percent_nonsusceptible, n_isolates)
+
+# Keep only those bug/drug combinations that are in at least 20 states
+abg %<>%
+  select(bug, drug_group, state) %>%
+  distinct %>%
+  count(bug, drug_group) %>% rename(n_states=n) %>%
+  filter(n_states >= 20) %>%
+  left_join(abg, by=c('bug', 'drug_group'))
+
+# swo> State beneficiary information could be used as control variables
+# in regressions
+#state_bene = read_tsv('../../bene-consumption/state-bene-2011.tsv') %>%
+  #filter(state %in% known_states)
+```
+
+```{r load_consumption_data}
+state_usage = read_tsv('../bene-consumption/state_usage.tsv') %>%
+  filter(year==2011) %>%
+  right_join(consumption_groups, by=c('antibiotic'='drug')) %>%
+  group_by(hrr, drug_group) %>%
+  summarize_at(vars(cpkp, did), sum)
+
+hrr_usage = read_tsv('../bene-consumption/hrr_usage.tsv') %>%
+  filter(year==2011) %>%
+  right_join(consumption_groups, by=c('antibiotic'='drug')) %>%
+  group_by(hrr, drug_group) %>%
+  summarize_at(vars(cpkp, did), sum)
+
+state_dat = left_join(abg, state_usage, by=c('drug_group', 'state'))
+hrr_dat = left_join(abg, hrr_usage, by=c('drug_group', 'hrr'))
+```
+
+```{r run_models}
+pvalue_stars = function(x) {
+  case_when(x < 0.001 ~ '***',
+            x < 0.01 ~ '**',
+            x < 0.05 ~ '*',
+            x < 0.1 ~ 'o',
+            TRUE ~ '')
+}
+
+models_result = function(x, this_place) {
+  x %>%
+    group_by_('bug', 'drug_group', this_place) %>%
+    summarize(mean_nonsus=mean(percent_nonsusceptible, na.rm=TRUE),
+              cpkp=head(cpkp, 1),
+              did=head(did, 1)) %>%
+    group_by(bug, drug_group) %>%
+    do(models(., 'mean_nonsus')) %>%
+    ungroup %>%
+    filter(!is.na(estimate)) %>%
+    mutate(adj.p.value=p.adjust(p.value, method='BH'),
+           sig=pvalue_stars(adj.p.value)) %>%
+    mutate(record_number=1:n(),
+           plot_fn=sprintf('plots/%s_%03i.pdf', this_place, record_number),
+           plot_link=pandoc.link.return(url=plot_fn, text='plot')) %>%
+    select(bug, drug_group,
+           explanatory, correlation=estimate, p.value,
+           adj.p.value, sig,
+           plot_fn, plot_link)
+}
+
+state_res = models_result(state_dat, 'state')
+hrr_res = models_result(hrr_dat, 'hrr')
+
+result = bind_rows(
+  state_res %>% mutate(place='state'),
+  hrr_res %>% mutate(place='hrr')
+)
+```
+
+```{r make_plots}
+unlink('plots/*.pdf')
+
+for (i in 1:nrow(result)) {
+  row = result[i,]
+  
+  if (row$place == 'state') {
+    plot_dat = state_dat
+  } else if (row$place == 'hrr') {
+    plot_dat = hrr_dat
+  } else {
+    plot_dat = NULL
+  }
+
+  p = plot_dat %>%
+    filter(bug==row$bug, drug_group==row$drug_group) %>%
+    ggplot(aes_string(row$explanatory, 'percent_nonsusceptible')) +
+    geom_point(shape=1) +
+    xlab(row$explanatory) +
+    ylab('percent non-susceptible') +
+    theme_minimal()
+
+  ggsave(row$plot_fn, plot=p)
+}
+```
+
+# Results
+
+## Consumption and resistance
+
+Here a relationship where increased consumption leads to increased nonsusceptibility is encoded in a positive correlation.
+
+### Resistance-averaged results
+
+In these results, the percent nonsusceptible in each geography (state or HRR) was averaged, and the averages of the nonsusceptibilities were compared against the consumption data.
+
+#### State-level resistance-averaged correlations
+
+```{r state_average_results_table}
+result %>%
+  filter(place=='state') %>%
+  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
+  select(bug, drug_group,
+         explanatory, correlation,
+         adj.p.value, sig,
+         plot_link) %>%
+  kable
+```
+
+(red line marks $p = 0.05$).
+
+```{r state_average_volcano}
+result %>%
+  filter(place=='state') %>%
+  ggplot(aes(x=correlation, y=adj.p.value)) +
+  geom_point() +
+  geom_hline(yintercept=0.05, col='red') +
+  xlab('correlation coefficient') + ylab('p value (reversed)') +
+  scale_y_reverse() +
+  theme_minimal()
+```
+
+#### State-level resistance-averaged correlations using linear models
+
+```{r}
+safe_lm = function(data, indep, expl) {
+  try(return(lm(sprintf('%s ~ %s', indep, expl), data) %>% tidy), silent=TRUE)
+  data_frame(term=expl, estimate=NA, std.error=NA, statistic=NA, p.value=1.0)
+}
+
+linear_models = function(df, indep) {
+  lapply(c('cpkp', 'did'), function(expl) {
+    safe_lm(df, indep, expl) %>%
+      filter(term==expl) %>%
+      rename(explanatory=term) %>%
+      verify(nrow(.) == 1)
+  }) %>% bind_rows
+}
+
+linear_models_result = function(x, this_place) {
+  x %>%
+    group_by_('bug', 'drug_group', this_place) %>%
+    summarize(mean_nonsus=mean(percent_nonsusceptible, na.rm=TRUE),
+              cpkp=head(cpkp, 1),
+              did=head(did, 1)) %>%
+    group_by(bug, drug_group) %>%
+    do(linear_models(., 'mean_nonsus')) %>%
+    ungroup %>%
+    filter(!is.na(estimate)) %>%
+    mutate(adj.p.value=p.adjust(p.value, method='BH'),
+           sig=pvalue_stars(adj.p.value)) %>%
+    select(bug, drug_group,
+           explanatory, slope=estimate, p.value,
+           adj.p.value, sig)
+}
+
+linear_state_res = linear_models_result(state_dat, 'state')
+
+linear_state_res %>% kable
+```
+
+#### State-level resistance-averaged robust regressions
+
+```{r}
+library(mblm)
+
+safe_mblm = function(data, indep, expl) {
+  try(return(mblm(sprintf('%s ~ %s', indep, expl), data) %>% tidy), silent=TRUE)
+  data_frame(term=expl, estimate=NA, std.error=NA, statistic=NA, p.value=1.0)
+}
+
+ts_models = function(df, indep) {
+  lapply(c('cpkp', 'did'), function(expl) {
+    safe_mblm(df, indep, expl) %>%
+      filter(term==expl) %>%
+      rename(explanatory=term) %>%
+      verify(nrow(.) == 1)
+  }) %>% bind_rows
+}
+
+ts_models_result = function(x, this_place) {
+  x %>%
+    group_by_('bug', 'drug_group', this_place) %>%
+    summarize(mean_nonsus=mean(percent_nonsusceptible, na.rm=TRUE),
+              cpkp=head(cpkp, 1),
+              did=head(did, 1)) %>%
+    group_by(bug, drug_group) %>%
+    do(linear_models(., 'mean_nonsus')) %>%
+    ungroup %>%
+    filter(!is.na(estimate)) %>%
+    mutate(adj.p.value=p.adjust(p.value, method='BH'),
+           sig=pvalue_stars(adj.p.value)) %>%
+    select(bug, drug_group,
+           explanatory, slope=estimate, p.value,
+           adj.p.value, sig)
+}
+
+ts_state_res = linear_models_result(state_dat, 'state')
+
+ts_state_res %>% kable
+```
+
+#### HRR-level resistance-averaged
+
+```{r hrr_average_results_table}
+result %>%
+  filter(place=='hrr') %>%
+  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
+  select(bug, drug_group,
+         explanatory, correlation,
+         adj.p.value, sig,
+         plot_link) %>%
+  kable
+```
+
+(red line marks $p = 0.05$)
+
+```{r hrr_average_histogram}
+result %>%
+  filter(place=='hrr') %>%
+  ggplot(aes(x=correlation, y=adj.p.value)) +
+  geom_point() +
+  geom_hline(yintercept=0.05, col='red') +
+  xlab('correlation coefficient') + ylab('p value (reversed)') +
+  scale_y_reverse() +
+  theme_minimal()
+```
+
+### All-antibiogram results
+
+In these data, I don't average the resistance before running the correlation, but I do associate each antibiogram with the same geography-wide consumption.
+
+```{r}
+all_models_result = function(x, this_place, consumption) {
+  x %>%
+    mutate_at(vars(cpkp, did), function(x) if_else(is.na(x), 0, x)) %>%
+    group_by(bug, drug_group) %>%
+    do(models(., 'percent_nonsusceptible')) %>%
+    ungroup %>%
+    filter(!is.na(estimate)) %>%
+    mutate(adj.p.value=p.adjust(p.value, method='BH'),
+           sig=pvalue_stars(adj.p.value)) %>%
+    select(bug, drug_group,
+           explanatory, correlation=estimate, p.value,
+           adj.p.value, sig)
+}
+
+all_state_res = all_models_result(state_dat, 'state', state_consumption)
+all_hrr_res = all_models_result(hrr_dat, 'hrr', hrr_consumption)
+
+all_result = bind_rows(
+  all_state_res %>% mutate(place='state'),
+  all_hrr_res %>% mutate(place='hrr')
+)
+```
+
+#### State-wide consumption, all-antibiogram
+
+```{r}
+all_result %>%
+  filter(place=='state') %>% 
+  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
+  select(bug, drug_group, 
+         explanatory, correlation, p.value,
+         adj.p.value, sig) %>%
+  kable
+```
+
+#### State-wide consumtion, all-antibiogram using linear models
+
+```{r}
+linear_all_models_result = function(x, this_place) {
+  x %>%
+    group_by(bug, drug_group) %>%
+    do(linear_models(., 'percent_nonsusceptible')) %>%
+    ungroup %>%
+    filter(!is.na(estimate)) %>%
+    mutate(adj.p.value=p.adjust(p.value, method='BH'),
+           sig=pvalue_stars(adj.p.value)) %>%
+    select(bug, drug_group,
+           explanatory, slope=estimate, p.value,
+           adj.p.value, sig)
+}
+
+linear_all_state_res = linear_all_models_result(state_dat, 'state')
+linear_all_hrr_res = linear_all_models_result(hrr_dat, 'hrr')
+
+linear_all_state_res %>% kable
+```
+
+#### HRR-wide consumption, all-antibiogram
+
+```{r}
+all_result %>%
+  filter(place=='hrr') %>% 
+  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
+  select(bug, drug_group, 
+         explanatory, correlation, p.value,
+         adj.p.value, sig) %>%
+  kable
+```
+
+# Discussion
+
+## Future work
+
+In the future, I intend to refine this analysis by:
+
+- pooling various consumption drugs (e.g., cipro and levo consumption probably have comparable effects on cipro resistance)
+- more intelligently pooling data from the different *S. aureus* designations (in the antibiogram data, *S. aureus* is reported as one of *S. aureus*, MRSA, or MSSA)
+- comparing data from various years (i.e., is there any evidence that a consumption/resistance relationship changed drastically?)
+- pooling data from various years (i.e., if the relationship doesn't change over years, we might get more power by including
+
+## Correlations are overall weak
+
+There were only a few significant results from these tests:
+
+- *S. aureus* and azithromycin
+- Potentially, a backward relationship for *S. aureus* and TMP-SMX
+- *S. pneumoniae* and azithromycin
+- *E. coli* and quinolones
+Interestingly, this accords with some of the conclusions from @bell-systematic-2014, namely:
+
+- the relationship between antibiotic consumption and resistance inside the US is weak (compared to across European countries, especially southern European countries)
+- reliable consumption/resistance relationships were found for enteric bacteria and streptococcus (though, in contrast, not with *Staphylococcus*, which is one of our strongest correlations)
+- among enteric bacteria, the only reliable consumption/resistance relationship was for quinolones
