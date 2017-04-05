@@ -1,0 +1,122 @@
+---
+title: "Regional differences"
+author: "Scott Olesen"
+date: "2/20/2017"
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/',
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
+```
+
+# Background
+
+It's known that there are differences in antibiotic consumption between regions in the US.
+
+- Is this true for all antibiotics? Are there drugs that are consumed against general trends? For example, are there drugs that are more consumed in the West than in the South?
+- What drives the differences between regions? Previous research shows that demographics are not sufficient to explain these differences. Is it that more people take antibiotics, or that people who take antibiotics take more?
+
+# Methods
+
+# Results
+
+```{r load_data}
+usage = read_tsv('../bene_usage_2011.tsv')
+```
+
+```{r bene_by_region}
+bene_by_region = usage %>%
+  select(bene_id, region) %>%
+  distinct %>%
+  count(region) %>%
+  rename(n_bene=n)
+
+bene_by_region %>% kable
+```
+
+For azithromycin, I looked at the distribution of number of claims (truncating at 20 claims or 100 days).
+
+```{r azithromycin_overall, cache=TRUE}
+azo = usage %>%
+  filter(antibiotic=='azithromycin') %>%
+  group_by(bene_id) %>%
+  summarize(n_claims=sum(n_claims), n_days=sum(n_days))
+
+azo %>%
+  ggplot(aes(x=n_claims)) +
+  geom_histogram() +
+  scale_y_log10() +
+  xlab('number of azithromycin claims') + ylab('number of beneficiaries') +
+  theme_minimal()
+
+azo$n_claims %>%
+  sort(decreasing=TRUE) %>%
+  cumsum %>%
+  data_frame(cum_n_bene=1:length(.), cum_n_claims=.) %>%
+  ggplot(aes(x=cum_n_bene, y=cum_n_claims)) +
+  geom_line() +
+  xlab('cumulative number of beneficiaries') + ylab('cumulative number of azithromycin claims') +
+  theme_minimal()
+
+azo %>%
+  ggplot(aes(x=n_days)) +
+  geom_histogram() +
+  scale_y_log10() +
+  xlab('number of azithromycin days') + ylab('number of beneficiaries')
+```
+
+```{r tmpsmx_overall, cache=TRUE}
+tmpsmx = usage %>%
+  filter(antibiotic=='trimethoprim/sulfamethoxazole') %>%
+  group_by(bene_id) %>%
+  summarize(n_claims=sum(n_claims), n_days=sum(n_days))
+
+tmpsmx %>%
+  ggplot(aes(x=n_claims)) +
+  geom_histogram() +
+  scale_y_log10() +
+  xlab('number of TMP-SMX claims') + ylab('number of beneficiaries') +
+  theme_minimal()
+
+tmpsmx$n_claims %>%
+  sort(decreasing=TRUE) %>%
+  cumsum %>%
+  data_frame(cum_n_bene=1:length(.), cum_n_claims=.) %>%
+  ggplot(aes(x=cum_n_bene, y=cum_n_claims)) +
+  geom_line() +
+  xlab('cumulative number of beneficiaries') + ylab('cumulative number of TMP-SMX claims') +
+  theme_minimal()
+```
+
+```{r azithromycin_by_region, cache=TRUE}
+az = usage %>%
+  filter(antibiotic=='azithromycin') %>%
+  group_by(region, bene_id) %>%
+  summarize(n_claims=sum(n_claims), n_days=sum(n_days)) %>%
+  ungroup %>%
+  mutate(region=factor(region, levels=c('South', 'Midwest', 'West', 'Northeast'), ordered=TRUE))
+
+az %>%
+  filter(n_claims < 20) %>%
+  ggplot(aes(x=factor(n_claims), fill=region)) +
+  stat_count(position='dodge') +
+  scale_y_log10() +
+  theme_minimal() +
+  xlab('number of azithromycin claims') + ylab('number of beneficiaries')
+
+round_up_to_nearest = function(x, n) n * ceiling(x / n)
+az %>%
+  mutate(n_days=round_up_to_nearest(n_days, 5)) %>%
+  filter(n_days <= 100) %>%
+  ggplot(aes(x=factor(n_days), fill=region)) +
+  stat_count(position='dodge') +
+  scale_y_log10() +
+  theme_minimal() +
+  xlab('number of azithromycin days') + ylab('number of beneficiaries') +
+  theme_minimal()
+```
+
+It looks like all regions have almost exactly the same distribution; the South simply has more people. What is we work per capita?
+
+# Discussion
