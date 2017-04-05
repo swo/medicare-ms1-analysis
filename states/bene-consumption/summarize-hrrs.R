@@ -1,27 +1,32 @@
 #!/usr/bin/env Rscript
 
-summarize_year = function(year, n_max=Inf) {
+summarize_year = function(year) {
   hrr_fn = sprintf('../../../db/hrr/hrr_%i.tsv', year)
-  usage_fn = sprintf('../../bene_usage_%i.tsv', year)
-  output_fn = sprintf('hrr_usage_%i.tsv', year)
+  bene_fn = paste0('../../bene_', year, '.tsv')
+  pde_fn = paste0('../../pde_', year, '.tsv')
 
   hrr = read_tsv(hrr_fn)
 
-  usage = read_tsv(usage_fn, n_max=n_max) %>%
-    filter(age >= 65) %>%
+  bene = read_tsv(bene_fn) %>%
+    filter(age >= 65, hmo_months==0) %>%
+    select(bene_id, zipcode) %>%
     left_join(hrr, by='zipcode')
 
-  denom = usage %>%
-    count(hrr) %>%
-    rename(n_bene=n)
+  bene_by_hrr = bene %>% count(hrr) %>% rename(n_ppl=n)
 
-  usage %>%
-    filter(!is.na(antibiotic)) %>%
+  pde = read_tsv(pde_fn)
+
+  usage = pde %>%
+    left_join(bene, by='bene_id') %>%
     group_by(hrr, antibiotic) %>%
-    summarize(n_claims=sum(n_claims), n_days=sum(days_supply)) %>%
-    left_join(denom, by='hrr') %>%
-    mutate(cpkp=n_claims*1000/n_bene, did=n_days*1000/(365*n_bene)) %>%
-    write_tsv(output_fn)
+    summarize(n_claims=n(), n_days=sum(days_supply)) %>%
+    left_join(bene_by_hrr, by='hrr') %>%
+    mutate(cpkp=n_claims*1000/n_ppl, did=n_days*1000/(365*n_ppl)) %>%
+    mutate(year=year)
+
+  usage
 }
 
-for (y in 2011:2014) summarize_year(y)
+lapply(2011:2014, summarize_year) %>%
+  bind_rows() %>%
+  write_tsv('hrr_usage.tsv')
