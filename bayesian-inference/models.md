@@ -1,3 +1,8 @@
+---
+header-includes:
+    - \usepackage{bm}
+---
+
 # True distribution in each state
 
 Each state has some true distribution of susceptibilities (or resistances). Let
@@ -218,3 +223,72 @@ $$
   \frac{\mathrm{B}(\alpha_i + s_{ij}, \beta_i + n_{ij} - s_{ij})}{\mathrm{B}(\alpha_i, \beta_i)}
   \,\mathrm{d}\nu \right]
 $$
+
+# New approach
+
+The really tricky-icky part is that there are many hospitals (the $j$ index in
+the above). But because there is a lot of data there, it seems less useful to
+allow variance over those values. Or, empirically, we can just ask how narrow
+the error bars are on the resulting beta distributions?
+
+So here I propose:
+
+1. Fit maximum likelihood beta distribution posteriors to each state's resistance.
+2. Find the posterior credible interval for $m$.
+
+## State resistance distributions
+
+Each state has numbers of resistant isolates $r_i$ and total isolates $n_i$ from each
+of its hospitals $i$. We imagine that each hospital has a probability of resistance $p_i$
+drawn from a state-wide beta distribution with parameters $\alpha, \beta$. The posterior
+on those parameters is
+$$
+P(\alpha, \beta | \bm{r}, \bm{n}) \propto P(\bm{r}, \bm{n} | \alpha, \beta) \times P(\alpha, \beta).
+$$
+The likelihood, treating the $p_i$ as nuisances, is
+$$
+\begin{aligned}
+P(\bm{r}, \bm{n} | \alpha, \beta)
+  &= \prod_i \int_0^1 \mathrm{Bin}(r_i; n_i, p_i) \mathrm{Beta}(p_i; \alpha, \beta) \,\mathrm{d}p_i \\
+  &= \prod_i \frac{\mathrm{B}(\alpha + r_i, \beta + n_i - r_i)}{\mathrm{B}(\alpha, \beta)}
+\end{aligned}
+$$
+
+Then just take the maximum likelihood estimate. The simplest way is to treat
+the prior as flat.
+
+## Credible interval for the slope
+
+Now each state $s$ has a fixed consumption $c_s$ and resistance distribution,
+parameterized by $\alpha_s$ and $\beta_s$. We are looking for the slope $m$ and
+intercept $b$ such that the $m c_s + b$ best approximate the resistance
+distributions.
+
+In other words, we want the posterior on $m$, treating $b$ as a nuisance variable.
+That posterior is
+$$
+P(m | \bm{c}) \propto \int P(\bm{c} | m, b) P(m, b) \,\mathrm{d}b.
+$$
+The likelihood is
+$$
+\begin{aligned}
+P(\bm{c} | m, b)
+  &= \prod_s \mathrm{Beta}(m c_s + b; \alpha_s, \beta_s) \\
+  &= \prod_s \frac{(mc_s+b)^{\alpha_s-1} \left[ 1 - (mc_s+b) \right]^{\beta_s-1}}{\mathrm{B}(\alpha_s, \beta_s)}.
+\end{aligned}
+$$
+Noting that, with respect to the integral over $b$ in the posterior, the values
+$m$, $c_s$, $\alpha_s$ and $\beta_s$ are all constant, I can remove the beta
+functions from the denominator and divide out some values to get the results of
+order one:
+$$
+\begin{aligned}
+P(\bm{c} | m, b) \propto
+  &= \prod_s (mc_s)^{\alpha_s-1} \left(1 + \frac{b}{mc_s}\right)^{\alpha_s-1}
+    (1-mc_s)^{\beta_s-1} \left(1 - \frac{b}{1 - mc_s}\right)^{\beta_s-1} \\
+  &\propto \prod_s \left(1 + \frac{b}{mc_s}\right)^{\alpha_s-1} \left(1 - \frac{b}{1 - mc_s}\right)^{\beta_s-1}
+\end{aligned}
+$$
+
+This should be a fairly well-behaved function, so I expect we can even
+integrate $b$ over the whole real line.
