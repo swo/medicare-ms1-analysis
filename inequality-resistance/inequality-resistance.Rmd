@@ -8,6 +8,7 @@ output: html_document
 ```{r global_options, include=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, dev=c('pdf', 'png'), 
                       echo=TRUE, warning=FALSE, message=FALSE, cache=TRUE)
+import::from(broom, tidy)
 ```
 
 First, load the relevant data. I need the usage and antibiograms.

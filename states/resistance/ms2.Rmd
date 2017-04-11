@@ -152,6 +152,10 @@ linear_models = function(df, independent_var, explanatory_vars) {
   lm(formula=f, weights=place_weight, data=df) %>% tidy
 }
 
+spearman_model = function(df, independent_var, explanatory_vars) {
+  cor.test(df[[independent_var]], df[[explanatory_vars]], method='spearman') %>% tidy
+}
+
 models_result = function(df) {
   group_by(df, bug, drug_group) %>%
     do(linear_models(., 'mean_percent_nonsusceptible', 'cpkp')) %>%
@@ -169,12 +173,26 @@ models_result = function(df) {
     #       plot_fn, plot_link)
 }
 
+cor_models_result = function(df) {
+  group_by(df, bug, drug_group) %>%
+    do(spearman_model(., 'mean_percent_nonsusceptible', 'cpkp')) %>%
+    ungroup %>%
+    #filter(term=='cpkp') %>%
+    mutate(adj.p.value=p.adjust(p.value, method='BH'),
+           sig=pvalue_stars(adj.p.value))
+}
+
 state_res = models_result(state_dat)
 hrr_res = models_result(hrr_dat)
 
 result = bind_rows(
   state_res %>% mutate(place_type='state'),
   hrr_res %>% mutate(place_type='hrr')
+)
+
+cor_result = bind_rows(
+  cor_models_result(state_dat) %>% mutate(place_type='state'),
+  cor_models_result(hrr_dat) %>% mutate(place_type='hrr')
 )
 ```
 
@@ -316,6 +334,26 @@ left_join(result, mblm_result, by=c('bug', 'drug_group', 'place_type')) %>%
   xlab('weighted least squares p') + ylab('robust regression p') +
   scale_x_log10() + scale_y_log10() +
   theme_minimal()
+```
+
+## Cor vs lm
+
+I asked whether using Spearman correlations is better/different than using linear models. For the most part, they identify the same relationships.
+
+```{r cor_vs_lm}
+f = function(x) select(x, bug, drug_group, adj.p.value, place_type)
+x = bind_rows(
+  cor_result %>% f %>% mutate(model='cor'),
+  result %>% f %>% mutate(model='lm')
+) %>% spread(model, adj.p.value)
+
+x %>% filter(place_type=='state') %>% ggplot(aes(x=lm, y=cor)) +
+  geom_point() +
+  scale_x_log10() + scale_y_log10() +
+  geom_abline() + geom_hline(yintercept = 0.05) + geom_vline(xintercept = 0.05) +
+  coord_fixed()
+
+x %>% filter(cor < 0.05, lm > 0.05) %>% kable
 ```
 
 # Discussion

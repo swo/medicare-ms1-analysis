@@ -22,12 +22,12 @@ library(assertive)
 bounds_group = function(x, upper_limits) {
   levels = lapply(seq(from=1, to=length(upper_limits)), function(i) {
     if (i == 1) {
-      sprintf('< %.1f', upper_limits[i])
+      sprintf('<= %.1f', upper_limits[i])
     } else {
-      sprintf('>= %.1f and < %.1f', upper_limits[i - 1], upper_limits[i])
+      sprintf('> %.1f and <= %.1f', upper_limits[i - 1], upper_limits[i])
     }
   })
-  formula_list = mapply(function(str, lim) as.formula(sprintf('x < %.1f ~ "%s"', lim, str)),
+  formula_list = mapply(function(str, lim) as.formula(sprintf('x <= %.1f ~ "%s"', lim, str)),
                         levels, upper_limits)
   do.call(case_when, formula_list) %>%
     factor(levels=levels, ordered=TRUE)
@@ -60,12 +60,13 @@ multicol_sum = function(x, new_name, target_columns) {
 
 conditions = c("AMI", "ALZHDMTA", "ATRIALFB", "CATARACT", "CHRNKIDN", "COPD", "CHF", "DIABETES", "GLAUCOMA", "HIPFRAC", "ISCHMCHT", "DEPRESSN", "OSTEOPRS", "RA_OA", "STRKETIA", "CNCRBRST", "CNCRCLRC", "CNCRPRST", "CNCRLUNG", "CNCRENDM", "ANEMIA", "ASTHMA", "HYPERL", "HYPERP", "HYPERT", "HYPOTH")
 
-multivariate_formula = paste(c('n_claims ~ age_over_65 + is_female + ', conditions), collapse=' + ') %>% formula
+multivariate_formula = paste(c('n_claims ~ age_over_66 + is_female + ', conditions), collapse=' + ') %>% formula
+start = rep(1.0, 3 + length(conditions))
 
 all_condition_model = function(usage) {
   usage %>%
-    mutate(age_over_65 = age - 65) %>%
-    glm(multivariate_formula, data=., family='poisson') %>%
+    mutate(age_over_66 = age - 66) %>%
+    glm(multivariate_formula, data=., family=quasipoisson(link='identity'), start=start) %>%
     tidy()
 }
 ```
@@ -78,10 +79,13 @@ condition_names = read_tsv('../chronic-conditions/names.txt',
 ```
 
 ```{r analyze_function}
+age_group_f = function(x) bounds_group(x, c(65, 70, 75, 80, 85, 90, 95, 100, 116))
+claims_group_f = function(x) bounds_group(x, c(0, 1, 2, 5, 10, 20, Inf))
+
 analyze = function(this_year) {
   # bene file is already filtered for plan coverage months and good geographies
   bene = read_tsv(sprintf('../bene_%i.tsv', this_year)) %>%
-    filter(age >= 65, age < 116, hmo_months==0) %>%
+    filter(between(age, 66, 116), hmo_months==0) %>%
     mutate(is_female=sex=='female', is_white=race=='white') %>%
     left_join(regions, by='state')
   
@@ -122,10 +126,10 @@ analyze = function(this_year) {
   # then by age group
   # (the input to summarize_by is modified, since we want to group by age *group*,
   # not just by raw age)
-  age_group_f = function(x) bounds_group(x, c(65, 70, 75, 80, 85, 90, 95, 116))
   claims_by_age = summarize_by(
-    bene %>% mutate(age_group=age_group_f(age)),
-    pde, 'age_group') %>%
+      bene %>% mutate(age_group=age_group_f(age)),
+      pde, 'age_group'
+    ) %>%
     mutate(year=this_year)
 
   # then by census region
@@ -141,8 +145,7 @@ analyze = function(this_year) {
     replace_na(list(n_claims=0)) %>%
     left_join(cc, by='bene_id') %>%
     multicol_sum('n_cc', conditions)
-  
-  claims_group_f = function(x) bounds_group(x, c(1, 2, 5, 10, 20, Inf))
+
   chars_by_consumption = usage %>%
     mutate(claims_group=claims_group_f(n_claims)) %>%
     group_by(claims_group) %>%

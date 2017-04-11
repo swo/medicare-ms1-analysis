@@ -37,6 +37,7 @@ polish_bene = function(x) {
 polish_pde = function(x) {
   select(x, bene_id=BENE_ID,
             service_date=SRVC_DT,
+            fill_number=FILL_NUM,
             days_supply=DAYSSPLY,
             generic_name=GNN,
             dosage_form_code=GCDF,
@@ -45,7 +46,7 @@ polish_pde = function(x) {
            days_supply=as.integer(days_supply)) %>%
     filter(dosage_form_code %in% oral_injected_codes) %>%
     left_join(antibiotic_names, by='generic_name') %>%
-    select(bene_id, service_date, antibiotic, antibiotic_class, days_supply)
+    select(bene_id, service_date, fill_number, antibiotic, antibiotic_class, days_supply)
 }
 
 # bene column types

@@ -71,7 +71,7 @@ mcc_cor = function(x) {
 this_year = 2011
 
 bene = read_tsv(sprintf('../bene_%i.tsv', this_year)) %>%
-  filter(age >= 65, age < 116, hmo_months==0) %>%
+  filter(between(age, 66, 100), hmo_months==0) %>%
   mutate(is_female=sex=='female', is_white=race=='white') %>%
   left_join(regions, by='state')
   
@@ -85,44 +85,9 @@ usage = pde %>% count(bene_id) %>% rename(n_claims=n) %>%
   right_join(bene, by='bene_id') %>%
   replace_na(list(n_claims=0)) %>%
   left_join(cc, by='bene_id') %>%
-  mutate(age_over_65 = age - 65)
+  mutate(age_over_66 = age - 66)
   
 stopifnot(all(usage$age >= 0))
-```
-
-# All-condition negative binomial model
-
-Each point represents a chronic condition. The coordinates are corresponding coefficients in the two models. The formula for the model is claims against age and sex.
-
-```{r all_condition_negbin}
-all_condition_formula_start = 'n_claims ~ age_over_65 + is_female + '
-all_condition_formula = formula(paste(c(all_condition_formula_start, conditions), collapse=' + '))
-
-all_condition_negbin_model = usage %>%
-  MASS::glm.nb(all_condition_formula, data=.) %>%
-  tidy()
-
-all_condition_poisson_model = usage %>%
-  glm(all_condition_formula, data=., family='poisson') %>%
-  tidy()
-```
-
-```{r cache=FALSE}
-bind_rows(mutate(all_condition_poisson_model, method='Poisson'),
-          mutate(all_condition_negbin_model, method='negbin')) %>%
-  mutate(condition=str_replace(term, 'TRUE$', '')) %>%
-  left_join(condition_names, by='condition') %>%
-  mutate(term=if_else(is.na(condition_name), condition, condition_name)) %>%
-  select(term, method, estimate) %>%
-  spread(method, estimate) %>%
-  ggplot(aes(x=Poisson, y=negbin)) +
-  geom_abline(col='gray') +
-  geom_point() +
-  xlim(-0.2, 0.6) + ylim(-0.2, 0.6) +
-  xlab('Poisson multivariate model coefficient') +
-  ylab('negative binomial multivariate model coefficient') +
-  coord_fixed() +
-  theme_minimal()
 ```
 
 # Single-condition Poisson models
@@ -130,7 +95,7 @@ bind_rows(mutate(all_condition_poisson_model, method='Poisson'),
 ```{r single_condition}
 summarize_condition = function(x, condition) {
 rename_(x, .dots=setNames(condition, 'has_condition')) %>%
-  glm(n_claims ~ age_over_65 + is_female + has_condition, family='poisson', data=.) %>%
+  glm(n_claims ~ age_over_66 + is_female + has_condition, family='poisson', data=.) %>%
   tidy() %>%
   mutate(condition=condition)
 }
@@ -160,7 +125,7 @@ I started with 10-fold cross-validation to pick the lasso $\lambda$.
 registerDoMC(cores=3)
 
 lasso_x = usage %>%
-  select(age_over_65, is_female, AMI:HYPOTH) %>%
+  select(age_over_66, is_female, AMI:HYPOTH) %>%
   as.matrix
 lasso_y = usage$n_claims
 
@@ -218,7 +183,7 @@ top_conditions = single_condition_models %>%
   head(condition, 5)
 
 race_geography_model_f = function(condition) {
-  form = formula(paste0('n_claims ~ age_over_65 + is_female + is_white + region + ', condition))
+  form = formula(paste0('n_claims ~ age_over_66 + is_female + is_white + region + ', condition))
   usage %>%
     mutate(region=factor(region, levels=c('Northeast', 'West', 'Midwest', 'South'))) %>%
     glm(form, family='poisson', data=.) %>%

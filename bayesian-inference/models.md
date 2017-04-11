@@ -270,25 +270,25 @@ $$
 P(m | \bm{c}) \propto \int P(\bm{c} | m, b) P(m, b) \,\mathrm{d}b.
 $$
 The likelihood is
-$$
-\begin{aligned}
-P(\bm{c} | m, b)
-  &= \prod_s \mathrm{Beta}(m c_s + b; \alpha_s, \beta_s) \\
-  &= \prod_s \frac{(mc_s+b)^{\alpha_s-1} \left[ 1 - (mc_s+b) \right]^{\beta_s-1}}{\mathrm{B}(\alpha_s, \beta_s)}.
-\end{aligned}
-$$
+<!-- $$ -->
+<!-- \begin{aligned} -->
+<!-- P(\bm{c} | m, b) -->
+<!--   &= \prod_s \mathrm{Beta}(m c_s + b; \alpha_s, \beta_s) \\ -->
+<!--   &= \prod_s \frac{(mc_s+b)^{\alpha_s-1} \left[ 1 - (mc_s+b) \right]^{\beta_s-1}}{\mathrm{B}(\alpha_s, \beta_s)}. -->
+<!-- \end{aligned} -->
+<!-- $$ -->
 Noting that, with respect to the integral over $b$ in the posterior, the values
 $m$, $c_s$, $\alpha_s$ and $\beta_s$ are all constant, I can remove the beta
 functions from the denominator and divide out some values to get the results of
 order one:
-$$
-\begin{aligned}
-P(\bm{c} | m, b) \propto
-  &= \prod_s (mc_s)^{\alpha_s-1} \left(1 + \frac{b}{mc_s}\right)^{\alpha_s-1}
-    (1-mc_s)^{\beta_s-1} \left(1 - \frac{b}{1 - mc_s}\right)^{\beta_s-1} \\
-  &\propto \prod_s \left(1 + \frac{b}{mc_s}\right)^{\alpha_s-1} \left(1 - \frac{b}{1 - mc_s}\right)^{\beta_s-1}
-\end{aligned}
-$$
+<!-- $$ -->
+<!-- \begin{aligned} -->
+<!-- P(\bm{c} | m, b) \propto -->
+<!--   &= \prod_s (mc_s)^{\alpha_s-1} \left(1 + \frac{b}{mc_s}\right)^{\alpha_s-1} -->
+<!--     (1-mc_s)^{\beta_s-1} \left(1 - \frac{b}{1 - mc_s}\right)^{\beta_s-1} \\ -->
+<!--   &\propto \prod_s \left(1 + \frac{b}{mc_s}\right)^{\alpha_s-1} \left(1 - \frac{b}{1 - mc_s}\right)^{\beta_s-1} -->
+<!-- \end{aligned} -->
+<!-- $$ -->
 
 This should be a fairly well-behaved function, so I expect we can even
 integrate $b$ over the whole real line.
