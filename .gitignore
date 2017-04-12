@@ -10,3 +10,4 @@ fig/
 *.pdf
 *.sqlite
 .Rhistory
+*.RData

@@ -116,12 +116,12 @@ analyze = function(year) {
     mutate(sem_n_claims=sd_n_claims/sqrt(n_bene),
            sem_n_cc=sd_n_cc/sqrt(n_bene))
   
-  claims_by_age_group = dat$usage %>%
+  chars_by_age_group = dat$usage %>%
     mutate(age_group=age_group_f(age)) %>%
     group_by(age_group) %>%
-    summarize(n_claims=sum(n_claims), n_bene=n()) %>%
-    mutate(cpkp=n_claims*1000/n_bene) %>%
-    select(age_group, n_bene, cpkp)
+    summarize(mean_n_claims=mean(n_claims), mean_n_cc=mean(n_cc)) %>%
+    mutate(cpkp=mean_n_claims*1000) %>%
+    select(age_group, cpkp, mean_n_cc)
 
   claims_by_region = summarize_by(dat$usage, 'region')
 
@@ -140,7 +140,7 @@ analyze = function(year) {
        top_abx=top_abx,
        claims_by_sex=claims_by_sex,
        claims_by_age=claims_by_age,
-       claims_by_age_group=claims_by_age_group,
+       chars_by_age_group=chars_by_age_group,
        claims_by_region=claims_by_region,
        chars_by_consumption=chars_by_consumption,
        condition_model=condition_model) %>%
@@ -200,10 +200,13 @@ claims_by_sex = data_by_field('claims_by_sex') %>%
   write_tsv('tables/table2_sex.tsv') %>%
   kable
 
-claims_by_age_group = data_by_field('claims_by_age_group') %>%
-  mutate(cpkp=round(cpkp)) %>%
-  select(age_group, year, cpkp) %>%
-  spread(year, cpkp) %T>%
+chars_by_age_group = data_by_field('claims_by_age_group') %>%
+  mutate(cpkp=round(cpkp), mean_n_cc=round(mean_n_cc, digits=2)) %>%
+  select(age_group, year, cpkp, mean_n_cc) %>%
+  gather('variable', 'value', cpkp, mean_n_cc) %>%
+  mutate(variable=interaction(year, variable)) %>%
+  select(-year) %>%
+  spread(variable, value) %T>%
   write_tsv('tables/supptable1_age_group.tsv') %>%
   kable
 
@@ -228,11 +231,15 @@ chars_by_consumption = data_by_field('chars_by_consumption') %>%
   arrange(year, claims_group) %>%
   kable
 
-condition_model = data_by_field('condition_model') %>%
+condition_model_all_years = data_by_field('condition_model') %>%
   left_join(condition_names, by='condition') %>%
-  filter(year==2011, term != '(Intercept)') %>%
+  filter(term != '(Intercept)') %>%
   mutate(estimate=round(estimate, digits=3)) %>%
-  select(condition=condition_name, term, estimate) %>%
+  select(year, condition=condition_name, term, estimate) %T>%
+  write_tsv('tables/supptable4_singlecondition.tsv')
+
+condition_model = condition_model_all_years %>%
+  filter(year==2011) %>% select(-year) %>%
   spread(term, estimate) %>%
   arrange(desc(has_conditionTRUE)) %T>%
   write_tsv('tables/table3.tsv') %>%
@@ -264,6 +271,8 @@ All consumption rates are reported as claims per thousand people per year (CPKP)
 `r claims_by_region`
 
 ## Consumption by age
+
+`r chars_by_age_group`
 
 `r claims_by_age_group`
 
