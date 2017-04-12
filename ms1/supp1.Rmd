@@ -92,16 +92,16 @@ stopifnot(all(usage$age >= 0))
 
 # Single-condition Poisson models
 
-```{r single_condition}
-summarize_condition = function(x, condition) {
-rename_(x, .dots=setNames(condition, 'has_condition')) %>%
-  glm(n_claims ~ age_over_66 + is_female + has_condition, family='poisson', data=.) %>%
-  tidy() %>%
-  mutate(condition=condition)
+```{r all_condition_model}
+multivariate_formula = paste(c('n_claims ~ age_over_66 + is_female + ', conditions), collapse=' + ') %>% formula
+start = rep(1.0, 3 + length(conditions))
+
+all_condition_model = function(usage) {
+  usage %>%
+    mutate(age_over_66 = age - 66) %>%
+    glm(multivariate_formula, data=., family=quasipoisson(link='identity'), start=start) %>%
+    tidy()
 }
-  
-single_condition_models = lapply(conditions, function(cond) summarize_condition(usage, cond)) %>%
-  bind_rows()
 ```
 
 ```{r cache=FALSE}

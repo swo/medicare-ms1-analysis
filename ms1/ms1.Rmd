@@ -33,139 +33,118 @@ bounds_group = function(x, upper_limits) {
     factor(levels=levels, ordered=TRUE)
 }
 
-summarize_by = function(bene, pde, by) {
-  # e.g., by='sex'
-  # count number of beneficiaries in each group
-  denom = count_(bene, by) %>% rename(n_bene=n)
-  
-  pde %>%
-    left_join(select_(bene, 'bene_id', by), by='bene_id') %>% # join information about the bene's sex (e.g.)
-    count_(by) %>% # count claims
-    left_join(denom, by=by) %>% # join n_bene
-    mutate(cpkp=n*1000/n_bene) %>%
-    select_(by, 'cpkp')
-}
-
-multicol_sum = function(x, new_name, target_columns) {
-  dummy_vars = sapply(1:length(target_columns), function(i) sprintf('x%i', i))
-  dummy_vars_string = paste0(dummy_vars, collapse=',')
-  dummy_vars_list = lapply(target_columns, as.name) %>% setNames(dummy_vars)
-  f = as.formula(paste0(c('~sum(', dummy_vars_string, ')'), collapse=''))
-  
-  rowwise(x) %>%
-    mutate_(new_attribute=interp(f, .values=dummy_vars_list)) %>%
-    rename_(.dots=setNames('new_attribute', new_name)) %>%
-    ungroup()
-}
-
-conditions = c("AMI", "ALZHDMTA", "ATRIALFB", "CATARACT", "CHRNKIDN", "COPD", "CHF", "DIABETES", "GLAUCOMA", "HIPFRAC", "ISCHMCHT", "DEPRESSN", "OSTEOPRS", "RA_OA", "STRKETIA", "CNCRBRST", "CNCRCLRC", "CNCRPRST", "CNCRLUNG", "CNCRENDM", "ANEMIA", "ASTHMA", "HYPERL", "HYPERP", "HYPERT", "HYPOTH")
-
-multivariate_formula = paste(c('n_claims ~ age_over_66 + is_female + ', conditions), collapse=' + ') %>% formula
-start = rep(1.0, 3 + length(conditions))
-
-all_condition_model = function(usage) {
-  usage %>%
-    mutate(age_over_66 = age - 66) %>%
-    glm(multivariate_formula, data=., family=quasipoisson(link='identity'), start=start) %>%
-    tidy()
+summarize_by = function(usage, by) {
+  group_by_(usage, by) %>%
+  summarize(n_claims=sum(n_claims), n_bene=n()) %>%
+  mutate(cpkp=n_claims*1000/n_bene) %>%
+  select_(by, 'cpkp')
 }
 ```
 
-```{r load_db, cache=FALSE}
+```{r load_data}
 regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
   select(state, region)
 condition_names = read_tsv('../chronic-conditions/names.txt',
                            col_names=c('condition', 'condition_name'))
+
+conditions = c("AMI", "ALZHDMTA", "ATRIALFB", "CATARACT", "CHRNKIDN", "COPD", "CHF", "DIABETES", "GLAUCOMA", "HIPFRAC", "ISCHMCHT", "DEPRESSN", "OSTEOPRS", "RA_OA", "STRKETIA", "CNCRBRST", "CNCRCLRC", "CNCRPRST", "CNCRLUNG", "CNCRENDM", "ANEMIA", "ASTHMA", "HYPERL", "HYPERP", "HYPERT", "HYPOTH")
+
+load_data = function(year) {
+  usage = read_tsv(sprintf('usage_%i.tsv', year))
+  pde = read_tsv(sprintf('pde_%i.tsv', year))
+    
+  list(usage=usage, pde=pde)
+}
+```
+
+```{r single_condition_model}
+single_condition_model = function(x, condition) {
+  filter(x, age >= 67) %>%
+  mutate(age_over_67 = age - 67) %>%
+  rename_(.dots=setNames(condition, 'has_condition')) %>%
+    glm(n_claims ~ age_over_67 + is_female + has_condition,
+        family=quasipoisson(link='identity'), data=.) %>%
+    tidy() %>%
+    mutate(condition=condition)
+}
+
+single_condition_models = function(usage) {
+  lapply(conditions, function(cond) single_condition_model(usage, cond)) %>%
+    bind_rows()
+}
 ```
 
 ```{r analyze_function}
-age_group_f = function(x) bounds_group(x, c(65, 70, 75, 80, 85, 90, 95, 100, 116))
+age_group_f = function(x) bounds_group(x, c(66, 70, 75, 80, 85, 90, 95, 100))
 claims_group_f = function(x) bounds_group(x, c(0, 1, 2, 5, 10, 20, Inf))
 
-analyze = function(this_year) {
-  # bene file is already filtered for plan coverage months and good geographies
-  bene = read_tsv(sprintf('../bene_%i.tsv', this_year)) %>%
-    filter(between(age, 66, 116), hmo_months==0) %>%
-    mutate(is_female=sex=='female', is_white=race=='white') %>%
-    left_join(regions, by='state')
+analyze = function(year) {
+  dat = load_data(year)
   
-  assert_has_no_duplicates(bene$bene_id)
-  total_n_bene = nrow(bene)
-  
-  # keep only PDEs for known beneficiaries (semi join)
-  # convert all amox/clav to just amox
-  pde = read_tsv(sprintf('../pde_%i.tsv', this_year)) %>%
-    semi_join(bene, by='bene_id') #%>%
-    #mutate(antibiotic=if_else(antibiotic=='amoxicillin/clavulanate', 'amoxicillin', antibiotic))
-  
-  total_n_pde = nrow(pde)
+  total_n_bene = nrow(dat$usage)
+  total_n_pde = nrow(dat$pde)
   
   totals = data_frame(key=c('n_bene', 'n_pde'),
-                      value=c(total_n_bene, total_n_pde),
-                      year=this_year)
+                      value=c(total_n_bene, total_n_pde))
 
   # claims per 1,000 people by abx class
-  claims_by_class = pde %>%
+  claims_by_class = dat$pde %>%
     count(antibiotic_class) %>%
     mutate(cpkp=n*1000/total_n_bene) %>%
-    select(antibiotic_class, cpkp) %>%
-    mutate(year=this_year)
+    select(antibiotic_class, cpkp)
 
   # the top few inidividual antibiotics
-  top_abx = pde %>%
+  top_abx = dat$pde %>%
     count(antibiotic) %>%
     mutate(cpkp=n*1000/total_n_bene) %>%
-    select(antibiotic, cpkp) %>% 
-    mutate(year=this_year)
+    select(antibiotic, cpkp)
 
   # from here on, the denominators are taken from the beneficiary data grouped
   # in the same way as the consumption data, so we can use the summarize_by function
-  claims_by_sex = summarize_by(bene, pde, 'sex') %>%
-    mutate(year=this_year)
+  claims_by_sex = summarize_by(dat$usage, 'is_female')
 
   # then by age group
   # (the input to summarize_by is modified, since we want to group by age *group*,
   # not just by raw age)
-  claims_by_age = summarize_by(
-      bene %>% mutate(age_group=age_group_f(age)),
-      pde, 'age_group'
-    ) %>%
-    mutate(year=this_year)
-
-  # then by census region
-  claims_by_region = summarize_by(bene, pde, 'region') %>%
-    mutate(year=this_year)
+  claims_by_age = dat$usage %>%
+    group_by(age) %>%
+    summarize(n_bene=n(),
+              mean_n_claims=mean(n_claims),
+              sd_n_claims=sd(n_claims),
+              mean_n_cc=mean(n_cc),
+              sd_n_cc=sd(n_cc)) %>%
+    mutate(sem_n_claims=sd_n_claims/sqrt(n_bene),
+           sem_n_cc=sd_n_cc/sqrt(n_bene))
   
-  # characteristics by consumption
-  cc = read_tsv(sprintf('../cc_%i.tsv', this_year)) %>%
-    select(-ALZH)
-    
-  usage = pde %>% count(bene_id) %>% rename(n_claims=n) %>%
-    right_join(bene, by='bene_id') %>%
-    replace_na(list(n_claims=0)) %>%
-    left_join(cc, by='bene_id') %>%
-    multicol_sum('n_cc', conditions)
+  claims_by_age_group = dat$usage %>%
+    mutate(age_group=age_group_f(age)) %>%
+    group_by(age_group) %>%
+    summarize(n_claims=sum(n_claims), n_bene=n()) %>%
+    mutate(cpkp=n_claims*1000/n_bene) %>%
+    select(age_group, n_bene, cpkp)
 
-  chars_by_consumption = usage %>%
+  claims_by_region = summarize_by(dat$usage, 'region')
+
+  chars_by_consumption = dat$usage %>%
     mutate(claims_group=claims_group_f(n_claims)) %>%
     group_by(claims_group) %>%
     summarize(`no. beneficiaries`=n(),
               `mean age`=mean(age),
               `% female`=mean(is_female) * 100,
-              `mean no. chronic conditions`=mean(n_cc)) %>%
-    mutate(year=this_year)
+              `mean no. chronic conditions`=mean(n_cc))
   
-  condition_model = all_condition_model(usage) %>%
-    mutate(year=this_year)
+  condition_model = single_condition_models(dat$usage)
 
   list(totals=totals,
        claims_by_class=claims_by_class,
        top_abx=top_abx,
        claims_by_sex=claims_by_sex,
        claims_by_age=claims_by_age,
+       claims_by_age_group=claims_by_age_group,
        claims_by_region=claims_by_region,
        chars_by_consumption=chars_by_consumption,
-       condition_model=condition_model)
+       condition_model=condition_model) %>%
+    lapply(function(x) mutate(x, year=year))
 }
 
 years = 2011:2014
@@ -178,10 +157,11 @@ data_by_field = function(field) lapply(results, function(x) x[[field]]) %>% bind
 
 totals = data_by_field('totals') %>%
   spread(key, value) %>%
-  mutate(cpkp=n_pde*1000/n_bene) %>%
+  mutate(cpkp=round(n_pde*1000/n_bene)) %>%
   mutate_at(vars(n_bene, n_pde), function(x) prettyNum(x, big.mark=',')) %>%
   rename(`number of beneficiaries`=n_bene, `number of antibiotic PDEs`=n_pde, `CPKP`=cpkp) %>%
-  arrange(year) %>%
+  arrange(year) %T>%
+  write_tsv('tables/table1.tsv') %>%
   kable
 
 claims_by_class = data_by_field('claims_by_class')
@@ -190,53 +170,72 @@ top_classes = claims_by_class %>%
   filter(year==2011) %>%
   arrange(desc(cpkp)) %>%
   head(9) %$%
-  antibiotic_class %>%
-  c('other')
+  antibiotic_class
+
+class_levels = c(top_classes, 'other')
 
 claims_by_class %<>%
   mutate(antibiotic_class=if_else(antibiotic_class %in% top_classes,
                                   antibiotic_class,
                                   'other')) %>%
   group_by(year, antibiotic_class) %>%
-  summarize(cpkp=sum(cpkp)) %>%
+  summarize(cpkp=round(sum(cpkp))) %>%
   spread(year, cpkp) %>%
-  mutate(antibiotic_class=factor(antibiotic_class, levels=top_classes, ordered=TRUE)) %>%
-  arrange(antibiotic_class) %>%
+  mutate(antibiotic_class=factor(antibiotic_class, levels=class_levels, ordered=TRUE)) %>%
+  arrange(antibiotic_class) %T>%
+  write_tsv('tables/table2_class.tsv') %>%
   kable
 
 top_abx = data_by_field('top_abx') %>%
+  mutate(cpkp=round(cpkp)) %>%
   spread(year, cpkp) %>%
   arrange(desc(`2011`)) %>%
-  head(11) %>%
+  head(11) %T>%
+  write_tsv('tables/table2_drug.tsv') %>%
   kable
 
 claims_by_sex = data_by_field('claims_by_sex') %>%
-  filter(sex %in% c('male', 'female')) %>%
-  spread(year, cpkp) %>%
+  mutate(cpkp=round(cpkp)) %>%
+  spread(year, cpkp) %T>%
+  write_tsv('tables/table2_sex.tsv') %>%
   kable
 
-claims_by_age = data_by_field('claims_by_age') %>%
-  filter(!is.na(age_group)) %>%
-  spread(year, cpkp) %>%
+claims_by_age_group = data_by_field('claims_by_age_group') %>%
+  mutate(cpkp=round(cpkp)) %>%
+  select(age_group, year, cpkp) %>%
+  spread(year, cpkp) %T>%
+  write_tsv('tables/supptable1_age_group.tsv') %>%
   kable
+
+bene_by_age_group = data_by_field('claims_by_age_group') %>%
+  mutate(n_bene=prettyNum(n_bene, big.mark=',')) %>%
+  select(age_group, year, n_bene) %>%
+  spread(year, n_bene) %T>%
+  write_tsv('tables/supptable1_age_group_denom.tsv') %>%
+  kable
+
+claims_by_age = data_by_field('claims_by_age')
 
 claims_by_region = data_by_field('claims_by_region') %>%
-  filter(!is.na(region)) %>%
+  mutate(cpkp=round(cpkp)) %>%
   spread(year, cpkp) %>%
-  arrange(desc(`2011`)) %>%
+  arrange(desc(`2011`)) %T>%
+  write_tsv('tables/table2_region.tsv') %>%
   kable
 
 chars_by_consumption = data_by_field('chars_by_consumption') %>%
-  arrange(desc(year), desc(claims_group)) %>%
+  mutate_at(vars(`mean age`, `% female`, `mean no. chronic conditions`), function(x) round(x, digits=2)) %>%
+  arrange(year, claims_group) %>%
   kable
 
 condition_model = data_by_field('condition_model') %>%
-  mutate(condition=str_replace(term, 'TRUE$', '')) %>%
   left_join(condition_names, by='condition') %>%
-  mutate(term=if_else(is.na(condition_name), condition, condition_name)) %>%
-  select(term, estimate, year) %>%
-  spread(year, estimate) %>%
-  arrange(desc(`2011`)) %>%
+  filter(year==2011, term != '(Intercept)') %>%
+  mutate(estimate=round(estimate, digits=3)) %>%
+  select(condition=condition_name, term, estimate) %>%
+  spread(term, estimate) %>%
+  arrange(desc(has_conditionTRUE)) %T>%
+  write_tsv('tables/table3.tsv') %>%
   kable
 ```
 
@@ -266,7 +265,37 @@ All consumption rates are reported as claims per thousand people per year (CPKP)
 
 ## Consumption by age
 
-`r claims_by_age`
+`r claims_by_age_group`
+
+`r bene_by_age_group`
+
+# Figure 1: Claims and conditions by age
+
+```{r fig1_claims_by_age}
+claims_by_age %>%
+  filter(year==2011) %>%
+  ggplot(aes(x=age,
+             y=mean_n_claims,
+             ymin=mean_n_claims-sem_n_claims,
+             ymax=mean_n_claims+sem_n_claims)) +
+  geom_point() +
+  geom_errorbar() +
+  theme_minimal() +
+  scale_x_continuous(breaks=c(66, 70, 80, 90, 100))
+```
+
+```{r fig1_cc_by_age}
+claims_by_age %>%
+  filter(year==2011) %>%
+  ggplot(aes(x=age,
+             y=mean_n_cc,
+             ymin=mean_n_cc-sem_n_cc,
+             ymax=mean_n_cc+sem_n_cc)) +
+  geom_point() +
+  geom_errorbar() +
+  theme_minimal() +
+  scale_x_continuous(breaks=c(66, 70, 80, 90, 100))
+```
 
 # Table 2: Beneficiary characteristics by consumption
 
