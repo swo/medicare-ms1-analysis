@@ -1,5 +1,5 @@
 ---
-title: "Inequality in consumption"
+title: "ms2"
 author: "Scott Olesen"
 output: html_document
 ---
@@ -7,275 +7,33 @@ output: html_document
 ```{r global_options, include=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/',
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
-import::from(ineq, Gini)
 ```
 
-```{r setup}
-is_nonzero = function(x) x > 0
-nonzero = function(x) x[is_nonzero(x)]
-fraction_nonzero = function(x) sum(is_nonzero(x)) / length(x)
-
-normalize = function(x) x / max(x)
-juran = function(x) {
-  # better to do with percent_rank and cume_dist
-  fraction_consumed = cumsum(sort(x, decreasing=TRUE)) %>% normalize
-  fraction_users = 1:length(x) %>% normalize
-  fraction_nonzero(fraction_consumed + fraction_users - 1)
-}
-
-klasma = function(x, threshold) {
-  if (!between(threshold, 0.0, 1.0)) stop("bad threshold")
-  data_frame(x=x) %>%
-    mutate(cdf=cume_dist(x)) %$%
-    { sum(x[cdf >= threshold]) / sum(x) }
-}
-
-inequalities = function(x, what, denom=NULL) {
-  z = x[[what]]
-  if (!is.null(denom)) z = add_zeros(z, denom)
-
-  data_frame(fraction_nonzero=fraction_nonzero(z),
-             juran=juran(z),
-             juran_nonzero=juran(nonzero(z)),
-             gini=gini(z),
-             gini_nonzero=gini(nonzero(z)))
-}
-
-top_antibiotics = c('azithromycin', 'ciprofloxacin', 'levofloxacin', 'amoxicillin', 'cephalexin', 'trimethoprim/sulfamethoxazole', 'nitrofurantoin', 'doxycycline')
-```
-
-# Results
-
-```{r compute_inequalities}
-bene = read_tsv('../
-
-usage = read_tsv('usage_2011.tsv')
-```
-
-Overall, about half of beneficiaries took at least one antibiotic. Overall, 20% of beneficiaries claimed 80% of the antibiotic days' supply.
-
-```{r inequality_overall}
-# put in both metrics of consumption
-# run it through summarize_inequality
-# then group by region or by drug also
-usage %>%
-  group_by(bene_id) %>%
-  summarize_claims() %>%
-  gather('consumption_metric', 'amount', n_claims, n_days) %>%
-  group_by(consumption_metric) %>%
-  summarize_inequality('amount') %>%
-  kable
-```
-
-```{r inequality_hist}
-usage %>%
-  group_by(bene_id) %>%
-  summarize(n_claims=sum(n_claims)) %>%
-  ggplot(aes(x=n_claims)) +
-  geom_histogram() +
-  scale_y_log10() +
-  xlab('number of claims') + ylab('number of beneficiaries') +
-  theme_minimal()
-```
-
-```{r inequality_cumrelfreq}
-normalize = function(x) x / max(x)
-usage %>%
-  group_by(bene_id) %>%
-  summarize(n_claims=sum(n_claims)) %>%
-  arrange(n_claims) %>%
-  mutate(cdf_x=cume_dist(n_claims), cdf_y=normalize(cumsum(n_claims))) %>%
-  group_by(cdf_x) %>%
-  summarize(cdf_y=max(cdf_y)) %>%
-  ggplot(aes(x=cdf_x, y=cdf_y)) +
-  geom_point() + geom_line() +
-  xlab('cumulative fraction of beneficiaries') +
-  ylab('cumulative fraction of claims') +
-  xlim(0, 1) + ylim(0, 1) +
-  theme_minimal()
-```
-
-Breaking down these results by region shows that the South, which consumed the most antibiotic per capita, has a slightly more even usage (Juran index of 79% versus 80% in other regions). I'm not sure that's a meaningful difference.
-
-```{r inequality_by_region}
-usage %>%
-  group_by(region, bene_id) %>%
-  summarize_claims() %>%
-  gather('consumption_metric', 'amount', n_claims, n_days) %>%
-  group_by(region, consumption_metric) %>%
-  summarize_inequality('amount') %>%
-  kable
-```
-
-```{r inequality_by_region2}
-# This uses code from inequality-resistance
-normalize = function(x) x / max(x)
-cumrelfreq = function(df, var) {
-  n = sort(df[[var]], decreasing=FALSE)
-  data_frame(x=cume_dist(n), y=normalize(cumsum(n))) %>%
-    group_by(x) %>%
-    summarize(y=max(y))
-}
-
-#m = consumption_of('macrolide')
-
-#x = m %>%
-#  left_join(census_regions, by='state') %>%
-#  group_by(region) %>%
-#  do(cumrelfreq(., 'n_claims'))
-
-#p = x %>%
-#  ggplot(aes(x=x, y=y, color=region, group=region)) +
-#  geom_line() + geom_point() +
-#  xlab('cumulative fraction of users') +
-#  ylab('cumulative fraction of drugs consumed') +
-#  theme_minimal()
-
-#show(p)
-```
-
-Among the most popular drugs, unevenness varies only slightly. Among users, azithromycin consumption has an approximately 60% Juran index, and ciprofloxacin has 65%, while TMP-SMX and vancomycin have 70%.
-
-```{r inequality_by_drug}
-n_bene = usage$bene_id %>% unique %>% length
-usage %>%
-  group_by(antibiotic, bene_id) %>%
-  summarize_claims() %>%
-  gather('consumption_metric', 'amount', n_claims, n_days) %>%
-  group_by(antibiotic, consumption_metric) %>%
-  summarize_inequality('amount', n_bene) %>%
-  filter(antibiotic %in% top_antibiotics) %>%
-  kable
-```
-
-## Inequality by state
-```{r compute_inequality_by_state}
-inequality_by_state = usage %>%
-  group_by(state, bene_id) %>%
-  summarize_claims() %>%
-  gather('consumption_metric', 'amount', n_claims, n_days) %>%
-  group_by(state, consumption_metric) %>%
-  summarize(n_bene=n(),
-             fraction_nonzero=fraction_nonzero(amount),
-             juran=juran(amount),
-             juran_nonzero=juran(nonzero(amount)),
-             gini=gini(amount),
-             gini_nonzero=gini(nonzero(amount))) %>%
-  ungroup()
-```
-
-The distribution of inequalities seems small: all states have (non-zero) Juran
-indices that fall between about 0.7 and 0.75. That being said, there does seem
-to be a trend by region: the fraction nonzero is highest in the South?
-
-These results all show inequalities measured using number of days.
-
-```{r show_inequality_by_state}
-inequality_by_state %>%
-  filter(consumption_metric=='n_days') %>%
-  ggplot(aes(x=juran_nonzero)) + geom_histogram() +
-  theme_minimal()
-
-inequality_by_state %>%
-  filter(fraction_nonzero > 0) %>%
-  filter(consumption_metric=='n_days') %>%
-  select(-consumption_metric) %>%
-  arrange(state) %>%
-  kable
-```
-
-These data break down, to some degree, by region: the fraction nonzero is highest for states in the South, but the inequality among users is highest for users in the Midwest.
-
-```{r show_inequality_by_region}
+```{r load_data}
 regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
-  select(state, region)
+  select(state, state_abbreviation, region)
 
-inequality_by_region = inequality_by_state %>%
-  filter(consumption_metric=='n_claims') %>%
+total_ineq = read_tsv('data/total_pde.tsv') %>%
   left_join(regions, by='state')
-
-inequality_by_region %>%
-  ggplot(aes(x=n_bene, y=fraction_nonzero, color=region)) +
-  geom_point() +
-  xlab('number of beneficiaries in state') + ylab('fraction of beneficiaries with at least one claim') +
-  theme_minimal()
-
-inequality_by_region %>%
-  ggplot(aes(x=n_bene, y=juran_nonzero, color=region)) +
-  geom_point() +
-  xlab('number of beneficiaries in state') + ylab('Juran index for days of antibiotics among users') +
-  theme_minimal()
+group_ineq = read_tsv('data/group_inequality.tsv')
 ```
 
-## Characteristics by consumption
+# Aggregate usage correlates with fraction of users
 
-I broke down the beneficiaries based on their consumption: those who had no antibiotic claims were in one "tile", and I separated the rest into $n$-tiles.
-
-```{r chars_by_consumption}
-# load the encounters claim data
-carrier_count = read_tsv('../../data/carrier_count_2011.tsv') %>%
-  rename(bene_id=BENE_ID, n_carrier_dates=n_from_dates)
-inpatient_count = read_tsv('../../data/inpatient_count_2011.tsv') %>%
-  rename(bene_id=BENE_ID, n_inpatient_dates=n_from_dates)
-outpatient_count = read_tsv('../../data/outpatient_count_2011.tsv') %>%
-  rename(bene_id=BENE_ID, n_outpatient_dates=n_from_dates)
-
-ntile_zero = function(x, n) {
-  out = x
-  out[x > 0] = ntile(out[x > 0], n)
-  out
-}
-
-bounds_group = function(x, upper_limits) {
-  upper_limits = as.integer(upper_limits)
-  levels = lapply(seq(from=1, to=length(upper_limits)), function(i) {
-    if (i == 1) {
-      sprintf('<= %i', upper_limits[i])
-    } else {
-      sprintf('> %i and <= %i', upper_limits[i - 1], upper_limits[i])
-    }
-  })
-  top_level = sprintf('> %i', tail(upper_limits, 1))
-  formula_list = mapply(function(str, lim) as.formula(sprintf('x <= %i ~ "%s"', lim, str)),
-                        levels, upper_limits) %>%
-    c(as.formula(sprintf('TRUE ~ "%s"', top_level)))
-
-  levels = c(levels, top_level)
-
-  do.call(case_when, formula_list) %>%
-    factor(levels=levels, ordered=TRUE)
-}
-
-na_to_zero = function(x) if_else(is.na(x), 0L, x)
-
-usage %>%
-  group_by(bene_id) %>%
-  summarize(n_claims=sum(n_claims),
-            n_days=sum(n_days)) %>%
-  left_join(select(usage, bene_id, sex, age, race, chronic), by='bene_id') %>%
-  left_join(carrier_count, by='bene_id') %>%
-  left_join(outpatient_count, by='bene_id') %>%
-  left_join(inpatient_count, by='bene_id') %>%
-  mutate_at(vars(n_carrier_dates, n_outpatient_dates, n_inpatient_dates), na_to_zero) %>%
-  mutate(claims_group=bounds_group(n_claims, c(0, 1, 2, 5, 10, 20, 50, 100)),
-         is_female=if_else(sex=='female', 1, 0),
-         is_white=if_else(race=='white', 1, 0)) %>%
-  group_by(claims_group) %>%
-  summarize(n_beneficiaries=n(),
-            mean_age=mean(age),
-            percent_female=mean(is_female)*100,
-            percent_white=mean(is_white)*100,
-            mean_n_chronic_cond=mean(chronic),
-            mean_n_claims=mean(n_claims),
-            mean_n_carrier_dates=mean(n_carrier_dates),
-            mean_n_outpatient_dates=mean(n_outpatient_dates),
-            mean_n_inpatient_dates=mean(n_inpatient_dates)) %>%
-  mutate_if(is.numeric, function(x) signif(x, digits=3)) %>%
-  kable
+```{r fnz-mean}
+ggplot(total_ineq, aes(x=mean, y=fnz, color=region, label=state_abbreviation)) +
+geom_point() +
+geom_label(nudge_x=0.05) +
+xlab('claims per beneficiary') +
+ylab('fraction of beneficiaries w/ >= 1 claim')
 ```
 
-As expected, greater consumption is correlated with greater age and comorbidity. There are strange trends among gender and race (higher consumption is associated with more female and more white until 10--20 claims, after which point those trends reverse).
+# Inequality among users does not correlate well
 
-# Discussion
-
-I used only the 2011 data in this analysis. I intend to extend the analysis to other years. Data from other years could help confirm any of the (relatively small) differences in inequality in consumption.
+```{r nzgini-mean}
+ggplot(total_ineq, aes(x=mean, y=nzgini, color=region, label=state_abbreviation)) +
+geom_point() +
+geom_label(nudge_x=0.05) +
+xlab('claims per beneficiary') +
+ylab('Gini coefficient among benes. w/ >= 1 claim')
+```
