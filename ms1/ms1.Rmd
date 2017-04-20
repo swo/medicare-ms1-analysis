@@ -111,17 +111,22 @@ analyze = function(year) {
     summarize(n_bene=n(),
               mean_n_claims=mean(n_claims),
               sd_n_claims=sd(n_claims),
+              mean_n_claims_0cc=mean(n_claims[n_cc==0]),
+              sd_n_claims_0cc=sd(n_claims[n_cc==0]),
               mean_n_cc=mean(n_cc),
               sd_n_cc=sd(n_cc)) %>%
     mutate(sem_n_claims=sd_n_claims/sqrt(n_bene),
+           sem_n_claims_0cc=sd_n_claims_0cc/sqrt(n_bene),
            sem_n_cc=sd_n_cc/sqrt(n_bene))
   
   chars_by_age_group = dat$usage %>%
     mutate(age_group=age_group_f(age)) %>%
     group_by(age_group) %>%
-    summarize(mean_n_claims=mean(n_claims), mean_n_cc=mean(n_cc)) %>%
+    summarize(n_bene=n(),
+              mean_n_claims=mean(n_claims),
+              mean_n_cc=mean(n_cc)) %>%
     mutate(cpkp=mean_n_claims*1000) %>%
-    select(age_group, cpkp, mean_n_cc)
+    select(age_group, n_bene, cpkp, mean_n_cc)
 
   claims_by_region = summarize_by(dat$usage, 'region')
 
@@ -203,16 +208,18 @@ claims_by_sex = data_by_field('claims_by_sex') %>%
 chars_by_age_group = data_by_field('chars_by_age_group') %>%
   mutate(cpkp=round(cpkp), mean_n_cc=round(mean_n_cc, digits=2)) %>%
   select(age_group, year, cpkp, mean_n_cc) %T>%
-  write_tsv('tables/data_age_group.tsv')
+  write_tsv('tables/data_age_group.tsv') %>%
+  kable
 
-bene_by_age_group = data_by_field('claims_by_age_group') %>%
+bene_by_age_group = data_by_field('chars_by_age_group') %>%
   mutate(n_bene=prettyNum(n_bene, big.mark=',')) %>%
   select(age_group, year, n_bene) %>%
   spread(year, n_bene) %T>%
   write_tsv('tables/supptable1_age_group_denom.tsv') %>%
   kable
 
-claims_by_age = data_by_field('claims_by_age')
+claims_by_age = data_by_field('claims_by_age') %T>%
+  write_tsv('tables/tmp_claims_by_age.tsv')
 
 claims_by_region = data_by_field('claims_by_region') %>%
   mutate(cpkp=round(cpkp)) %>%
@@ -269,8 +276,6 @@ All consumption rates are reported as claims per thousand people per year (CPKP)
 
 `r chars_by_age_group`
 
-`r claims_by_age_group`
-
 `r bene_by_age_group`
 
 # Figure 1: Claims and conditions by age
@@ -299,6 +304,30 @@ claims_by_age %>%
   geom_errorbar() +
   theme_minimal() +
   scale_x_continuous(breaks=c(66, 70, 80, 90, 100))
+```
+
+```{r}
+f = function(df) {
+  stopifnot(nrow(df) == 1)
+  data_frame(group=c('all', '0cc'),
+             mean_n_claims=c(df$mean_n_claims, df$mean_n_claims_0cc),
+             sem_n_claims=c(df$sem_n_claims, df$sem_n_claims_0cc))
+}
+
+claims_by_age %>%
+  filter(year==2011, between(age, 66, 96)) %>%
+  select(age, mean_n_claims, mean_n_claims_0cc) %>%
+  gather('group', 'mean_n_claims', mean_n_claims, mean_n_claims_0cc) %>%
+  ggplot(aes(x=age,
+             y=mean_n_claims,
+             color=group,
+             group=group)) +
+  geom_point() +
+  geom_smooth(method='lm', se=FALSE) +
+  theme_minimal() +
+  ylab('claims per person') +
+  scale_x_continuous(breaks=c(66, 70, 80, 90, 96)) +
+  scale_y_continuous(breaks=c(0, 0.5, 1, 1.5, 2.0), limits=c(0, 2))
 ```
 
 # Table 2: Beneficiary characteristics by consumption
