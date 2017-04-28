@@ -33,8 +33,8 @@ bounds_group = function(x, upper_limits) {
     factor(levels=levels, ordered=TRUE)
 }
 
-summarize_by = function(usage, by) {
-  group_by_(usage, by) %>%
+summarize_by = function(bene, by) {
+  group_by_(bene, by) %>%
   summarize(n_claims=sum(n_claims), n_bene=n()) %>%
   mutate(cpkp=n_claims*1000/n_bene) %>%
   select_(by, 'cpkp')
@@ -50,38 +50,57 @@ condition_names = read_tsv('../chronic-conditions/names.txt',
 conditions = c("AMI", "ALZHDMTA", "ATRIALFB", "CATARACT", "CHRNKIDN", "COPD", "CHF", "DIABETES", "GLAUCOMA", "HIPFRAC", "ISCHMCHT", "DEPRESSN", "OSTEOPRS", "RA_OA", "STRKETIA", "CNCRBRST", "CNCRCLRC", "CNCRPRST", "CNCRLUNG", "CNCRENDM", "ANEMIA", "ASTHMA", "HYPERL", "HYPERP", "HYPERT", "HYPOTH")
 
 load_data = function(year) {
-  usage = read_tsv(sprintf('usage_%i.tsv', year))
-  pde = read_tsv(sprintf('pde_%i.tsv', year))
+  bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
+    filter(between(age, 66, 96), hmo_months==0) %>%
+    mutate(is_female=sex=='female', is_white=race=='white') %>%
+    left_join(regions, by='state')
+  
+  pde = read_tsv(sprintf('../pde_%i.tsv', year))
+  
+  # get total numbers of PDEs
+  n_claims = pde %>% count(bene_id) %>% rename(n_claims=n)
+  bene %<>%
+    left_join(n_claims, by='bene_id') %>%
+    replace_na(list(n_claims=0))
+  
+  cc = read_feather(sprintf('../cc_%i.feather', year)) %>%
+    mutate(n_cc=rowSums(select_(., '-bene_id')))
+  
+  bene %<>% left_join(cc, by='bene_id')
+  
+  cu = read_tsv('../cu_%i.tsv') %>%
+    select(bene_id, n_visits=hospital_op_visits)
+  
+  bene %<>% left_join(cu, by='bene_id')
     
-  list(usage=usage, pde=pde)
+  list(bene=bene, pde=pde)
 }
 ```
 
 ```{r single_condition_model}
 single_condition_model = function(x, condition) {
   filter(x, age >= 67) %>%
-  mutate(age_over_67 = age - 67) %>%
   rename_(.dots=setNames(condition, 'has_condition')) %>%
-    glm(n_claims ~ age_over_67 + is_female + has_condition,
+    glm(n_claims ~ age + is_female + has_condition,
         family=quasipoisson(link='identity'), data=.) %>%
     tidy() %>%
     mutate(condition=condition)
 }
 
-single_condition_models = function(usage) {
-  lapply(conditions, function(cond) single_condition_model(usage, cond)) %>%
+single_condition_models = function(bene) {
+  lapply(conditions, function(cond) single_condition_model(bene, cond)) %>%
     bind_rows()
 }
 ```
 
 ```{r analyze_function}
-age_group_f = function(x) bounds_group(x, c(65, 70, 75, 80, 85, 90, 95, 100))
+age_group_f = function(x) bounds_group(x, c(65, 70, 75, 80, 85, 90, 96))
 claims_group_f = function(x) bounds_group(x, c(0, 1, 2, 5, 10, 20, Inf))
 
 analyze = function(year) {
   dat = load_data(year)
   
-  total_n_bene = nrow(dat$usage)
+  total_n_bene = nrow(dat$bene)
   total_n_pde = nrow(dat$pde)
   
   totals = data_frame(key=c('n_bene', 'n_pde'),
@@ -101,25 +120,28 @@ analyze = function(year) {
 
   # from here on, the denominators are taken from the beneficiary data grouped
   # in the same way as the consumption data, so we can use the summarize_by function
-  claims_by_sex = summarize_by(dat$usage, 'is_female')
+  claims_by_sex = summarize_by(dat$bene, 'is_female')
 
   # then by age group
   # (the input to summarize_by is modified, since we want to group by age *group*,
   # not just by raw age)
-  claims_by_age = dat$usage %>%
-    group_by(age) %>%
+  claims_by_age = dat$bene %>%
+    bind_rows(. %>% mutate(group='all'),
+              . %>% filter(n_cc==0) %>% mutate(group='no_cc'),
+              . %>% filter(n_visits==0) %>% mutate(group='no_visits')) %>% 
+    group_by(group, age) %>%
     summarize(n_bene=n(),
               mean_n_claims=mean(n_claims),
               sd_n_claims=sd(n_claims),
-              mean_n_claims_0cc=mean(n_claims[n_cc==0]),
-              sd_n_claims_0cc=sd(n_claims[n_cc==0]),
               mean_n_cc=mean(n_cc),
-              sd_n_cc=sd(n_cc)) %>%
+              sd_n_cc=sd(n_cc),
+              mean_n_visits=mean(n_visits),
+              sd_n_visits=sd(n_visits)) %>%
     mutate(sem_n_claims=sd_n_claims/sqrt(n_bene),
-           sem_n_claims_0cc=sd_n_claims_0cc/sqrt(n_bene),
-           sem_n_cc=sd_n_cc/sqrt(n_bene))
+           sem_n_cc=sd_n_cc/sqrt(n_bene),
+           sem_n_visits=sd_n_visits/sqrt(n_bene))
   
-  chars_by_age_group = dat$usage %>%
+  chars_by_age_group = dat$bene %>%
     mutate(age_group=age_group_f(age)) %>%
     group_by(age_group) %>%
     summarize(n_bene=n(),
@@ -128,9 +150,13 @@ analyze = function(year) {
     mutate(cpkp=mean_n_claims*1000) %>%
     select(age_group, n_bene, cpkp, mean_n_cc)
 
-  claims_by_region = summarize_by(dat$usage, 'region')
+  claims_by_region = summarize_by(dat$bene, 'region')
+  
+  claims_by_race = dat$bene %>%
+    mutate(race=if_else(race %in% c('white', 'black', 'Hispanic'), race, 'other')) %>%
+    summarize_by('race')
 
-  chars_by_consumption = dat$usage %>%
+  chars_by_consumption = dat$bene %>%
     mutate(claims_group=claims_group_f(n_claims)) %>%
     group_by(claims_group) %>%
     summarize(`no. beneficiaries`=n(),
@@ -138,12 +164,13 @@ analyze = function(year) {
               `% female`=mean(is_female) * 100,
               `mean no. chronic conditions`=mean(n_cc))
   
-  condition_model = single_condition_models(dat$usage)
+  condition_model = single_condition_models(dat$bene)
 
   list(totals=totals,
        claims_by_class=claims_by_class,
        top_abx=top_abx,
        claims_by_sex=claims_by_sex,
+       claims_by_race=claims_by_race,
        claims_by_age=claims_by_age,
        chars_by_age_group=chars_by_age_group,
        claims_by_region=claims_by_region,
@@ -203,6 +230,12 @@ claims_by_sex = data_by_field('claims_by_sex') %>%
   mutate(cpkp=round(cpkp)) %>%
   spread(year, cpkp) %T>%
   write_tsv('tables/table2_sex.tsv') %>%
+  kable
+
+claims_by_race = data_by_field('claims_by_race') %>%
+  mutate(cpkp=round(cpkp)) %>%
+  spread(year, cpkp) %T>%
+  write_tsv('tables/tmp_race.tsv') %>%
   kable
 
 chars_by_age_group = data_by_field('chars_by_age_group') %>%
@@ -272,6 +305,10 @@ All consumption rates are reported as claims per thousand people per year (CPKP)
 
 `r claims_by_region`
 
+## Consumption by race
+
+`r claims_by_race`
+
 ## Consumption by age
 
 `r chars_by_age_group`
@@ -286,11 +323,12 @@ claims_by_age %>%
   ggplot(aes(x=age,
              y=mean_n_claims,
              ymin=mean_n_claims-sem_n_claims,
-             ymax=mean_n_claims+sem_n_claims)) +
+             ymax=mean_n_claims+sem_n_claims,
+             color=group)) +
   geom_point() +
-  geom_errorbar() +
+  geom_linerange() +
   theme_minimal() +
-  scale_x_continuous(breaks=c(66, 70, 80, 90, 100))
+  scale_x_continuous(breaks=c(66, 70, 80, 90, 96))
 ```
 
 ```{r fig1_cc_by_age}
@@ -306,14 +344,7 @@ claims_by_age %>%
   scale_x_continuous(breaks=c(66, 70, 80, 90, 100))
 ```
 
-```{r}
-f = function(df) {
-  stopifnot(nrow(df) == 1)
-  data_frame(group=c('all', '0cc'),
-             mean_n_claims=c(df$mean_n_claims, df$mean_n_claims_0cc),
-             sem_n_claims=c(df$sem_n_claims, df$sem_n_claims_0cc))
-}
-
+```{r stratified_claims_by_age}
 claims_by_age %>%
   filter(year==2011, between(age, 66, 96)) %>%
   select(age, mean_n_claims, mean_n_claims_0cc) %>%
@@ -322,12 +353,22 @@ claims_by_age %>%
              y=mean_n_claims,
              color=group,
              group=group)) +
-  geom_point() +
+  geom_point(shape=1, cex=5) +
   geom_smooth(method='lm', se=FALSE) +
-  theme_minimal() +
+  theme_minimal(base_size=24) +
   ylab('claims per person') +
   scale_x_continuous(breaks=c(66, 70, 80, 90, 96)) +
   scale_y_continuous(breaks=c(0, 0.5, 1, 1.5, 2.0), limits=c(0, 2))
+
+claims_by_age %>%
+  filter(year==2011, between(age, 67, 96)) %>%
+  ggplot(aes(x=age, y=mean_n_cc)) +
+  geom_point(shape=1, size=6) +
+  geom_smooth(method='lm', se=FALSE, col='black') +
+  theme_minimal(base_size=24) +
+  scale_x_continuous(breaks=c(67, 70, 80, 90, 96)) +
+  ylab('mean no. chronic conditions') +
+  ylim(0, 6)
 ```
 
 # Table 2: Beneficiary characteristics by consumption
