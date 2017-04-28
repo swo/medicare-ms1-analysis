@@ -6,6 +6,7 @@ output: html_document
 
 ```{r global_options, include=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
+                      pdf.options(useDingbats=FALSE),
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
 import::from(pander, pander)
 import::from(broom, tidy)
@@ -32,7 +33,7 @@ hrr_ineq = read_tsv('data/hrr_drug_ineq.tsv')
 ```{r fnz-mean, cache=FALSE}
 ggplot(all_ineq, aes(x=mean, y=fnz, color=region, label=state_abbreviation)) +
 geom_point() +
-geom_label(nudge_x=0.05) +
+geom_text(nudge_x=0.04) +
 xlab('claims per beneficiary') +
 ylab('fraction of beneficiaries w/ >= 1 claim') +
 theme_minimal()
@@ -43,7 +44,7 @@ theme_minimal()
 ```{r nzgini-mean, cache=FALSE}
 ggplot(all_ineq, aes(x=mean, y=nzgini, color=region, label=state_abbreviation)) +
 geom_point() +
-geom_label(nudge_x=0.05) +
+geom_text(nudge_x=0.04) +
 xlab('claims per beneficiary') +
 ylab('Gini coefficient among benes. w/ >= 1 claim') +
 theme_minimal()
@@ -207,6 +208,23 @@ results %>%
   kable
 ```
 
+And what about looking at multivariate only for ones that passed the threshold for univariate? Doesn't seem like it works for any of them!
+
+```{r}
+sig_bug_drug = results %>%
+  filter(model=='univariate', term=='mean') %>%
+  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
+  filter(p.adj < 0.05) %>%
+  select(bug, drug_group)
+
+results %>%
+  filter(model=='multivariate', term==multivariate_term) %>%
+  right_join(sig_bug_drug, by=c('bug', 'drug_group')) %>%
+  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
+  select(bug, drug_group, estimate, p.value, p.adj) %>%
+  kable
+```
+
 When using the HRRs, some of the values remained significant even after correction. I show all those values that passed the unadjusted threshold (like above):
 
 ```{r hrr_multivariate_models, cache=FALSE}
@@ -244,5 +262,46 @@ left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   geom_smooth(aes(x=mean, y=mean_percent_nonsusceptible, color=NULL), method='lm', col='black') +
   geom_point() +
   xlab('quinolone claims per beneficiary') + ylab('mean percent nonsusceptible E. coli isolates') +
+  theme_minimal()
+
+left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
+  left_join(regions, by='state') %>%
+  filter(bug=='Escherichia coli', drug_group=='quinolone') %>%
+  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state)) +
+  geom_smooth(method='lm', col='black', se=FALSE) +
+  geom_point() +
+  geom_text() +
+  xlim(0.2, 0.45) + ylim(0, 50) +
+  xlab('quinolone claims per beneficiary') + ylab('mean percent nonsusceptible E. coli isolates') +
+  theme_minimal()
+```
+
+Bactrim resistance in *E. coli*. First, the aggregate relationship, then the relationship between "excess" resistance (the residual of resistance against aggregate consumption) against nonzero Gini.
+
+```{r ecoli_bactrim}
+ecoli_bactrim_dat = left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
+  left_join(regions, by='state') %>%
+  filter(bug=='Escherichia coli', drug_group=='tmp_smx') %>%
+  filter(!is.na(mean_percent_nonsusceptible))
+
+ecoli_bactrim_dat %>%
+  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state)) +
+  geom_smooth(method='lm', col='gray', se=FALSE) +
+  geom_point() +
+  geom_text() +
+  scale_x_continuous(limits=c(0.08, 0.2), breaks=c(0.08, 0.1, 0.15, 0.2)) +
+  ylim(10, 45) +
+  xlab('TMP/SMX claims per beneficiary') + ylab('mean percent nonsusceptible E. coli isolates') +
+  theme_minimal()
+
+ecoli_bactrim_dat %>%
+  { mutate(., excess_resistance=residuals(lm(mean_percent_nonsusceptible ~ mean, data=.))) } %>%
+  ggplot(aes(x=nzgini, y=excess_resistance)) +
+  geom_smooth(method='lm', col='gray', se=FALSE) +
+  geom_point() +
+  scale_x_continuous(limits=c(0.25, 0.375)) +
+  scale_y_continuous(limits=c(-12, 20), breaks=c(-12, 0, 10, 20)) +
+  xlab('Skew towards high consumers (Gini coefficient)') +
+  ylab('"Excess" E. coli resistance (see caption)') +
   theme_minimal()
 ```

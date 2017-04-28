@@ -12,7 +12,7 @@ polish_cc = function(x) {
 polish_year = function(y) {
   cc_fn = sprintf('../data/cc_%i.tsv', y)
   bene_fn = sprintf('bene_%i.tsv', y)
-  cc_out_fn = sprintf('cc_%i.tsv', y)
+  cc_out_fn = sprintf('cc_%i.feather', y)
 
   bene_ids = read_tsv(bene_fn) %$% bene_id
 
@@ -20,7 +20,7 @@ polish_year = function(y) {
     polish_cc() %>%
     filter(bene_id %in% bene_ids)
 
-  write_tsv(cc, cc_out_fn)
+  write_feather(cc, cc_out_fn)
 }
 
 for (year in 2011:2014) polish_year(year)
