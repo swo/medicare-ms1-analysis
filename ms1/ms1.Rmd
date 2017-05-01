@@ -64,11 +64,12 @@ load_data = function(year) {
     replace_na(list(n_claims=0))
   
   cc = read_feather(sprintf('../cc_%i.feather', year)) %>%
+    select(-ALZH) %>%
     mutate(n_cc=rowSums(select_(., '-bene_id')))
   
   bene %<>% left_join(cc, by='bene_id')
   
-  cu = read_tsv('../cu_%i.tsv') %>%
+  cu = read_tsv(sprintf('../cu_%i.tsv', year)) %>%
     select(bene_id, n_visits=hospital_op_visits)
   
   bene %<>% left_join(cu, by='bene_id')
@@ -78,19 +79,28 @@ load_data = function(year) {
 ```
 
 ```{r single_condition_model}
-single_condition_model = function(x, condition) {
+single_condition_model = function(x, condition_code) {
   filter(x, age >= 67) %>%
-  rename_(.dots=setNames(condition, 'has_condition')) %>%
-    glm(n_claims ~ age + is_female + has_condition,
+  rename_(.dots=setNames(condition_code, 'has_condition')) %>%
+    glm(n_claims ~ age + is_female + has_condition + n_visits,
         family=quasipoisson(link='identity'), data=.) %>%
     tidy() %>%
-    mutate(condition=condition)
+    mutate(condition=condition_code)
 }
 
 single_condition_models = function(bene) {
   lapply(conditions, function(cond) single_condition_model(bene, cond)) %>%
     bind_rows()
 }
+
+all_condition_model = function(bene) {
+  f = formula(paste0('n_claims ~ age + is_female + n_visits + ', paste0(conditions, collapse=' + ')))
+  start = rep(0.1, length(all.vars(f)))
+  filter(bene, age >= 67) %>%
+    glm(f, family=quasipoisson(link='identity'), start=start, data=.) %>%
+    tidy
+}
+    
 ```
 
 ```{r analyze_function}
@@ -126,9 +136,9 @@ analyze = function(year) {
   # (the input to summarize_by is modified, since we want to group by age *group*,
   # not just by raw age)
   claims_by_age = dat$bene %>%
-    bind_rows(. %>% mutate(group='all'),
-              . %>% filter(n_cc==0) %>% mutate(group='no_cc'),
-              . %>% filter(n_visits==0) %>% mutate(group='no_visits')) %>% 
+    mutate(group='all') %>%
+    bind_rows(filter(., n_cc==0) %>% mutate(group='no_cc'),
+              filter(., n_visits==0) %>% mutate(group='no_visits')) %>% 
     group_by(group, age) %>%
     summarize(n_bene=n(),
               mean_n_claims=mean(n_claims),
@@ -165,6 +175,8 @@ analyze = function(year) {
               `mean no. chronic conditions`=mean(n_cc))
   
   condition_model = single_condition_models(dat$bene)
+  
+  big_model = all_condition_model(dat$bene)
 
   list(totals=totals,
        claims_by_class=claims_by_class,
@@ -175,7 +187,8 @@ analyze = function(year) {
        chars_by_age_group=chars_by_age_group,
        claims_by_region=claims_by_region,
        chars_by_consumption=chars_by_consumption,
-       condition_model=condition_model) %>%
+       condition_model=condition_model,
+       big_model=big_model) %>%
     lapply(function(x) mutate(x, year=year))
 }
 
@@ -184,7 +197,7 @@ results = lapply(years, analyze)
 names(results) = as.character(years)
 ```
 
-```{r arrange_data}
+```{r arrange_data1}
 data_by_field = function(field) lapply(results, function(x) x[[field]]) %>% bind_rows()
 
 totals = data_by_field('totals') %>%
@@ -234,7 +247,8 @@ claims_by_sex = data_by_field('claims_by_sex') %>%
 
 claims_by_race = data_by_field('claims_by_race') %>%
   mutate(cpkp=round(cpkp)) %>%
-  spread(year, cpkp) %T>%
+  spread(year, cpkp) %>%
+  arrange(desc(`2011`)) %T>%
   write_tsv('tables/tmp_race.tsv') %>%
   kable
 
@@ -265,7 +279,9 @@ chars_by_consumption = data_by_field('chars_by_consumption') %>%
   mutate_at(vars(`mean age`, `% female`, `mean no. chronic conditions`), function(x) round(x, digits=2)) %>%
   arrange(year, claims_group) %>%
   kable
+```
 
+```{r arrange_data2}
 condition_model_all_years = data_by_field('condition_model') %>%
   left_join(condition_names, by='condition') %>%
   filter(term != '(Intercept)') %>%
@@ -279,6 +295,14 @@ condition_model = condition_model_all_years %>%
   arrange(desc(has_conditionTRUE)) %T>%
   write_tsv('tables/table3.tsv') %>%
   kable
+
+big_model = data_by_field('big_model') %>%
+  mutate(term=stringr::str_replace(term, 'TRUE$', '')) %>%
+  left_join(rename(condition_names, term=condition, condition=condition_name), by='term') %>%
+  filter(term != '(Intercept)') %>%
+  mutate(term=if_else(is.na(condition), term, condition)) %>%
+  select(year, term, estimate, std.error) %T>%
+  write_tsv('tables/tmp_big_model.tsv')
 ```
 
 # Summary of data
@@ -318,8 +342,11 @@ All consumption rates are reported as claims per thousand people per year (CPKP)
 # Figure 1: Claims and conditions by age
 
 ```{r fig1_claims_by_age}
+# Show three lines: claims among all beneficiaries, among those with no ccs,
+# and those with no OP visits. Exclude the no_cc, age=66 datapoint, which is
+# artificially high.
 claims_by_age %>%
-  filter(year==2011) %>%
+  filter(year==2011, !(group=='no_cc' & age < 67)) %>%
   ggplot(aes(x=age,
              y=mean_n_claims,
              ymin=mean_n_claims-sem_n_claims,
@@ -333,42 +360,29 @@ claims_by_age %>%
 
 ```{r fig1_cc_by_age}
 claims_by_age %>%
-  filter(year==2011) %>%
+  filter(year==2011, age >= 67) %>%
   ggplot(aes(x=age,
              y=mean_n_cc,
              ymin=mean_n_cc-sem_n_cc,
              ymax=mean_n_cc+sem_n_cc)) +
   geom_point() +
-  geom_errorbar() +
+  geom_linerange() +
   theme_minimal() +
-  scale_x_continuous(breaks=c(66, 70, 80, 90, 100))
+  scale_x_continuous(breaks=c(67, 70, 80, 90, 96)) +
+  ylim(0, 6)
 ```
 
-```{r stratified_claims_by_age}
+```{r visits_by_age}
 claims_by_age %>%
-  filter(year==2011, between(age, 66, 96)) %>%
-  select(age, mean_n_claims, mean_n_claims_0cc) %>%
-  gather('group', 'mean_n_claims', mean_n_claims, mean_n_claims_0cc) %>%
+  filter(year==2011) %>%
   ggplot(aes(x=age,
-             y=mean_n_claims,
-             color=group,
-             group=group)) +
-  geom_point(shape=1, cex=5) +
-  geom_smooth(method='lm', se=FALSE) +
-  theme_minimal(base_size=24) +
-  ylab('claims per person') +
-  scale_x_continuous(breaks=c(66, 70, 80, 90, 96)) +
-  scale_y_continuous(breaks=c(0, 0.5, 1, 1.5, 2.0), limits=c(0, 2))
-
-claims_by_age %>%
-  filter(year==2011, between(age, 67, 96)) %>%
-  ggplot(aes(x=age, y=mean_n_cc)) +
-  geom_point(shape=1, size=6) +
-  geom_smooth(method='lm', se=FALSE, col='black') +
-  theme_minimal(base_size=24) +
-  scale_x_continuous(breaks=c(67, 70, 80, 90, 96)) +
-  ylab('mean no. chronic conditions') +
-  ylim(0, 6)
+             y=mean_n_visits,
+             ymin=mean_n_visits-sem_n_visits,
+             ymax=mean_n_visits+sem_n_visits)) +
+  geom_point() +
+  geom_linerange() +
+  theme_minimal() +
+  scale_x_continuous(breaks=c(66, 70, 80, 90, 96))
 ```
 
 # Table 2: Beneficiary characteristics by consumption
