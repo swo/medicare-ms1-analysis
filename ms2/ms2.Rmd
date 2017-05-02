@@ -18,9 +18,14 @@ import::from(broom, tidy)
 regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
   select(state, state_abbreviation, region)
 
+zipcodes = read_tsv('../../db/zipcode/zipcode.tsv') %>%
+  select(zipcode=zip, state)
+
 hrr = read_tsv('../../db/hrr/hrr.tsv') %>%
   filter(year==2011) %>%
-  select(zipcode, hrr)
+  select(zipcode, hrr) %>%
+  left_join(zipcodes, by='zipcode') %>%
+  left_join(regions, by='state')
 
 all_ineq = read_tsv('data/all_drug_ineq.tsv') %>%
   left_join(regions, by='state')
@@ -66,20 +71,24 @@ organisms = c('Escherichia coli',
 
 abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c')) %>%
   mutate(drug=tolower(drug), percent_nonsusceptible=100-percent_susceptible) %>%
-  left_join(hrr, by='zipcode') %>%
+  left_join(hrr, by=c('zipcode', 'state')) %>%
   right_join(resistance_groups, by='drug') %>%
   filter(bug %in% organisms) %>%
   select(bug, drug_group, state, hrr, percent_nonsusceptible, n_isolates)
 
-# Keep only those bug/drug combinations that are in at least 20 states
-abg %<>%
-  select(bug, drug_group, state) %>%
-  distinct %>%
-  count(bug, drug_group) %>% rename(n_states=n) %>%
-  filter(n_states >= 20) %>%
-  left_join(abg, by=c('bug', 'drug_group'))
+possible_bug_drug = read_tsv('bug_drug.tsv')
 
-summarize_abg = function(df, place_name, min_places=20) {
+# Keep only bug/drug combinations that are in at least 75 HRRs
+good_combos = possible_bug_drug %>%
+  left_join(abg, by=c('bug', 'drug_group')) %>%
+  select(bug, drug_group, hrr) %>%
+  distinct %>%
+  count(bug, drug_group) %>% rename(n_places=n) %>%
+  filter(n_places >= 75)
+
+abg %<>% right_join(good_combos, by=c('bug', 'drug_group'))
+
+summarize_abg = function(df, place_name) {
     group_by_(df, 'bug', 'drug_group', place_name) %>%
     summarize(mean_percent_nonsusceptible=weighted.mean(percent_nonsusceptible, sqrt(n_isolates)),
               n_place_antibiograms=n()) %>%
@@ -90,25 +99,15 @@ state_abg = summarize_abg(abg, 'state')
 hrr_abg = summarize_abg(abg, 'hrr')
 ```
 
-I consider resistance among these organisms:
-
-`r organisms %>% as.list %>% pander`
-
 And I join the resistance drugs into classes:
 
 `r kable(resistance_groups)`
 
-I similarly joined the consumption drugs into similar classes.
+I similarly joined the consumption drugs into similar classes. I'm looking at these `r nrow(good_combos)` bug/drug combinations:
+
+`r good_combos %>% arrange(desc(n_places)) %>% kable`
 
 ```{r do_models}
-pvalue_stars = function(x) {
-  case_when(x < 0.001 ~ '***',
-            x < 0.01 ~ '**',
-            x < 0.05 ~ '*',
-            x < 0.1 ~ 'o',
-            TRUE ~ '')
-}
-
 linear_model = function(df, dependent_var, explanatory_vars) {
   f = paste0(dependent_var, ' ~ ', paste0(explanatory_vars, collapse = ' + ')) %>% formula
   lm(formula=f, weights=place_weight, data=df) %>%
@@ -124,7 +123,6 @@ spearman_model = function(df, dependent_var, explanatory_var) {
 }
 
 multivariate_term = 'nzgini'
-#multivariate_term = 'mean_fnz_residual'
 models = function(x) {
   dep = 'mean_percent_nonsusceptible'
   # swo> "mean" is a confusing name
@@ -132,7 +130,8 @@ models = function(x) {
     linear_model(x, dep, 'mean') %>% mutate(model='univariate'),
     linear_model(x, dep, c('fnz', multivariate_term)) %>% mutate(model='multivariate'),
     spearman_model(x, dep, 'mean') %>% mutate(model='spearman')
-  )
+  ) %>%
+    mutate(n_data=nrow(x))
 }
 
 # swo> why do I need to redo this filtering?
@@ -141,7 +140,7 @@ results = left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   do(models(.)) %>%
   ungroup
 
-hrr_results = left_join(hrr_abg, hrr_ineq, by=c('hrr', 'drug_group')) %>%
+hrr_results = left_join(hrr_abg, hrr_ineq, by=c('hrr', 'drug_group')) %>% 
   group_by(bug, drug_group) %>%
   do(models(.)) %>%
   ungroup
@@ -151,12 +150,13 @@ hrr_results = left_join(hrr_abg, hrr_ineq, by=c('hrr', 'drug_group')) %>%
 
 Significant results using Spearman correlations of mean percent nonsusceptible ~ claims per beneficiary:
 
-```{r spearman_models, cache=FALSE}
+```{r spearman_models, cache=FALSE, eval=FALSE}
 results %>%
   filter(model=='spearman') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  filter(p.adj < 0.05) %>%
-  select(bug, drug_group, estimate, p.adj) %>%
+  #filter(p.adj < 0.05) %>%
+  arrange(p.adj) %>%
+  select(bug, drug_group, estimate, p.adj, n_data) %>%
   kable
 ```
 
@@ -166,8 +166,9 @@ And the same thing using HRRs:
 hrr_results %>%
   filter(model=='spearman') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  filter(p.adj < 0.05) %>%
-  select(bug, drug_group, estimate, p.adj) %>%
+  #filter(p.adj < 0.05) %>%
+  arrange(p.adj) %>%
+  select(bug, drug_group, estimate, p.adj, n_data) %>%
   kable
 ```
 
@@ -175,11 +176,12 @@ hrr_results %>%
 
 The model here is mean percent nonsusceptible ~ claims per beneficiary. The significant results are:
 
-```{r univariate_models, cache=FALSE}
+```{r univariate_models, cache=FALSE, eval=FALSE}
 results %>%
   filter(model=='univariate', term == 'mean') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  filter(p.adj < 0.05) %>%
+  #filter(p.adj < 0.05) %>%
+  arrange(p.adj) %>%
   select(bug, drug_group, estimate, p.adj) %>%
   kable
 ```
@@ -190,7 +192,8 @@ And the same thing with HRRs:
 hrr_results %>%
   filter(model=='univariate', term == 'mean') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  filter(p.adj < 0.05) %>%
+  #filter(p.adj < 0.05) %>%
+  arrange(p.adj) %>%
   select(bug, drug_group, estimate, p.adj) %>%
   kable
 ```
@@ -199,18 +202,19 @@ hrr_results %>%
 
 The model here is mean percent nonsusceptible ~ fraction nonzero + nonzero Gini. In some of the models, the nonzero Gini term was significant, but not after adjusting for multiple hypotheses. I show just those terms that met the unadjusted threshold:
 
-```{r multivariate_models, cache=FALSE}
+```{r multivariate_models, cache=FALSE, eval=FALSE}
 results %>%
   filter(model=='multivariate', term==multivariate_term) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  filter(p.value < 0.05) %>%
+  #filter(p.value < 0.05) %>%
+  arrange(p.adj) %>%
   select(bug, drug_group, estimate, p.value, p.adj) %>%
   kable
 ```
 
 And what about looking at multivariate only for ones that passed the threshold for univariate? Doesn't seem like it works for any of them!
 
-```{r}
+```{r eval=FALSE}
 sig_bug_drug = results %>%
   filter(model=='univariate', term=='mean') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
@@ -228,10 +232,18 @@ results %>%
 When using the HRRs, some of the values remained significant even after correction. I show all those values that passed the unadjusted threshold (like above):
 
 ```{r hrr_multivariate_models, cache=FALSE}
+sig_bug_drug = hrr_results %>%
+  filter(model=='univariate', term=='mean') %>%
+  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
+  filter(p.adj < 0.05) %>%
+  select(bug, drug_group)
+
 hrr_results %>%
   filter(model=='multivariate', term==multivariate_term) %>%
+  #right_join(sig_bug_drug, by=c('bug', 'drug_group')) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  filter(p.value < 0.05) %>%
+  #filter(p.value < 0.05) %>%
+  arrange(p.value) %>%
   select(bug, drug_group, estimate, p.value, p.adj) %>%
   kable
 ```
@@ -272,6 +284,19 @@ left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   geom_point() +
   geom_text() +
   xlim(0.2, 0.45) + ylim(0, 50) +
+  xlab('quinolone claims per beneficiary') + ylab('mean percent nonsusceptible E. coli isolates') +
+  theme_minimal()
+```
+
+And for HRRs:
+
+```{r}
+left_join(hrr_abg, hrr_ineq, by=c('hrr', 'drug_group')) %>%
+  left_join(hrr, by='hrr') %>%
+  filter(bug=='Escherichia coli', drug_group=='quinolone') %>%
+  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=region, size=sqrt(total))) +
+  geom_smooth(aes(x=mean, y=mean_percent_nonsusceptible, color=NULL), method='lm', col='black') +
+  geom_point() +
   xlab('quinolone claims per beneficiary') + ylab('mean percent nonsusceptible E. coli isolates') +
   theme_minimal()
 ```
