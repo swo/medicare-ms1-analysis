@@ -100,7 +100,6 @@ all_condition_model = function(bene) {
     glm(f, family=quasipoisson(link='identity'), start=start, data=.) %>%
     tidy
 }
-    
 ```
 
 ```{r analyze_function}
@@ -352,6 +351,7 @@ claims_by_age %>%
              ymin=mean_n_claims-sem_n_claims,
              ymax=mean_n_claims+sem_n_claims,
              color=group)) +
+  geom_smooth(method='lm', se=F, size=0.5) +
   geom_point() +
   geom_linerange() +
   theme_minimal() +
@@ -360,11 +360,12 @@ claims_by_age %>%
 
 ```{r fig1_cc_by_age}
 claims_by_age %>%
-  filter(year==2011, age >= 67) %>%
+  filter(year==2011, age >= 67, group != 'no_cc') %>%
   ggplot(aes(x=age,
              y=mean_n_cc,
              ymin=mean_n_cc-sem_n_cc,
-             ymax=mean_n_cc+sem_n_cc)) +
+             ymax=mean_n_cc+sem_n_cc,
+             color=group)) +
   geom_point() +
   geom_linerange() +
   theme_minimal() +
@@ -374,11 +375,12 @@ claims_by_age %>%
 
 ```{r visits_by_age}
 claims_by_age %>%
-  filter(year==2011) %>%
+  filter(year==2011, group != 'no_visits') %>%
   ggplot(aes(x=age,
              y=mean_n_visits,
              ymin=mean_n_visits-sem_n_visits,
-             ymax=mean_n_visits+sem_n_visits)) +
+             ymax=mean_n_visits+sem_n_visits,
+             color=group)) +
   geom_point() +
   geom_linerange() +
   theme_minimal() +
