@@ -11,3 +11,4 @@ fig/
 *.sqlite
 .Rhistory
 *.RData
+*.feather

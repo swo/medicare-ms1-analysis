@@ -55,7 +55,8 @@ load_data = function(year) {
     mutate(is_female=sex=='female', is_white=race=='white') %>%
     left_join(regions, by='state')
   
-  pde = read_tsv(sprintf('../pde_%i.tsv', year))
+  pde = read_tsv(sprintf('../pde_%i.tsv', year)) %>%
+    filter(bene_id %in% bene$bene_id)
   
   # get total numbers of PDEs
   n_claims = pde %>% count(bene_id) %>% rename(n_claims=n)
@@ -295,13 +296,40 @@ condition_model = condition_model_all_years %>%
   write_tsv('tables/table3.tsv') %>%
   kable
 
+add_ci = function(df) mutate(df, ci=1.96*std.error, cil=estimate-ci, ciu=estimate+ci)
+
 big_model = data_by_field('big_model') %>%
   mutate(term=stringr::str_replace(term, 'TRUE$', '')) %>%
   left_join(rename(condition_names, term=condition, condition=condition_name), by='term') %>%
   filter(term != '(Intercept)') %>%
   mutate(term=if_else(is.na(condition), term, condition)) %>%
-  select(year, term, estimate, std.error) %T>%
-  write_tsv('tables/tmp_big_model.tsv')
+  mutate(adj.p=p.adjust(p.value, method='BH')) %>%
+  select(year, term, estimate, std.error, adj.p) %T>%
+  write_tsv('tables/tmp_big_model.tsv') %>%
+  add_ci() %>%
+  filter(year==2011) %>%
+  select(-year, -ci) %>%
+  arrange(desc(estimate)) %>%
+  kable
+```
+
+# Abstract's linear model results
+
+```{r ci}
+extract_ci = function(y) {
+  f = formula(paste0(y, ' ~ age'))
+  claims_by_age %>%
+    filter(group=='all') %>%
+    lm(f, data=.) %>%
+    tidy %>%
+    filter(term=='age') %>%
+    add_ci() %>%
+    mutate(model=y) %>%
+    select(model, estimate, cil, ciu) %>%
+    mutate_if(is.numeric, function(x) round(x, digits=4))
+}
+
+bind_rows(lapply(c('mean_n_claims', 'mean_n_cc', 'mean_n_visits'), extract_ci)) %>% kable
 ```
 
 # Summary of data
@@ -394,6 +422,8 @@ claims_by_age %>%
 # Table 3: Chronic conditions predict consumption
 
 `r condition_model`
+
+`r big_model`
 
 ## Table 3 caption: model coefficient p-values
 
