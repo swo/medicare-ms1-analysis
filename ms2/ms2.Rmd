@@ -307,18 +307,7 @@ left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   theme_minimal()
 ```
 
-And for HRRs:
-
-```{r}
-left_join(hrr_abg, hrr_ineq, by=c('hrr', 'drug_group')) %>%
-  left_join(hrr, by='hrr') %>%
-  filter(bug=='E. coli', drug_group=='quinolone') %>%
-  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=region, size=sqrt(total))) +
-  geom_smooth(aes(x=mean, y=mean_percent_nonsusceptible, color=NULL), method='lm', col='black') +
-  geom_point() +
-  xlab('quinolone claims per beneficiary') + ylab('mean percent nonsusceptible E. coli isolates') +
-  theme_minimal()
-```
+## E.coli and bactrim
 
 Bactrim resistance in *E. coli*. First, the aggregate relationship, then the relationship between "excess" resistance (the residual of resistance against aggregate consumption) against nonzero Gini.
 
@@ -350,21 +339,30 @@ ecoli_bactrim_dat %>%
   theme_minimal()
 ```
 
-## E.coli and penicillin
+## Pneumococcus and macrolides
 
 ```{r}
-ecoli_pen_dat = left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
+left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   left_join(regions, by='state') %>%
-  filter(bug=='E. coli', drug_group=='penicillin') %>%
-  filter(!is.na(mean_percent_nonsusceptible))
-
-ecoli_bactrim_dat %>%
+  filter(bug=='S. pneumoniae', drug_group=='macrolide') %>%
+  filter(!is.na(mean_percent_nonsusceptible)) %>% 
   ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state)) +
   geom_smooth(method='lm', col='gray', se=FALSE) +
   geom_point() +
   geom_text() +
-  #scale_x_continuous(limits=c(0.08, 0.2), breaks=c(0.08, 0.1, 0.15, 0.2)) +
-  #ylim(10, 45) +
-  #xlab('TMP/SMX claims per beneficiary') + ylab('mean percent nonsusceptible E. coli isolates') +
+  theme_minimal()
+```
+
+## E. cloacae and quinolones
+
+```{r}
+left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
+  left_join(regions, by='state') %>%
+  filter(bug=='Eb. cloacae', drug_group=='quinolone') %>%
+  filter(!is.na(mean_percent_nonsusceptible)) %>%
+  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state)) +
+  geom_smooth(method='lm', col='gray', se=FALSE) +
+  geom_point() +
+  geom_text() +
   theme_minimal()
 ```
