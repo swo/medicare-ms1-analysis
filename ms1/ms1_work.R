@@ -81,3 +81,26 @@ p = ggplot(x, aes(x=age, y=mean_abx_pde, group=group)) +
            size=5)
 
 show(p)
+
+conditions = c("AMI", "ISCHMCHT", "CHF", "HYPERT", "CHRNKIDN", "STRKETIA", "HYPERL", 
+               "COPD", "ASTHMA", "CNCRLUNG",
+               "HIPFRAC", "OSTEOPRS", "ANEMIA", "DEPRESSN", 
+               "ALZHDMTA", "DIABETES", "ATRIALFB", "RA_OA", 
+               "HYPOTH", "CNCRBRST",  "CNCRENDM",  
+               "CNCRCLRC", "CNCRPRST", "HYPERP",
+               "CATARACT", "GLAUCOMA")
+bene_ids = read_tsv('../bene_2011.tsv')$bene_id
+cc = read_feather('../cc_2011.feather') %>%
+  filter(bene_id %in% bene_ids)
+
+f = function(c1, c2) {
+  cc %>% group_by_(c1, c2) %>% summarize(n=n()) %>% ungroup %$% min(n)
+}
+
+g = function(c1, c2) sum(cc[[c1]] & cc[[c2]]) / sum(xor(cc[[c1]], cc[[c2]]))
+
+x = crossing(c1=conditions, c2=conditions) %>%
+  filter(c1 < c2) %>%
+  rowwise() %>%
+  mutate(diag_n=g(c1, c2)) %>%
+  ungroup()

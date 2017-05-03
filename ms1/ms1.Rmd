@@ -430,7 +430,7 @@ claims_by_age %>%
 Only $p$-values above (less significant than) $10^{-50}$ are shown. All the remaining values are more significant than the ones shown here.
 
 ```{r p_values}
-data_by_field('condition_model') %>%
+data_by_field('big_model') %>%
   select(term, year, p.value) %>%
   mutate(adj.p=p.adjust(p.value, method='bonferroni'),
          log10.adj.p=log10(adj.p)) %>%
