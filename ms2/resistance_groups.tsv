@@ -1,0 +1,13 @@
+drug	drug_group
+ampicillin	beta_lactam
+ciprofloxacin	quinolone
+levofloxacin	quinolone
+moxifloxacin	quinolone
+azithromycin	macrolide
+erythromycin	macrolide
+cefazolin	cephalosporin_gen1
+cephalexin	cephalosporin_gen1
+trimethoprim-sulfamethoxazole	tmp_smx
+tetracycline/doxycycline	tetracycline
+nitrofurantoin	nitrofurantoin
+clindamycin	clindamycin
