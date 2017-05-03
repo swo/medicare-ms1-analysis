@@ -1,3 +1,5 @@
+#!/usr/bin/env Rscript
+
 # inequality function
 import::from(ineq, Gini)
 nonzero = function(x) x[x > 0]
