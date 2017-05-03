@@ -58,7 +58,7 @@ theme_minimal()
 # Resistance data
 
 ```{r load_abg}
-resistance_groups = read_tsv('../states/resistance/resistance_groups.tsv')
+resistance_groups = read_tsv('resistance_groups.tsv')
 
 organisms = c('Escherichia coli',
               'Proteus mirabilis', 'Enterobacter cloacae',
@@ -76,15 +76,16 @@ abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c'))
   filter(bug %in% organisms) %>%
   select(bug, drug_group, state, hrr, percent_nonsusceptible, n_isolates)
 
-possible_bug_drug = read_tsv('bug_drug.tsv')
+possible_bug_drug = read_tsv('bug_drug2.tsv')
 
 # Keep only bug/drug combinations that are in at least 75 HRRs
+min_n_states = 35
 good_combos = possible_bug_drug %>%
   left_join(abg, by=c('bug', 'drug_group')) %>%
-  select(bug, drug_group, hrr) %>%
+  select(bug, drug_group, state) %>%
   distinct %>%
   count(bug, drug_group) %>% rename(n_places=n) %>%
-  filter(n_places >= 75)
+  filter(n_places >= min_n_states)
 
 abg %<>% right_join(good_combos, by=c('bug', 'drug_group'))
 
@@ -103,7 +104,13 @@ And I join the resistance drugs into classes:
 
 `r kable(resistance_groups)`
 
-I similarly joined the consumption drugs into similar classes. I'm looking at these `r nrow(good_combos)` bug/drug combinations:
+I similarly joined the consumption drugs into similar classes.
+
+I started by considering these bug/drug combinations:
+
+`r kable(possible_bug_drug)`
+
+Then I filtered to keep only those bug/drug combinations that were present in `r min_n_states` states. That means I'm looking at these `r nrow(good_combos)` bug/drug combinations:
 
 `r good_combos %>% arrange(desc(n_places)) %>% kable`
 
@@ -134,7 +141,6 @@ models = function(x) {
     mutate(n_data=nrow(x))
 }
 
-# swo> why do I need to redo this filtering?
 results = left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   group_by(bug, drug_group) %>%
   do(models(.)) %>%
@@ -150,14 +156,22 @@ hrr_results = left_join(hrr_abg, hrr_ineq, by=c('hrr', 'drug_group')) %>%
 
 Significant results using Spearman correlations of mean percent nonsusceptible ~ claims per beneficiary:
 
-```{r spearman_models, cache=FALSE, eval=FALSE}
+```{r spearman_models, cache=FALSE}
 results %>%
   filter(model=='spearman') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
   #filter(p.adj < 0.05) %>%
   arrange(p.adj) %>%
-  select(bug, drug_group, estimate, p.adj, n_data) %>%
+  select(bug, drug_group, estimate, p.value, p.adj, n_data) %>%
   kable
+```
+
+```{r}
+results %>%
+  filter(model=='spearman') %>%
+  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
+  ggplot(aes(x=estimate, y=-log10(p.adj))) + geom_point() +
+  geom_hline(yintercept=-log10(0.05), col='red')
 ```
 
 And the same thing using HRRs:
@@ -168,7 +182,7 @@ hrr_results %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
   #filter(p.adj < 0.05) %>%
   arrange(p.adj) %>%
-  select(bug, drug_group, estimate, p.adj, n_data) %>%
+  select(bug, drug_group, estimate, p.value, p.adj, n_data) %>%
   kable
 ```
 
@@ -176,14 +190,22 @@ hrr_results %>%
 
 The model here is mean percent nonsusceptible ~ claims per beneficiary. The significant results are:
 
-```{r univariate_models, cache=FALSE, eval=FALSE}
+```{r univariate_models, cache=FALSE}
 results %>%
   filter(model=='univariate', term == 'mean') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
   #filter(p.adj < 0.05) %>%
   arrange(p.adj) %>%
-  select(bug, drug_group, estimate, p.adj) %>%
+  select(bug, drug_group, estimate, p.value, p.adj) %>%
   kable
+```
+
+```{r}
+results %>%
+  filter(model=='univariate') %>%
+  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
+  ggplot(aes(x=estimate, y=-log10(p.adj))) + geom_point() +
+  geom_hline(yintercept=-log10(0.05), col='red')
 ```
 
 And the same thing with HRRs:
@@ -202,7 +224,7 @@ hrr_results %>%
 
 The model here is mean percent nonsusceptible ~ fraction nonzero + nonzero Gini. In some of the models, the nonzero Gini term was significant, but not after adjusting for multiple hypotheses. I show just those terms that met the unadjusted threshold:
 
-```{r multivariate_models, cache=FALSE, eval=FALSE}
+```{r multivariate_models, cache=FALSE}
 results %>%
   filter(model=='multivariate', term==multivariate_term) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
