@@ -1,42 +1,27 @@
 drug_group	bug
-penicillin	Streptococcus pneumoniae (non-meningitis)
-penicillin	Enterococcus faecium
-penicillin	Escherichia coli
-amoxicillin	Enterococcus faecium
-amoxicillin	Methicillin-susceptible S. aureus (MSSA)
-amoxicillin	Coagulase-negative staphylococci
-amoxicillin	Escherichia coli
-amoxicillin	Proteus mirabilis
-amoxicillin	Enterobacter cloacae
-cephalosporin_gen1	Streptococcus pneumoniae (non-meningitis)
-cephalosporin_gen1	Methicillin-susceptible S. aureus (MSSA)
-cephalosporin_gen1	Coagulase-negative staphylococci
-cephalosporin_gen1	Escherichia coli
-cephalosporin_gen1	Proteus mirabilis
-macrolide	Streptococcus pneumoniae (non-meningitis)
-macrolide	Methicillin-susceptible S. aureus (MSSA)
-tetracycline	Streptococcus pneumoniae (non-meningitis)
-tetracycline	Methicillin-susceptible S. aureus (MSSA)
-tetracycline	Methicillin-resistant S. aureus (MRSA)
-tetracycline	Escherichia coli
-tmp_smx	Streptococcus pneumoniae (non-meningitis)
-tmp_smx	Methicillin-susceptible S. aureus (MSSA)
-tmp_smx	Methicillin-resistant S. aureus (MRSA)
-tmp_smx	Escherichia coli
-tmp_smx	Coagulase-negative staphylococci
-tmp_smx	Enterobacter cloacae
-nitrofurantoin	Streptococcus pneumoniae (non-meningitis)
-nitrofurantoin	Methicillin-susceptible S. aureus (MSSA)
-nitrofurantoin	Methicillin-resistant S. aureus (MRSA)
-nitrofurantoin	Escherichia coli
-nitrofurantoin	Enterobacter cloacae
-clindamycin	Streptococcus pneumoniae (non-meningitis)
-clindamycin	Methicillin-susceptible S. aureus (MSSA)
-clindamycin	Methicillin-resistant S. aureus (MRSA)
-quinolone	Streptococcus pneumoniae (non-meningitis)
-quinolone	Methicillin-susceptible S. aureus (MSSA)
-quinolone	Methicillin-resistant S. aureus (MRSA)
 quinolone	Coagulase-negative staphylococci
-quinolone	Escherichia coli
+tmp_smx	Coagulase-negative staphylococci
 quinolone	Enterobacter cloacae
+amoxicillin	Enterococcus faecium
+penicillin	Enterococcus faecium
+nitrofurantoin	Enterococcus faecium
+nitrofurantoin	Escherichia coli
+penicillin	Escherichia coli
+quinolone	Escherichia coli
+tmp_smx	Escherichia coli
+clindamycin	Methicillin-resistant S. aureus (MRSA)
+tmp_smx	Methicillin-resistant S. aureus (MRSA)
+tetracycline	Methicillin-resistant S. aureus (MRSA)
+amoxicillin	Methicillin-susceptible S. aureus (MSSA)
+cephalosporin_gen1	Methicillin-susceptible S. aureus (MSSA)
+clindamycin	Methicillin-susceptible S. aureus (MSSA)
+penicillin	Methicillin-susceptible S. aureus (MSSA)
+amoxicillin	Proteus mirabilis
 quinolone	Proteus mirabilis
+nitrofurantoin	Proteus mirabilis
+tmp_smx	Proteus mirabilis
+macrolide	Streptococcus pneumoniae (non-meningitis)
+penicillin	Streptococcus pneumoniae (non-meningitis)
+quinolone	Streptococcus pneumoniae (non-meningitis)
+tetracycline	Streptococcus pneumoniae (non-meningitis)
+amoxicillin	Streptococcus pneumoniae (non-meningitis)

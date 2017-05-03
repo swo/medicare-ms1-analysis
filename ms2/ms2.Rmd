@@ -4,6 +4,8 @@ author: "Scott Olesen"
 output: html_document
 ---
 
+**swo**: filter the NAs in the abg earlier
+
 ```{r global_options, include=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
                       pdf.options(useDingbats=FALSE),
@@ -27,10 +29,10 @@ hrr = read_tsv('../../db/hrr/hrr.tsv') %>%
   left_join(zipcodes, by='zipcode') %>%
   left_join(regions, by='state')
 
-all_ineq = read_tsv('data/all_drug_ineq.tsv') %>%
+all_ineq = read_tsv('data/state_ineq_all_2011.tsv') %>%
   left_join(regions, by='state')
-state_ineq = read_tsv('data/drug_ineq.tsv')
-hrr_ineq = read_tsv('data/hrr_drug_ineq.tsv')
+state_ineq = read_tsv('data/state_ineq_2011.tsv')
+hrr_ineq = read_tsv('data/hrr_ineq_2011.tsv')
 ```
 
 ## Aggregate usage correlates with fraction of users
@@ -59,24 +61,15 @@ theme_minimal()
 
 ```{r load_abg}
 resistance_groups = read_tsv('resistance_groups.tsv')
-
-organisms = c('Escherichia coli',
-              'Proteus mirabilis', 'Enterobacter cloacae',
-              'Enterococcus faecium',
-              'Coagulase-negative staphylococci',
-              'Methicillin-resistant S. aureus (MRSA)',
-              'Methicillin-susceptible S. aureus (MSSA)',
-              'Streptococcus pneumoniae (non-meningitis)',
-              'Staphylococcus aureus')
+bug_names = read_tsv('bug_names.tsv')
 
 abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c')) %>%
   mutate(drug=tolower(drug), percent_nonsusceptible=100-percent_susceptible) %>%
   left_join(hrr, by=c('zipcode', 'state')) %>%
   right_join(resistance_groups, by='drug') %>%
-  filter(bug %in% organisms) %>%
   select(bug, drug_group, state, hrr, percent_nonsusceptible, n_isolates)
 
-possible_bug_drug = read_tsv('bug_drug2.tsv')
+possible_bug_drug = read_tsv('bug_drug.tsv')
 
 # Keep only bug/drug combinations that are in at least 75 HRRs
 min_n_states = 35
@@ -87,7 +80,11 @@ good_combos = possible_bug_drug %>%
   count(bug, drug_group) %>% rename(n_places=n) %>%
   filter(n_places >= min_n_states)
 
-abg %<>% right_join(good_combos, by=c('bug', 'drug_group'))
+abg %<>% right_join(good_combos, by=c('bug', 'drug_group')) %>%
+  rename(bug_long=bug) %>% left_join(bug_names, by='bug_long') %>% select(-bug_long)
+
+# check that all the short names made it in
+if (any(is.na(abg$bug))) stop('missing bug names')
 
 summarize_abg = function(df, place_name) {
     group_by_(df, 'bug', 'drug_group', place_name) %>%
@@ -291,7 +288,7 @@ Quinolone consumption predicts *E. coli* quinolone resistance:
 ```{r ecoli_quin, cache=FALSE}
 left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   left_join(regions, by='state') %>%
-  filter(bug=='Escherichia coli', drug_group=='quinolone') %>%
+  filter(bug=='E. coli', drug_group=='quinolone') %>%
   ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=region)) +
   geom_smooth(aes(x=mean, y=mean_percent_nonsusceptible, color=NULL), method='lm', col='black') +
   geom_point() +
@@ -300,7 +297,7 @@ left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
 
 left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   left_join(regions, by='state') %>%
-  filter(bug=='Escherichia coli', drug_group=='quinolone') %>%
+  filter(bug=='E. coli', drug_group=='quinolone') %>%
   ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state)) +
   geom_smooth(method='lm', col='black', se=FALSE) +
   geom_point() +
@@ -315,7 +312,7 @@ And for HRRs:
 ```{r}
 left_join(hrr_abg, hrr_ineq, by=c('hrr', 'drug_group')) %>%
   left_join(hrr, by='hrr') %>%
-  filter(bug=='Escherichia coli', drug_group=='quinolone') %>%
+  filter(bug=='E. coli', drug_group=='quinolone') %>%
   ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=region, size=sqrt(total))) +
   geom_smooth(aes(x=mean, y=mean_percent_nonsusceptible, color=NULL), method='lm', col='black') +
   geom_point() +
@@ -328,7 +325,7 @@ Bactrim resistance in *E. coli*. First, the aggregate relationship, then the rel
 ```{r ecoli_bactrim}
 ecoli_bactrim_dat = left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   left_join(regions, by='state') %>%
-  filter(bug=='Escherichia coli', drug_group=='tmp_smx') %>%
+  filter(bug=='E. coli', drug_group=='tmp_smx') %>%
   filter(!is.na(mean_percent_nonsusceptible))
 
 ecoli_bactrim_dat %>%
@@ -350,5 +347,24 @@ ecoli_bactrim_dat %>%
   scale_y_continuous(limits=c(-12, 20), breaks=c(-12, 0, 10, 20)) +
   xlab('Skew towards high consumers (Gini coefficient)') +
   ylab('"Excess" E. coli resistance (see caption)') +
+  theme_minimal()
+```
+
+## E.coli and penicillin
+
+```{r}
+ecoli_pen_dat = left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
+  left_join(regions, by='state') %>%
+  filter(bug=='E. coli', drug_group=='penicillin') %>%
+  filter(!is.na(mean_percent_nonsusceptible))
+
+ecoli_bactrim_dat %>%
+  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state)) +
+  geom_smooth(method='lm', col='gray', se=FALSE) +
+  geom_point() +
+  geom_text() +
+  #scale_x_continuous(limits=c(0.08, 0.2), breaks=c(0.08, 0.1, 0.15, 0.2)) +
+  #ylim(10, 45) +
+  #xlab('TMP/SMX claims per beneficiary') + ylab('mean percent nonsusceptible E. coli isolates') +
   theme_minimal()
 ```
