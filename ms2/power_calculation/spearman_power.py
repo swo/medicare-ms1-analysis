@@ -23,6 +23,6 @@ def power(size, rho, n_trials=1000):
     return n_sig / n_trials
 
 print('size', 'rho', 'power', sep='\t')
-for size in [20, 25, 30, 35, 40]:
-    for rho in [0.1, 0.25, 0.5, 0.75, 0.99]:
+for size in [25, 30, 35, 40, 45]:
+    for rho in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
         print(size, rho, power(size, rho), sep='\t')
