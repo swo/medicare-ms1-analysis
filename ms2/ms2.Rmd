@@ -37,7 +37,7 @@ hrr_ineq = read_tsv('data/hrr_ineq_2011.tsv')
 
 ## Aggregate usage correlates with fraction of users
 
-```{r fnz-mean, cache=FALSE}
+```{r fnz_mean, cache=FALSE}
 ggplot(all_ineq, aes(x=mean, y=fnz, color=region, label=state_abbreviation)) +
 geom_point() +
 geom_text(nudge_x=0.04) +
@@ -48,7 +48,7 @@ theme_minimal()
 
 ## Inequality among users does not correlate well
 
-```{r nzgini-mean, cache=FALSE}
+```{r nzgini_mean, cache=FALSE}
 ggplot(all_ineq, aes(x=mean, y=nzgini, color=region, label=state_abbreviation)) +
 geom_point() +
 geom_text(nudge_x=0.04) +
@@ -81,7 +81,8 @@ good_combos = possible_bug_drug %>%
   filter(n_places >= min_n_states)
 
 abg %<>% right_join(good_combos, by=c('bug', 'drug_group')) %>%
-  rename(bug_long=bug) %>% left_join(bug_names, by='bug_long') %>% select(-bug_long)
+  rename(bug_long=bug) %>% left_join(bug_names, by='bug_long') %>% select(-bug_long) %>%
+  filter(!is.na(percent_nonsusceptible), !is.na(n_isolates))
 
 # check that all the short names made it in
 if (any(is.na(abg$bug))) stop('missing bug names')
@@ -90,6 +91,7 @@ summarize_abg = function(df, place_name) {
     group_by_(df, 'bug', 'drug_group', place_name) %>%
     summarize(mean_percent_nonsusceptible=weighted.mean(percent_nonsusceptible, sqrt(n_isolates)),
               n_place_antibiograms=n()) %>%
+    #filter(!is.na(mean_percent_nonsusceptible)) %>%
     mutate(place_weight=sqrt(n_place_antibiograms))
 }
 
@@ -157,9 +159,9 @@ Significant results using Spearman correlations of mean percent nonsusceptible ~
 results %>%
   filter(model=='spearman') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  #filter(p.adj < 0.05) %>%
+  filter(p.value < 0.05) %>%
   arrange(p.adj) %>%
-  select(bug, drug_group, estimate, p.value, p.adj, n_data) %>%
+  select(bug, drug_group, estimate, p.value, p.adj) %>%
   kable
 ```
 
@@ -177,9 +179,9 @@ And the same thing using HRRs:
 hrr_results %>%
   filter(model=='spearman') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  #filter(p.adj < 0.05) %>%
-  arrange(p.adj) %>%
-  select(bug, drug_group, estimate, p.value, p.adj, n_data) %>%
+  filter(p.value < 0.05) %>%
+  arrange(p.value) %>%
+  select(bug, drug_group, estimate, p.value, p.adj) %>%
   kable
 ```
 
@@ -191,8 +193,8 @@ The model here is mean percent nonsusceptible ~ claims per beneficiary. The sign
 results %>%
   filter(model=='univariate', term == 'mean') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  #filter(p.adj < 0.05) %>%
-  arrange(p.adj) %>%
+  filter(p.value < 0.05) %>%
+  arrange(p.value) %>%
   select(bug, drug_group, estimate, p.value, p.adj) %>%
   kable
 ```
@@ -211,9 +213,9 @@ And the same thing with HRRs:
 hrr_results %>%
   filter(model=='univariate', term == 'mean') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  #filter(p.adj < 0.05) %>%
-  arrange(p.adj) %>%
-  select(bug, drug_group, estimate, p.adj) %>%
+  filter(p.value < 0.05) %>%
+  arrange(p.value) %>%
+  select(bug, drug_group, estimate, p.value, p.adj) %>%
   kable
 ```
 
@@ -225,13 +227,13 @@ The model here is mean percent nonsusceptible ~ fraction nonzero + nonzero Gini.
 results %>%
   filter(model=='multivariate', term==multivariate_term) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  #filter(p.value < 0.05) %>%
-  arrange(p.adj) %>%
+  filter(p.value < 0.05) %>%
+  arrange(p.value) %>%
   select(bug, drug_group, estimate, p.value, p.adj) %>%
   kable
 ```
 
-And what about looking at multivariate only for ones that passed the threshold for univariate? Doesn't seem like it works for any of them!
+And what about looking at multivariate only for ones that passed the threshold for univariate?
 
 ```{r eval=FALSE}
 sig_bug_drug = results %>%
@@ -248,7 +250,19 @@ results %>%
   kable
 ```
 
-When using the HRRs, some of the values remained significant even after correction. I show all those values that passed the unadjusted threshold (like above):
+Using HRRs, adjusting $p$ with all possibilities:
+
+```{r cache=FALSE}
+hrr_results %>%
+  filter(model=='multivariate', term==multivariate_term) %>%
+  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
+  filter(p.value < 0.05) %>%
+  arrange(p.value) %>%
+  select(bug, drug_group, estimate, p.value, p.adj) %>%
+  kable
+```
+
+And then doing multiple hypothesis correction only for those that made it through the first model:
 
 ```{r hrr_multivariate_models, cache=FALSE}
 sig_bug_drug = hrr_results %>%
@@ -259,9 +273,8 @@ sig_bug_drug = hrr_results %>%
 
 hrr_results %>%
   filter(model=='multivariate', term==multivariate_term) %>%
-  #right_join(sig_bug_drug, by=c('bug', 'drug_group')) %>%
+  right_join(sig_bug_drug, by=c('bug', 'drug_group')) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  #filter(p.value < 0.05) %>%
   arrange(p.value) %>%
   select(bug, drug_group, estimate, p.value, p.adj) %>%
   kable
@@ -274,9 +287,9 @@ It turns out that the different drugs have different relationships with the two 
 ```{r nzgini_cpb_drug}
 cbbPalette <- c("#000000", "#D55E00", "#CC79A7", "#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2")
 state_ineq %>%
-  ggplot(aes(x=nzgini, y=mean, color=drug_group)) +
+  ggplot(aes(x=mean, y=nzgini, color=drug_group)) +
   geom_point() +
-  xlab('nonzero Gini') + ylab('claims per beneficiary') +
+  ylab('Gini coefficient among users') + xlab('claims per beneficiary') +
   theme_minimal() +
   scale_color_manual(values=cbbPalette)
 ```
@@ -314,8 +327,8 @@ Bactrim resistance in *E. coli*. First, the aggregate relationship, then the rel
 ```{r ecoli_bactrim}
 ecoli_bactrim_dat = left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   left_join(regions, by='state') %>%
-  filter(bug=='E. coli', drug_group=='tmp_smx') %>%
-  filter(!is.na(mean_percent_nonsusceptible))
+  filter(bug=='E. coli', drug_group=='tmp_smx') #%>%
+  #filter(!is.na(mean_percent_nonsusceptible))
 
 ecoli_bactrim_dat %>%
   ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state)) +
@@ -364,5 +377,35 @@ left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   geom_smooth(method='lm', col='gray', se=FALSE) +
   geom_point() +
   geom_text() +
+  theme_minimal()
+```
+
+## MSSA and clindamycin
+
+```{r mssa_clinda}
+dat = left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
+  left_join(regions, by='state') %>%
+  filter(bug=='MSSA', drug_group=='clindamycin') #%>%
+  #filter(!is.na(mean_percent_nonsusceptible))
+
+dat %>%
+  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state)) +
+  geom_smooth(method='lm', col='gray', se=FALSE) +
+  geom_point() +
+  geom_text() +
+  #scale_x_continuous(limits=c(0.08, 0.2), breaks=c(0.08, 0.1, 0.15, 0.2)) +
+  #ylim(10, 45) +
+  xlab('clindamycin claims per beneficiary') + ylab('mean percent nonsusceptible MSSA isolates') +
+  theme_minimal()
+
+dat %>%
+  { mutate(., excess_resistance=residuals(lm(mean_percent_nonsusceptible ~ mean, data=.))) } %>%
+  ggplot(aes(x=nzgini, y=excess_resistance)) +
+  geom_smooth(method='lm', col='gray', se=FALSE) +
+  geom_point() +
+  #scale_x_continuous(limits=c(0.25, 0.375)) +
+  #scale_y_continuous(limits=c(-12, 20), breaks=c(-12, 0, 10, 20)) +
+  xlab('Gini coefficient') +
+  ylab('"Excess" MSSA resistance') +
   theme_minimal()
 ```
