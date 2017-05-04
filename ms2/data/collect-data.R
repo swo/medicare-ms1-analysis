@@ -10,10 +10,16 @@ pad0 = function(x, to) c(x, rep(0, to - length(x)))
 lm_residuals = function(y, x) residuals(lm(y ~ x))
 
 inequalities = function(x) {
+  nb_par = fitdistrplus::mledist(x, 'nbinom')$estimate
+  nb_size = nb_par['size']
+  nb_prob = nb_size / (nb_size + nb_par['mu'])
   data_frame(total=sum(x),
              mean=mean(x),
              fnz=fraction_nonzero(x),
-             nzgini=Gini(nonzero(x)))
+             nzgini=Gini(nonzero(x)),
+             nb_size=nb_size,
+             nb_prob=nb_prob
+             )
 }
 
 consumption_groups = read_tsv('../consumption_groups.tsv')
