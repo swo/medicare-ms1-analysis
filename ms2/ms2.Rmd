@@ -4,13 +4,10 @@ author: "Scott Olesen"
 output: html_document
 ---
 
-**swo**: filter the NAs in the abg earlier
-
 ```{r global_options, include=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
                       pdf.options(useDingbats=FALSE),
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
-import::from(pander, pander)
 import::from(broom, tidy)
 ```
 
@@ -73,8 +70,7 @@ possible_bug_drug = read_tsv('bug_drug.tsv')
 
 # Keep only bug/drug combinations that are in at least 75 HRRs
 min_n_states = 35
-good_combos = possible_bug_drug %>%
-  left_join(abg, by=c('bug', 'drug_group')) %>%
+good_combos = semi_join(abg, possible_bug_drug, by=c('bug', 'drug_group')) %>%
   select(bug, drug_group, state) %>%
   distinct %>%
   count(bug, drug_group) %>% rename(n_places=n) %>%
