@@ -9,7 +9,7 @@ import scipy.stats
 
 # Shouldn't matter what the exact sd's are
 sd1 = 1.0
-sd2 = 1.0
+sd2 = 5.0
 
 def power(size, rho, n_trials=1000):
     n_sig = 0

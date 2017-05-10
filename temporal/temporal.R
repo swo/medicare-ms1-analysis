@@ -1,14 +1,5 @@
 #!/usr/bin/env Rscript
 
-# create summary beneficiary x abx file
-
-# - load map from NDC codes to abx names
-# - load beneficiary data; keep bene_id -> state mapping
-# - load antibiotic PDEs; keep bene, date, abx, days
-# - merge abx and bene; keep date, abx, days, state
-# - summarize information by drug, state, and year
-# - summarize also by class?
-
 library(lubridate)
 
 summarize_weeks = function(x) {
@@ -20,10 +11,13 @@ summarize_weeks = function(x) {
 
 for (y in 2011:2014) {
   pde = sprintf('../pde_%i.tsv', y) %>% read_tsv
-  bene = sprintf('../bene_%i.tsv', y) %>% read_tsv
+  bene = sprintf('../bene_%i.tsv', y) %>%
+    read_tsv %>%
+    filter(between(age, 66, 96), sex %in% c('male', 'female'), hmo_months==0)
 
   pde %>%
     left_join(select(bene, bene_id, state), by='bene_id') %>%
+    filter(!is.na(state)) %>%
     summarize_weeks %>%
     write_tsv(sprintf('temporal_abx_%i.tsv', y))
 }
