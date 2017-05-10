@@ -11,6 +11,8 @@ For the GISP project, we are trying to show that we can infer bystander selectio
 
 # Methods
 
+## Data
+
 I use the 2011--2014 Medicare data, filtered for:
 
 - beneficiaries between 66 and 96
@@ -18,7 +20,19 @@ I use the 2011--2014 Medicare data, filtered for:
 - beneficiaries with a non-NA state
 - with a sex in male/female
 
+## Analysis
+
 I use the `spec.pgram` function with `detrend=TRUE`, which removes a linear trend from the whole data (and also removes the mean).
+
+I also use `nls` to fit the curves. The rough equation is $y = A + Bt + C\sin(2\pi t/D + E\pi)$. The time $t$ is just weeks, and $y$ is the number of claims in that week. This function works only if you give good starting values:
+
+- vertical offset $A$ as the mean number of claims
+- secular trend slope $B \approx 0$
+- amplitude $C$ as the standard deviation of the number of claims
+- period $D \approx 52$ (because we expect a yearly period)
+- phase offset $E \approx \tfrac{1}{2}$ (because we expect consumption to be high in the winter when $t \approx 0$)
+
+For the plots, I show a fit that includes a linear 
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
@@ -39,7 +53,7 @@ dat = lapply(2011:2014, function(y) {
   mutate(week=(year - 2011)*52 + week_of_year)
 ```
 
-```{r spectrogram functions}
+```{r spectrogram_functions, echo=TRUE}
 strongest_period = function(pg) 1.0 / (pg$freq[which.max(pg$spec)])
 drug_data = function(drugs) {
   filter(dat, antibiotic %in% drugs) %>%
@@ -48,17 +62,29 @@ drug_data = function(drugs) {
 }
 
 drug_plot = function(drugs) {
+  pf = periodic_fit(drugs)
+  p = pf$m$getPars()
+  f = function(t) p['A'] + p['B'] * t + p['C'] * sin(2 * pi * t / p['D'] + pi * p['E'])
   drug_data(drugs) %>%
-    ggplot(aes(x=week, y=n_claims)) + geom_point()
+    ggplot(aes(x=week, y=n_claims)) + geom_point() + stat_function(fun=f)
 }
 
 drug_spectrogram = function(drugs) drug_data(drugs) %$% spec.pgram(n_claims)
 drug_period = function(drugs) strongest_period(drug_spectrogram(drugs))
+
+periodic_fit = function(drugs) {
+  d = drug_data(drugs) %>% mutate(x=week, y=n_claims)
+  nls(y ~ A + B*x + C*sin(2*pi*x/D + pi*E), start=list(A=mean(d$y), B=0, C=sd(d$y), D=52, E=0.5), data=d)
+}
+
+periodic_fit_table = function(drugs) periodic_fit(drugs) %>% tidy %>% select(term, estimate) %>% kable
 ```
 
 # Results
 
-Azithromycin and quinolones are strongly seasonal. Tetracyclines are moderately seasonal. Penicillins and ceftriaxone are not seasonal.
+Azithromycin and quinolones are strongly seasonal: the spectrogram has a clear peak at approximately 52 week period, and the curve fit gives a strong amplitude and a period of almost exaclty 52. The quinolones are also seasonal---there is a peak in the spectrogram and the curve fit works nicely---but the amplitude is not as strong.
+
+The tetracyclines are moderately seasonal: the spectrogram and fit both work, but the amplitudes are again smaller. Ceftriaxone is weakly seasonal: the spectrogram does find that approximately 52 weeks is the strongest period, but the curve fit surprises me. The penicillins are not seasonal at all.
 
 ## Azithromycin
 
@@ -66,9 +92,10 @@ Azithromycin and quinolones are strongly seasonal. Tetracyclines are moderately 
 drugs = c('azithromycin')
 drug_plot(drugs)
 plot(drug_spectrogram(drugs))
+periodic_fit_table(drugs)
 ```
 
-The strongest period is `r drug_period(drugs)` weeks.
+The strongest period in the spectrogram is `r drug_period(drugs)` weeks.
 
 ## Cipro/levo
 
@@ -76,19 +103,21 @@ The strongest period is `r drug_period(drugs)` weeks.
 drugs = c('levofloxacin', 'ciprofloxacin')
 drug_plot(drugs)
 plot(drug_spectrogram(drugs))
+periodic_fit_table(drugs)
 ```
 
-## Tetracycline/doxycycline
+The strongest period in the spectrogram is `r drug_period(drugs)` weeks.
 
-The strongest period is `r drug_period(drugs)` weeks.
+## Tetracycline/doxycycline
 
 ```{r tetra}
 drugs = c('tetracycline', 'doxycycline')
 drug_plot(drugs)
 plot(drug_spectrogram(drugs))
+periodic_fit_table(drugs)
 ```
 
-The strongest period is `r drug_period(drugs)` weeks.
+The strongest period in the spectrogram is `r drug_period(drugs)` weeks.
 
 ## Ceftriaxone
 
@@ -96,9 +125,10 @@ The strongest period is `r drug_period(drugs)` weeks.
 drugs = c('ceftriaxone')
 drug_plot(drugs)
 plot(drug_spectrogram(drugs))
+periodic_fit_table(drugs)
 ```
 
-The strongest period is `r drug_period(drugs)` weeks.
+The strongest period in the spectrogram is `r drug_period(drugs)` weeks.
 
 ## Pencillin/ampicillin
 
@@ -106,6 +136,7 @@ The strongest period is `r drug_period(drugs)` weeks.
 drugs = c('penicillin', 'ampicillin')
 drug_plot(drugs)
 plot(drug_spectrogram(drugs))
+periodic_fit_table(drugs)
 ```
 
-The strongest period is `r drug_period(drugs)` weeks.
+The strongest period in the spectrogram is `r drug_period(drugs)` weeks.
