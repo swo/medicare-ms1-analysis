@@ -1,0 +1,111 @@
+---
+title: "Antibiotic seasonalities"
+author: "Scott Olesen"
+date: "5/10/2017"
+output: html_document
+---
+
+# Background
+
+For the GISP project, we are trying to show that we can infer bystander selection pressure on gonococcus using the seasonality of consumption of drugs that are consumed for reasons other than gonorrhea treatment.
+
+# Methods
+
+I use the 2011--2014 Medicare data, filtered for:
+
+- beneficiaries between 66 and 96
+- beneficiaries without any HMO months
+- beneficiaries with a non-NA state
+- with a sex in male/female
+
+I use the `spec.pgram` function with `detrend=TRUE`, which removes a linear trend from the whole data (and also removes the mean).
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
+                      pdf.options(useDingbats=FALSE),
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
+import::from(broom, tidy)
+```
+
+```{r load_data}
+dat = lapply(2011:2014, function(y) {
+  sprintf('../temporal_abx_%i.tsv', y) %>%
+    read_tsv %>%
+    filter(!is.na(state), week <= 52) %>%
+    mutate(year=y)
+  }) %>%
+  bind_rows %>%
+  rename(week_of_year=week) %>%
+  mutate(week=(year - 2011)*52 + week_of_year)
+```
+
+```{r spectrogram functions}
+strongest_period = function(pg) 1.0 / (pg$freq[which.max(pg$spec)])
+drug_data = function(drugs) {
+  filter(dat, antibiotic %in% drugs) %>%
+    group_by(week) %>%
+    summarize(n_claims=sum(n_claims))
+}
+
+drug_plot = function(drugs) {
+  drug_data(drugs) %>%
+    ggplot(aes(x=week, y=n_claims)) + geom_point()
+}
+
+drug_spectrogram = function(drugs) drug_data(drugs) %$% spec.pgram(n_claims)
+drug_period = function(drugs) strongest_period(drug_spectrogram(drugs))
+```
+
+# Results
+
+Azithromycin and quinolones are strongly seasonal. Tetracyclines are moderately seasonal. Penicillins and ceftriaxone are not seasonal.
+
+## Azithromycin
+
+```{r azithromycin}
+drugs = c('azithromycin')
+drug_plot(drugs)
+plot(drug_spectrogram(drugs))
+```
+
+The strongest period is `r drug_period(drugs)` weeks.
+
+## Cipro/levo
+
+```{r quinolone}
+drugs = c('levofloxacin', 'ciprofloxacin')
+drug_plot(drugs)
+plot(drug_spectrogram(drugs))
+```
+
+## Tetracycline/doxycycline
+
+The strongest period is `r drug_period(drugs)` weeks.
+
+```{r tetra}
+drugs = c('tetracycline', 'doxycycline')
+drug_plot(drugs)
+plot(drug_spectrogram(drugs))
+```
+
+The strongest period is `r drug_period(drugs)` weeks.
+
+## Ceftriaxone
+
+```{r ceftriaxone}
+drugs = c('ceftriaxone')
+drug_plot(drugs)
+plot(drug_spectrogram(drugs))
+```
+
+The strongest period is `r drug_period(drugs)` weeks.
+
+## Pencillin/ampicillin
+
+```{r penicillin}
+drugs = c('penicillin', 'ampicillin')
+drug_plot(drugs)
+plot(drug_spectrogram(drugs))
+```
+
+The strongest period is `r drug_period(drugs)` weeks.
