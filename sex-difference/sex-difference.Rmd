@@ -21,85 +21,72 @@ I'll use the Medicare 2011 data.
 
 ```{r global_options, include=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
-                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
 ```
 
-```{r load_data, cache=TRUE}
-usage = read_tsv('../bene_usage_2011.tsv')
+```{r load_data}
+year = 2011
+bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
+  filter(between(age, 66, 96), hmo_months==0, sex %in% c('male', 'female')) %>%
+  mutate(is_female=sex=='female', is_white=race=='white')
+  
+pde = read_tsv(sprintf('../pde_%i.tsv', year)) %>%
+  filter(bene_id %in% bene$bene_id)
+
+total_pde = pde %>% count(bene_id) %>% rename(n_claims=n)
 ```
 
 ## Consumption by age and sex
 
 It seems that females consume more antibiotics even within each age bracket (except for those over 95).
 
-```{r compute_consumption_by_age_and_sex}
-bounds_group = function(x, upper_limits) {
-  upper_limits = as.integer(upper_limits)
-  levels = lapply(seq(from=1, to=length(upper_limits)), function(i) {
-    if (i == 1) {
-      sprintf('<= %i', upper_limits[i])
-    } else {
-      sprintf('> %i and <= %i', upper_limits[i - 1], upper_limits[i])
-    }
-  })
-  top_level = sprintf('> %i', tail(upper_limits, 1))
-  formula_list = mapply(function(str, lim) as.formula(sprintf('x <= %i ~ "%s"', lim, str)),
-                        levels, upper_limits) %>%
-    c(as.formula(sprintf('TRUE ~ "%s"', top_level)))
-  
-  levels = c(levels, top_level)
-  
-  do.call(case_when, formula_list) %>%
-    factor(levels=levels, ordered=TRUE)
-}
-
-usage %>%
-  filter(sex %in% c('male', 'female')) %>%
-  mutate(age_group=bounds_group(age, c(65, 75, 85, 95))) %>%
-  group_by(age_group, sex, bene_id) %>%
-  summarize_at(vars(n_claims, n_days), sum) %>%
-  summarize(mean_n_claims=mean(n_claims),
-            mean_n_days=mean(n_days),
-            n_bene=n()) %>%
-  kable
+```{r consumption_by_age_and_sex}
+bene %>%
+  left_join(total_pde, by='bene_id') %>%
+  replace_na(list(n_claims=0)) %>%
+  group_by(sex, age) %>%
+  summarize(mean_n_claims=mean(n_claims)) %>%
+  ungroup() %>%
+  ggplot(aes(x=age, y=mean_n_claims, color=sex)) +
+  geom_point()
 ```
 
 ## Consumption of drugs by sex
 
 Looking at top drugs by sex.
 
-```{r drugs_by_sex, cache=TRUE}
-bene_by_sex = usage %>%
-  #sample_frac(0.01) %>%
-  select(bene_id, sex) %>%
-  distinct %>%
-  count(sex) %>%
-  rename(n_bene=n)
+```{r drugs_by_sex}
+usage_by_sex = function(drug) {
+  bene %>%
+    left_join(pde %>% filter(antibiotic==drug) %>% count(bene_id) %>% rename(n_claims=n), by='bene_id') %>%
+    replace_na(list(n_claims=0)) %>%
+    group_by(sex) %>%
+    summarize(mean_n_claims=mean(n_claims)) %>%
+    ungroup() %>%
+    spread(sex, mean_n_claims) %>%
+    mutate(drug=drug)
+}
 
-dbs = usage %>%
-  #sample_frac(0.01) %>%
-  filter(age >= 65, sex %in% c('male', 'female')) %>%
-  group_by(antibiotic, sex, bene_id) %>%
-  summarize_at(vars(n_claims, n_days), sum) %>%
-  summarize(n_claims=sum(n_claims), n_days=sum(n_days)) %>%
-  left_join(bene_by_sex, by='sex') %>%
-  mutate(cpkp=n_claims*1000/n_bene, did=n_days*1000/(365*n_bene))
+dbs = lapply(unique(pde$antibiotic), usage_by_sex) %>% bind_rows
+```
 
-dbs %>%
-  filter(sex=='female') %>%
-  arrange(desc(cpkp)) %>%
-  head(10) %>%
-  kable
-
-dbs %>%
-  filter(sex=='male') %>% 
-  arrange(desc(cpkp)) %>%
-  head(10) %>%
-  kable
+```{r}
+denom = bene %>% count(sex) %>% rename(n_denom=n)
+ubs = pde %>%
+  select(bene_id, antibiotic) %>%
+  distinct() %>%
+  left_join(select(bene, bene_id, sex), by='bene_id') %>%
+  count(sex, antibiotic) %>%
+  ungroup() %>%
+  rename(n_user=n) %>%
+  left_join(denom, by='sex') %>%
+  mutate(frac_using=n_user/n_denom) %>%
+  select(antibiotic, sex, frac_using) %>%
+  spread(sex, frac_using)
 ```
 
 ```{r drug_by_sex_plot}
-dbs %>%
+ubs %>%
   select(antibiotic, sex, cpkp) %>%
   spread(sex, cpkp) %>%
   ggplot(aes(x=male, y=female, label=antibiotic)) +
