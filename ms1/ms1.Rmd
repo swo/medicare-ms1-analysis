@@ -4,6 +4,11 @@ author: "Scott Olesen"
 output: html_document
 ---
 
+# To do
+
+- Remove visits from the models, since we expect that visits are casually in between disease and antibiotics
+- Put all years together, put calendar year into the model, and regress (rather than doing separate regressions on each year)
+
 ```{r global_options, include=FALSE, cache=FALSE}
 knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='fig/', dev=c('pdf', 'png'),
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE,
@@ -174,6 +179,11 @@ analyze = function(year) {
               `% female`=mean(is_female) * 100,
               `mean no. chronic conditions`=mean(n_cc))
   
+  condition_prevalence = dat$bene %>%
+    select(AMI:HYPOTH) %>%
+    summarize_all(mean) %>%
+    gather('condition', 'prevalence', everything())
+  
   condition_model = single_condition_models(dat$bene)
   
   big_model = all_condition_model(dat$bene)
@@ -187,6 +197,7 @@ analyze = function(year) {
        chars_by_age_group=chars_by_age_group,
        claims_by_region=claims_by_region,
        chars_by_consumption=chars_by_consumption,
+       condition_prevalence=condition_prevalence,
        condition_model=condition_model,
        big_model=big_model) %>%
     lapply(function(x) mutate(x, year=year))
@@ -281,6 +292,13 @@ chars_by_consumption = data_by_field('chars_by_consumption') %>%
   kable
 ```
 
+```{r arrange_condition_prevalence}
+condition_prevalence = data_by_field('condition_prevalence') %>%
+  spread(year, prevalence) %>%
+  arrange(desc(`2011`)) %>%
+  kable
+```
+
 ```{r arrange_data2}
 condition_model_all_years = data_by_field('condition_model') %>%
   left_join(condition_names, by='condition') %>%
@@ -365,6 +383,10 @@ All consumption rates are reported as claims per thousand people per year (CPKP)
 `r chars_by_age_group`
 
 `r bene_by_age_group`
+
+# Prevalence of conditions
+
+`r condition_prevalence`
 
 # Figure 1: Claims and conditions by age
 
