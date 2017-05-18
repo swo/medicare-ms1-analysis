@@ -7,7 +7,7 @@ output: html_document
 ```{r global_options, include=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
                       pdf.options(useDingbats=FALSE),
-                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
 import::from(broom, tidy)
 ```
 
@@ -110,18 +110,36 @@ Then I filtered to keep only those bug/drug combinations that were present in `r
 `r good_combos %>% arrange(desc(n_places)) %>% kable`
 
 ```{r do_models}
+linear_interval = function(model, level) {
+  confint(model, level=level) %>%
+    tidy %>%
+    setNames(c('term', 'ci_low', 'ci_high'))
+}
+
 linear_model = function(df, dependent_var, explanatory_vars) {
   f = paste0(dependent_var, ' ~ ', paste0(explanatory_vars, collapse = ' + ')) %>% formula
-  lm(formula=f, weights=place_weight, data=df) %>%
+  m = lm(formula=f, weights=place_weight, data=df)
+  tidy(m) %>%
+    select(term, estimate, p.value) %>%
+    mutate(n=nrow(df)) %>%
+    left_join(linear_interval(m, 0.95), by='term')
+}
+
+spearman_interval = function(df, rho_name, n_name, level) {
+  mada::CIrho(df[[rho_name]], df[[n_name]], level=level) %>%
     tidy %>%
-    select(term, estimate, p.value)
+    setNames(c('rho', 'ci_low', 'ci_high')) %>%
+    select(-rho)
 }
 
 spearman_model = function(df, dependent_var, explanatory_var) {
   cor.test(df[[dependent_var]], df[[explanatory_var]], method='spearman') %>%
     tidy %>%
     mutate(term=explanatory_var, method='spearman') %>%
-    select(term, estimate, p.value)
+    mutate(n=nrow(df)) %>%
+    group_by(term, estimate, p.value, n) %>%
+    do(spearman_interval(., 'estimate', 'n', 0.95)) %>%
+    ungroup()
 }
 
 multivariate_term = 'nzgini'
@@ -157,8 +175,18 @@ results %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
   filter(p.value < 0.05) %>%
   arrange(p.adj) %>%
-  select(bug, drug_group, estimate, p.value, p.adj) %>%
+  select(bug, drug_group, estimate, p.value, p.adj, n) %>%
   kable
+```
+
+```{r}
+results %>%
+  filter(model=='spearman') %>%
+  mutate(bug_drug=interaction(bug, drug_group)) %>%
+  ggplot(aes(x=bug_drug, y=estimate, ymin=ci_low, ymax=ci_high)) +
+  geom_point() +
+  geom_linerange() +
+  coord_flip()
 ```
 
 ```{r}
@@ -189,10 +217,22 @@ The model here is mean percent nonsusceptible ~ claims per beneficiary. The sign
 results %>%
   filter(model=='univariate', term == 'mean') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  filter(p.value < 0.05) %>%
+  #filter(p.value < 0.05) %>%
   arrange(p.value) %>%
-  select(bug, drug_group, estimate, p.value, p.adj) %>%
+  select(bug, drug_group, estimate, p.value, p.adj, n) %>%
   kable
+```
+
+```{r}
+results %>%
+  filter(model=='univariate', term=='mean') %>%
+  arrange(estimate) %>%
+  mutate(bug_drug=interaction(bug, drug_group),
+         bug_drug=factor(bug_drug, levels=bug_drug, ordered=TRUE)) %>%
+  ggplot(aes(x=bug_drug, y=estimate, ymin=ci_low, ymax=ci_high)) +
+  geom_point() +
+  geom_linerange() +
+  coord_flip()
 ```
 
 ```{r}
@@ -205,7 +245,7 @@ results %>%
 
 And the same thing with HRRs:
 
-```{r hrr_univariate_models, cache=FALSE}
+```{r hrr_univariate_models}
 hrr_results %>%
   filter(model=='univariate', term == 'mean') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
@@ -219,7 +259,7 @@ hrr_results %>%
 
 The model here is mean percent nonsusceptible ~ fraction nonzero + nonzero Gini. In some of the models, the nonzero Gini term was significant, but not after adjusting for multiple hypotheses. I show just those terms that met the unadjusted threshold:
 
-```{r multivariate_models, cache=FALSE}
+```{r multivariate_models}
 results %>%
   filter(model=='multivariate', term==multivariate_term) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
@@ -227,6 +267,18 @@ results %>%
   arrange(p.value) %>%
   select(bug, drug_group, estimate, p.value, p.adj) %>%
   kable
+```
+
+```{r}
+results %>%
+  filter(model=='multivariate', term==multivariate_term) %>%
+  arrange(estimate) %>%
+  mutate(bug_drug=interaction(bug, drug_group),
+         bug_drug=factor(bug_drug, levels=bug_drug, ordered=TRUE)) %>%
+  ggplot(aes(x=bug_drug, y=estimate, ymin=ci_low, ymax=ci_high)) +
+  geom_point() +
+  geom_linerange() +
+  coord_flip()
 ```
 
 And what about looking at multivariate only for ones that passed the threshold for univariate?
@@ -403,5 +455,21 @@ dat %>%
   #scale_y_continuous(limits=c(-12, 20), breaks=c(-12, 0, 10, 20)) +
   xlab('Gini coefficient') +
   ylab('"Excess" MSSA resistance') +
+  theme_minimal()
+```
+
+## MRSA clinda
+
+```{r}
+left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
+  left_join(regions, by='state') %>%
+  filter(bug=='MRSA', drug_group=='clindamycin') %>%
+  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state)) +
+  geom_smooth(method='lm', col='gray', se=FALSE) +
+  geom_point() +
+  geom_text() +
+  #scale_x_continuous(limits=c(0.08, 0.2), breaks=c(0.08, 0.1, 0.15, 0.2)) +
+  #ylim(10, 45) +
+  xlab('clindamycin claims per beneficiary') + ylab('mean percent nonsusceptible MRSA isolates') +
   theme_minimal()
 ```
