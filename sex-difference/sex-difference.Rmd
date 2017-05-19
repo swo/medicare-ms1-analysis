@@ -15,7 +15,15 @@ Why do females account for 25% more antibiotic claims per capita than males? I h
 
 # Methods
 
-I'll use the Medicare 2011 data.
+I'll use the Medicare 2011 data. Or, use all years, pool that data, and include calendar year as part of the regression.
+
+*Outcome*: At least one claim for azithromycin, Bactrim, TMP/SMX, or nitrofurantoin. *Exposure*: A diagnosis with a UTI or an acute RTI.
+
+- In the first pass, look for any claim and any diagnosis.
+- In a second pass, look for a diagnosis that came at most two weeks before a claim.
+- Maybe, in a third pass, look for diagnosis that came at most two weeks before the first claim for that drug for the beneficiary. (Imagine someone is on year-long prophylaxis. Then a diagnosis at any time of the year will make it look like the diagnosis caused the claims.)
+
+Before a model, I should just stratify by sex and exposure. Do we already see the signal (or lack of it)? Then we can go onto including age and calendar year as covariates.
 
 # Results
 

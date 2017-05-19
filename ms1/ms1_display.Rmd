@@ -1,0 +1,168 @@
+---
+title: "Ms 1"
+author: "Scott Olesen"
+output: html_document
+---
+
+```{r global_options, include=FALSE, cache=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='fig/', dev=c('pdf', 'png'),
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=FALSE,
+                      error=FALSE, autodep=TRUE)
+import::from(knitr, kable)
+import::from(lazyeval, interp)
+import::from(broom, tidy)
+import::from(stringr, str_replace)
+```
+
+# Summary of data
+
+```{r}
+read_tsv('tables/tbl_totals.tsv') %>%
+  mutate_at(vars(n_bene, n_pde), function(x) prettyNum(x, big.mark=',')) %>%
+  mutate_at(vars(cpkp), function(x) round(x)) %>%
+  kable
+```
+
+# Claims against age
+
+```{r claims_by_age}
+claims_by_age = read_tsv('tables/tbl_claims_by_age.tsv')
+
+claims_by_age %>%
+  filter(year==2011, !(group=='no_cc' & age < 67)) %>%
+  ggplot(aes(x=age,
+             y=mean_n_claims,
+             ymin=mean_n_claims-sem_n_claims,
+             ymax=mean_n_claims+sem_n_claims,
+             color=group)) +
+  geom_smooth(method='lm', se=F, size=0.5) +
+  geom_point() +
+  geom_linerange() +
+  scale_x_continuous(breaks=c(66, 70, 80, 90, 96)) +
+  scale_y_continuous(breaks=c(0.0, 1.0, 1.5, 2.0)) +
+  theme_minimal()
+
+lm_ci = function(df, formula) {
+  lm(formula, data=df) %>%
+    tidy %>%
+    mutate(ci=1.96*std.error, cil=estimate-ci, ciu=estimate+ci)
+}
+
+claims_by_age %>%
+  group_by(group) %>%
+  do(lm_ci(., mean_n_claims ~ age)) %>%
+  filter(term=='age') %>%
+  select(group, estimate, cil, ciu) %>%
+  kable
+```
+
+
+# Patterns of consumption
+
+All consumption rates are reported as claims per thousand people per year (CPKP).
+
+## Claims by class
+
+```{r}
+read_tsv('tables/tbl_claims_by_class.tsv') %>%
+  select(antibiotic_class, year, cpkp) %>%
+  spread(year, cpkp) %>%
+  mutate(antibiotic_class=if_else(row_number(desc(`2011`)) < 10, antibiotic_class, 'other')) %>%
+  group_by(antibiotic_class) %>%
+  summarize_all(sum) %>%
+  mutate_at(vars(-antibiotic_class), round) %>%
+  arrange(desc(`2011`)) %>%
+  kable
+```
+
+## Most-prescribed antibiotics
+
+```{r}
+claims_by_abx = read_tsv('tables/tbl_claims_by_abx.tsv')
+
+top_abx = claims_by_abx %>%
+  filter(year==2011) %>%
+  filter(row_number(desc(cpkp)) < 10) %$%
+  antibiotic
+
+claims_by_abx %>%
+  filter(antibiotic %in% top_abx) %>%
+  select(antibiotic, year, cpkp) %>%
+  spread(year, cpkp) %>%
+  mutate_at(vars(-antibiotic), round) %>%
+  arrange(desc(`2011`)) %>%
+  kable
+```
+
+## Consumption by sex
+
+```{r}
+read_tsv('tables/tbl_claims_by_sex.tsv') %>%
+  select(sex, year, cpkp) %>%
+  spread(year, cpkp) %>%
+  arrange(desc(`2011`)) %>% 
+  mutate_at(vars(-sex), round) %>%
+  kable
+```
+
+## Consumption by region
+
+```{r}
+read_tsv('tables/tbl_claims_by_region.tsv') %>%
+  select(region, year, cpkp) %>%
+  spread(year, cpkp) %>%
+  arrange(desc(`2011`)) %>% 
+  mutate_at(vars(-region), round) %>%
+  kable
+```
+
+## Consumption by race
+
+```{r}
+read_tsv('tables/tbl_claims_by_race.tsv') %>%
+  select(race, year, cpkp) %>%
+  spread(year, cpkp) %>%
+  arrange(desc(`2011`)) %>% 
+  mutate_at(vars(-race), round) %>%
+  kable
+```
+
+# Prevalence of conditions
+
+```{r}
+condition_names = read_tsv('../chronic-conditions/names.txt',
+                           col_names=c('condition', 'condition_name'))
+
+read_tsv('tables/tbl_cc_prevalence.tsv') %>%
+  left_join(condition_names, by='condition') %>%
+  select(condition=condition_name, year, prevalence) %>%
+  spread(year, prevalence) %>%
+  mutate(change=(`2014`-`2011`)/`2011`) %>%
+  mutate_at(vars(-condition), function(x) round(x * 100, 1)) %>%
+  arrange(desc(change)) %>%
+  kable
+```
+
+# All-condition model
+
+```{r}
+read_tsv('tables/tbl_all_condition_model.tsv') %>%
+  mutate(term=stringr::str_replace(term, 'TRUE$', '')) %>%
+  left_join(condition_names, by=c('term'='condition')) %>%
+  mutate(term=if_else(is.na(condition_name), term, condition_name),
+         log10.adj.p.value=log10(p.adjust(p.value, method='BH'))) %>%
+  select(term, estimate, p.value, log10.adj.p.value) %>%
+  filter(term != '(Intercept)') %>%
+  arrange(desc(estimate)) %>%
+  kable
+```
+
+# Single-condition models
+
+```{r}
+read_tsv('tables/tbl_single_condition_models.tsv') %>%
+  select(condition, term, estimate) %>%
+  spread(term, estimate) %>%
+  kable
+```
+
