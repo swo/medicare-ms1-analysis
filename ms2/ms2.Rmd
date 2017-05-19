@@ -180,13 +180,19 @@ results %>%
 ```
 
 ```{r}
+interval_plot = function(df) {
+  arrange(df, estimate) %>%
+  mutate(bug_drug=interaction(bug, drug_group),
+         bug_drug=factor(bug_drug, levels=bug_drug, ordered=TRUE)) %>% 
+    ggplot(aes(x=bug_drug, y=estimate, ymin=ci_low, ymax=ci_high)) +
+    geom_point() +
+    geom_linerange() +
+    coord_flip()
+}
+
 results %>%
   filter(model=='spearman') %>%
-  mutate(bug_drug=interaction(bug, drug_group)) %>%
-  ggplot(aes(x=bug_drug, y=estimate, ymin=ci_low, ymax=ci_high)) +
-  geom_point() +
-  geom_linerange() +
-  coord_flip()
+  interval_plot()
 ```
 
 ```{r}
@@ -199,7 +205,7 @@ results %>%
 
 And the same thing using HRRs:
 
-```{r hrr_spearman_models, cache=FALSE}
+```{r hrr_spearman_models}
 hrr_results %>%
   filter(model=='spearman') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
@@ -213,7 +219,7 @@ hrr_results %>%
 
 The model here is mean percent nonsusceptible ~ claims per beneficiary. The significant results are:
 
-```{r univariate_models, cache=FALSE}
+```{r univariate_models}
 results %>%
   filter(model=='univariate', term == 'mean') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
@@ -226,13 +232,7 @@ results %>%
 ```{r}
 results %>%
   filter(model=='univariate', term=='mean') %>%
-  arrange(estimate) %>%
-  mutate(bug_drug=interaction(bug, drug_group),
-         bug_drug=factor(bug_drug, levels=bug_drug, ordered=TRUE)) %>%
-  ggplot(aes(x=bug_drug, y=estimate, ymin=ci_low, ymax=ci_high)) +
-  geom_point() +
-  geom_linerange() +
-  coord_flip()
+  interval_plot()
 ```
 
 ```{r}
@@ -272,13 +272,7 @@ results %>%
 ```{r}
 results %>%
   filter(model=='multivariate', term==multivariate_term) %>%
-  arrange(estimate) %>%
-  mutate(bug_drug=interaction(bug, drug_group),
-         bug_drug=factor(bug_drug, levels=bug_drug, ordered=TRUE)) %>%
-  ggplot(aes(x=bug_drug, y=estimate, ymin=ci_low, ymax=ci_high)) +
-  geom_point() +
-  geom_linerange() +
-  coord_flip()
+  interval_plot()
 ```
 
 And what about looking at multivariate only for ones that passed the threshold for univariate?
@@ -300,7 +294,7 @@ results %>%
 
 Using HRRs, adjusting $p$ with all possibilities:
 
-```{r cache=FALSE}
+```{r}
 hrr_results %>%
   filter(model=='multivariate', term==multivariate_term) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
@@ -312,7 +306,7 @@ hrr_results %>%
 
 And then doing multiple hypothesis correction only for those that made it through the first model:
 
-```{r hrr_multivariate_models, cache=FALSE}
+```{r hrr_multivariate_models}
 sig_bug_drug = hrr_results %>%
   filter(model=='univariate', term=='mean') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
@@ -340,6 +334,14 @@ state_ineq %>%
   ylab('Gini coefficient among users') + xlab('claims per beneficiary') +
   theme_minimal() +
   scale_color_manual(values=cbbPalette)
+```
+
+```{r}
+left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
+  filter(bug %in% c('E. coli', 'Eb. cloacae', 'CNST', 'MSSA', 'MRSA', 'S. pneumoniae')) %>%
+  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=drug_group, shape=bug)) +
+  geom_point() +
+  xlab('claims per beneficiary')
 ```
 
 ## Specific plots
