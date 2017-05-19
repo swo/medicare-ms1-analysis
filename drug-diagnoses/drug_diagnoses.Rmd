@@ -1,0 +1,104 @@
+---
+title: "Diagnoses associated consumption of specific antibiotics"
+author: "Scott Olesen"
+date: ""
+output: pdf_document
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
+```
+
+# Background
+
+We see changing levels of consumption of a few antibiotics:
+
+- Ciprofloxacin going down
+- Levofloxacin going up
+- Amoxicillin going up
+- Azithromycin going down
+
+These decreases could be accompanied by changes in their usage with respect to patient indications. For example, it could be that amoxicillin is being uniformly prescribed more for all indications for which it was previously prescribed, or it could be that there are indications for which it is more often being prescribed.
+
+# Methods
+
+I used the 2011 and 2014 Medicare data. I looked for non-hospital outpatient claims (i.e., carrier events) associated with antibiotic prescriptions restricted by:
+
+- the beneficiary passed the regular exclusion criteria (66 to 96 years old, not on HMO)
+- the drug claims (PDE) was for one of the four drugs above (with amox/clav included with amox)
+- the outpatient claim was 0 to 3 days before the drug claim
+
+There are uniformly more claims in 2014 than in 2011, so I look at ratios of proportions of diagnoses. Specifically, for each drug and year, I looked at the primary diagnosis for the associated outpatient claims, computed the fraction of outpatient claims corresponding to that diagnosis, and computed the ratio of the two proportions. If a diagnosis has a ratio near 1, then diagnosis was associated with an equal fraction of claims for that drug. If the ratio is higher than 1, then that diagnosis was better represented in drug claims from 2014 than 2011.
+
+```{r load_data}
+icd = read_tsv('../../db/icd/icd.tsv') %>% rename(dx_code=code)
+
+dat = lapply(c(2011, 2014), function(y) {
+  read_tsv(sprintf('../../data/tmp_abx_dx_%i.tsv', y)) %>% mutate(year=y)
+}) %>%
+  bind_rows %>%
+  count(year, antibiotic, dx_code) %>%
+  group_by(year, antibiotic) %>%
+  mutate(p=n/sum(n)) %>%
+  ungroup()
+```
+  
+```{r}
+summarize_abx = function(abx) {
+  dat %>%
+    filter(antibiotic==abx) %>%
+    select(-n) %>%
+    spread(year, p) %>%
+    mutate(pr=`2014`/`2011`) %>%
+    mutate_at(vars(pr, `2011`, `2014`), function(x) round(x, digits=3)) %>%
+    arrange(desc(`2011`)) %>%
+    head(20) %>%
+    left_join(icd, by='dx_code') %>%
+    mutate(desc=stringr::str_sub(desc, end=40)) %>%
+    select(Diagnosis=desc, `2011`, `2014`, `Ratio of proportions`=pr, `ICD code`=dx_code) %>%
+    kable
+}
+```
+
+# Results
+
+Each table shows the 20 diagnoses with the greatest number of outpatient claims associated with that drug, the proportion of outpatient claims with that diagnosis in each year, and the ratio of the proportions between the two years.
+
+## Amoxicillin
+
+The greatest increase was for unspecified, chronic sinusitis (ratio 1.45); the greatest credible decrease was for bronchitis (0.82).
+
+```{r}
+summarize_abx('amoxicillin')
+```
+
+## Ciprofloxacin
+
+The greatest increase was for dysuria (1.37); the greatest credible decrease was for elevated PSA (0.81). The fact that elevated PSA is here as one of the top 20 diagnoses associated with ciprofloxacin prescribing is itself interesting. This makes me think that: a doctor sees elevated PSA, so the chronic condition "enlarged prostate" gets recorded, and in the attempt to rule out prostatitis (before concluding prostate cancer), the doctor prescribes cipro.
+
+```{r}
+summarize_abx('ciprofloxacin')
+```
+
+## Levofloxacin
+
+The greatest increases for levofloxacin were for bronchitis (1.38) and acute sinusitis (1.43). No super-strong decreases.
+
+```{r}
+summarize_abx('levofloxacin')
+```
+
+## Azithromycin
+
+Azithromycin looks pretty steady. (I suspect that diabetes is just a common diagnosis that's not associated with azithromycin consumption.)
+
+```{r}
+summarize_abx('azithromycin')
+```
+
+# Discussion
+
+First, I'm curious if these are the sort of results to be expected. The distribution of diagnoses is pretty flat: the top diagnosis for cipro (UTI), takes up 15% of all the outpatient claims, but the top diagnoses for the others take up more in the 5-10% range. There is a really long tail of diagnoses, which I think shows that we are not very specifically catching the diagnoses that led to the antibiotic prescriptions.
+
+That being said, there are some individual strong effects. I speculate that azithromycin is being uniformly less used, while it seems like levo is being used more for acute respiratory complaint. Cipro was weird, apparently getting more concentrated in UTI treatment, while amoxicillin was a real puzzle, changing from bronchitis to sinusitis. Amoxicillin is apparently a first choice for bacterial sinusitis.
