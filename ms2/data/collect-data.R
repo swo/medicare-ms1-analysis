@@ -42,7 +42,6 @@ summarize_inequality = function(year) {
   hrr_fn = sprintf('hrr_ineq_%i.tsv', year)
 
   bene = read_tsv(bene_fn) %>%
-    filter(between(age, 66, 96), hmo_months==0) %>%
     left_join(regions, by='state') %>%
     left_join(hrr, by='zipcode')
 

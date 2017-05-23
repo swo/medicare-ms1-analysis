@@ -1,23 +1,26 @@
+# Do all the heavy-lifting analyses so that the Rmd can just show the results
+
 import::from(lazyeval, interp)
 import::from(broom, tidy)
 import::from(stringr, str_replace)
 
+# Load the census regions. Code them as factors so that Northeast is taken as
+# the baseline in the linear models.
+# NB: I put DC into the South
 regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
   select(state, region)
+
 condition_names = read_tsv('../chronic-conditions/names.txt',
                            col_names=c('condition', 'condition_name'))
 
 load_data = function(year) {
   bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
-    filter(between(age, 66, 96), hmo_months==0, sex %in% c('male', 'female')) %>%
-    select(-hmo_months) %>%
-    mutate(is_female=sex=='female', is_white=race=='white') %>%
+    mutate(is_female=sex=='female', is_white=race=='white', is_dual=buyin_months>0) %>%
     left_join(regions, by='state') %>%
     mutate(year=year)
   
   pde = read_tsv(sprintf('../pde_%i.tsv', year)) %>%
-    select(-service_date, -days_supply, -fill_number) %>%
-    filter(bene_id %in% bene$bene_id) %>%
+    select(bene_id, antibiotic, antibiotic_class) %>%
     mutate(year=year)
   
   # get total numbers of PDEs
@@ -41,30 +44,40 @@ pde = lapply(dat, function(df) df$pde) %>% bind_rows
 rm(dat)
 
 output_table = function(x, base) write_tsv(x, sprintf('tables/tbl_%s.tsv', base))
+sem = function(x) sd(x) / length(x)
 
-# total number of beneficiaries and PDEs
-totals = left_join(
-  bene %>% count(year) %>% rename(n_bene=n),
-  pde %>% count(year) %>% rename(n_pde=n),
-  by='year') %>%
-  mutate(cpkp=n_pde*1000/n_bene) %T>%
+# summary characteristics
+totals = bene %>%
+  group_by(year) %>%
+  summarize(n_bene=n(),
+            mean_age=mean(age),
+            sem_age=sem(age),
+            mean_n_cc=mean(n_cc),
+            sem_n_cc=sem(n_cc),
+            n_female=sum(is_female),
+            n_white=sum(is_white),
+            n_dual=sum(is_dual),
+            n_region_south=sum(region=='South'),
+            n_region_west=sum(region=='West'),
+            n_region_northeast=sum(region=='Northeast'),
+            n_region_midwest=sum(region=='Midwest')) %T>% 
   output_table('totals')
-
-# claims per 1,000 people by abx class
-claims_by_class = pde %>%
-  count(year, antibiotic_class) %>%
-  ungroup() %>%
-  left_join(select(totals, year, n_bene), by='year') %>%
-  mutate(cpkp=n*1000/n_bene) %T>%
-  output_table('claims_by_class')
-
+            
 # the top few inidividual antibiotics
-claims_by_abx = pde %>%
+pde %>%
   count(year, antibiotic) %>%
   ungroup() %>%
   left_join(select(totals, year, n_bene), by='year') %>%
   mutate(cpkp=n*1000/n_bene) %T>%
   output_table('claims_by_abx')
+
+# antibiotic classes
+pde %>%
+  count(year, antibiotic_class) %>%
+  ungroup() %>%
+  left_join(select(totals, year, n_bene), by='year') %>%
+  mutate(cpkp=n*1000/n_bene) %T>%
+  output_table('claims_by_class')
 
 # from here on, the denominators are taken from the beneficiary data grouped
 # in the same way as the consumption data, so we can use the summarize_by function
@@ -81,7 +94,6 @@ claims_by_region = summarize_by(bene, 'region') %T>%
   output_table('claims_by_region')
 
 claims_by_race = bene %>%
-  mutate(race=if_else(race %in% c('white', 'black', 'Hispanic', 'Asian'), race, 'other')) %>%
   summarize_by('race') %T>%
   output_table('claims_by_race')
 
@@ -89,16 +101,11 @@ claims_by_race = bene %>%
 # (the input to summarize_by is modified, since we want to group by age *group*,
 # not just by raw age)
 claims_by_age = bene %>%
-  mutate(group='all') %>%
-  bind_rows(filter(., n_cc==0) %>% mutate(group='no_cc')) %>%
-  group_by(year, group, age) %>%
-  summarize(n_bene=n(),
-    mean_n_claims=mean(n_claims),
-    sd_n_claims=sd(n_claims),
-    mean_n_cc=mean(n_cc),
-    sd_n_cc=sd(n_cc)) %>%
-  mutate(sem_n_claims=sd_n_claims/sqrt(n_bene),
-         sem_n_cc=sd_n_cc/sqrt(n_bene)) %T>%
+  mutate(age_group=case_when(
+    between(.$age, 66, 76) ~ '66-76',
+    between(.$age, 77, 86) ~ '77-86',
+    between(.$age, 87, 96) ~ '87-96')) %>%
+  summarize_by('age_group') %>%
   output_table('claims_by_age')
   
 cc_prevalence = bene %>%
@@ -118,13 +125,24 @@ single_condition_model = function(condition_code) {
 }
 
 conditions = c("AMI", "ALZHDMTA", "ATRIALFB", "CATARACT", "CHRNKIDN", "COPD", "CHF", "DIABETES", "GLAUCOMA", "HIPFRAC", "ISCHMCHT", "DEPRESSN", "OSTEOPRS", "RA_OA", "STRKETIA", "CNCRBRST", "CNCRCLRC", "CNCRPRST", "CNCRLUNG", "CNCRENDM", "ANEMIA", "ASTHMA", "HYPERL", "HYPERP", "HYPERT", "HYPOTH")
-single_condition_models = lapply(conditions, function(cnd) single_condition_model(cnd)) %>%
-  bind_rows() %T>%
-  output_table('single_condition_models')
+#single_condition_models = lapply(conditions, function(cnd) single_condition_model(cnd)) %>%
+#  bind_rows() %T>%
+#  output_table('single_condition_models')
 
-all_condition_formula = formula(paste0('n_claims ~ age + is_female + year + ', paste0(conditions, collapse=' + ')))
-start = rep(0.1, length(all.vars(all_condition_formula)))
-all_condition_model = filter(bene, age >= 67) %>%
-  glm(all_condition_formula, family=quasipoisson(link='identity'), start=start, data=.) %>%
+filter(bene, age >= 67) %>%
+  lm(n_claims ~ year, data=.) %>%
   tidy %T>%
-  output_table('all_condition_model')
+  output_table('model_year_only')
+
+filter(bene, age >= 67) %>%
+  lm(n_claims ~ year + age + is_female + is_dual + is_white + n_cc, data=.) %>%
+  tidy %T>%
+  output_table('model_plus')
+
+#all_condition_formula = formula(paste0('n_claims ~ year + age + is_female + is_dual + is_white + region + ', paste0(conditions, collapse=' + ')))
+
+# do a linear model to guess the coefficients
+#all_condition_model = filter(bene, age >= 67) %>%
+#  lm(all_condition_formula, data=.) %>%
+#  tidy %T>%
+#  output_table('model_all_condition')
