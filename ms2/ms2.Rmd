@@ -21,38 +21,65 @@ zipcodes = read_tsv('../../db/zipcode/zipcode.tsv') %>%
   select(zipcode=zip, state)
 
 hrr = read_tsv('../../db/hrr/hrr.tsv') %>%
-  filter(year==2011) %>%
   select(zipcode, hrr) %>%
   left_join(zipcodes, by='zipcode') %>%
   left_join(regions, by='state')
 
-target_year = 2013
-all_ineq = read_tsv(sprintf('data/state_ineq_all_%i.tsv', target_year)) %>%
+years = 2011:2014
+read_years = function(template_fn) {
+  lapply(years, function(y) read_tsv(sprintf(template_fn, y)) %>% mutate(year=y)) %>%
+    bind_rows()
+}
+
+all_ineq = read_years('data/state_ineq_all_%i.tsv') %>%
+  group_by(state) %>%
+  summarize(mean_cpb=mean(mean),
+            sem_cpb=sd(mean)/sqrt(n()),
+            mean_fnz=mean(fnz),
+            sem_fnz=sd(fnz)/sqrt(n()),
+            mean_nzgini=mean(nzgini),
+            sem_nzgini=sd(nzgini)/sqrt(n())) %>%
   left_join(regions, by='state')
-state_ineq = read_tsv(sprintf('data/state_ineq_%i.tsv', target_year))
-hrr_ineq = read_tsv(sprintf('data/hrr_ineq_%i.tsv', target_year))
+  
+state_ineq = read_years('data/state_ineq_%i.tsv')
+hrr_ineq = read_years('data/hrr_ineq_%i.tsv')
 ```
 
 ## Aggregate usage correlates with fraction of users
 
-```{r fnz_mean, cache=FALSE}
-ggplot(all_ineq, aes(x=mean, y=fnz, color=region, label=state_abbreviation)) +
-geom_point() +
-geom_text(nudge_x=0.04) +
-xlab('claims per beneficiary') +
-ylab('fraction of beneficiaries w/ >= 1 claim') +
-theme_minimal()
+Error bars show the s.e.m. across the four data years.
+
+```{r fnz_mean}
+all_ineq %>%
+  mutate_at(vars(matches('fnz')), function(x) x*100) %>%
+  ggplot(aes(x=mean_cpb, xmin=mean_cpb-sem_cpb, xmax=mean_cpb+sem_cpb,
+             y=mean_fnz, ymin=mean_fnz-sem_fnz, ymax=mean_fnz+sem_fnz,
+             color=region, label=state_abbreviation)) +
+  geom_point() +
+  geom_linerange() +
+  geom_errorbarh(height=0) +
+  geom_text(nudge_x=0.04) +
+  xlab('mean claims per beneficiary') +
+  ylab('mean % beneficiaries with at least one claim') +
+  theme_minimal()
 ```
 
 ## Inequality among users does not correlate well
 
-```{r nzgini_mean, cache=FALSE}
-ggplot(all_ineq, aes(x=mean, y=nzgini, color=region, label=state_abbreviation)) +
-geom_point() +
-geom_text(nudge_x=0.04) +
-xlab('claims per beneficiary') +
-ylab('Gini coefficient') +
-theme_minimal()
+Error bars show the s.e.m. across the four data years.
+
+```{r nzgini_mean}
+all_ineq %>%
+  ggplot(aes(x=mean_cpb, xmin=mean_cpb-sem_cpb, xmax=mean_cpb+sem_cpb,
+             y=mean_nzgini, ymin=mean_nzgini-sem_nzgini, ymax=mean_nzgini+sem_nzgini,
+             color=region, label=state_abbreviation)) +
+  geom_point() +
+  geom_linerange() +
+  geom_errorbarh(height=0) +
+  geom_text(nudge_x=0.04) +
+  xlab('mean claims per beneficiary') +
+  ylab('mean Gini coefficient') +
+  theme_minimal()
 ```
 
 # Resistance data
@@ -69,7 +96,7 @@ abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c'))
 
 possible_bug_drug = read_tsv('bug_drug.tsv')
 
-# Keep only bug/drug combinations that are in at least 75 HRRs
+# Keep only the abundant bug/drug combinations
 min_n_states = 35
 good_combos = semi_join(abg, possible_bug_drug, by=c('bug', 'drug_group')) %>%
   select(bug, drug_group, state) %>%
@@ -88,7 +115,6 @@ summarize_abg = function(df, place_name) {
     group_by_(df, 'bug', 'drug_group', place_name) %>%
     summarize(mean_percent_nonsusceptible=weighted.mean(percent_nonsusceptible, sqrt(n_isolates)),
               n_place_antibiograms=n()) %>%
-    #filter(!is.na(mean_percent_nonsusceptible)) %>%
     mutate(place_weight=sqrt(n_place_antibiograms))
 }
 
