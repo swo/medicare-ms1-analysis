@@ -1,4 +1,5 @@
 drug	drug_group
+penicillin	beta_lactam
 ampicillin	beta_lactam
 ciprofloxacin	quinolone
 levofloxacin	quinolone

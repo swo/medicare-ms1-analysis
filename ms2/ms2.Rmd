@@ -20,7 +20,9 @@ regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
 zipcodes = read_tsv('../../db/zipcode/zipcode.tsv') %>%
   select(zipcode=zip, state)
 
+# Use the zipcode-HRR mapping from 2011
 hrr = read_tsv('../../db/hrr/hrr.tsv') %>%
+  filter(year==2011) %>%
   select(zipcode, hrr) %>%
   left_join(zipcodes, by='zipcode') %>%
   left_join(regions, by='state')
@@ -41,8 +43,17 @@ all_ineq = read_years('data/state_ineq_all_%i.tsv') %>%
             sem_nzgini=sd(nzgini)/sqrt(n())) %>%
   left_join(regions, by='state')
   
-state_ineq = read_years('data/state_ineq_%i.tsv')
-hrr_ineq = read_years('data/hrr_ineq_%i.tsv')
+state_ineq = read_years('data/state_ineq_%i.tsv') %>%
+  rename(cpb=mean) %>%
+  group_by(state, drug_group) %>%
+  summarize(cpb=mean(cpb), fnz=mean(fnz), nzg=mean(nzgini)) %>%
+  ungroup()
+
+hrr_ineq = read_years('data/hrr_ineq_%i.tsv') %>%
+  rename(cpb=mean) %>%
+  group_by(hrr, drug_group) %>%
+  summarize(cpb=mean(cpb), fnz=mean(fnz), nzg=mean(nzgini)) %>%
+  ungroup()
 ```
 
 ## Aggregate usage correlates with fraction of users
@@ -64,22 +75,40 @@ all_ineq %>%
   theme_minimal()
 ```
 
-## Inequality among users does not correlate well
+```{r}
+all_ineq %$%
+  cor.test(mean_cpb, mean_fnz, method='spearman')
+```
+
+## The two inequality metrics not correlate well
 
 Error bars show the s.e.m. across the four data years.
 
 ```{r nzgini_mean}
 all_ineq %>%
-  ggplot(aes(x=mean_cpb, xmin=mean_cpb-sem_cpb, xmax=mean_cpb+sem_cpb,
+  ggplot(aes(x=mean_fnz, xmin=mean_fnz-sem_fnz, xmax=mean_fnz+sem_fnz,
              y=mean_nzgini, ymin=mean_nzgini-sem_nzgini, ymax=mean_nzgini+sem_nzgini,
              color=region, label=state_abbreviation)) +
   geom_point() +
   geom_linerange() +
   geom_errorbarh(height=0) +
   geom_text(nudge_x=0.04) +
-  xlab('mean claims per beneficiary') +
+  xlab('mean fraction with at least one claim') +
   ylab('mean Gini coefficient') +
   theme_minimal()
+```
+
+The correlation exists but it's much less strong.
+
+```{r}
+all_ineq %$%
+  cor.test(mean_fnz, mean_nzgini, method='spearman')
+```
+
+There is an intermediate correlation between claims per beneficiary and the Gini coefficient (see below), so in multivariable regressions I will use those two (rather than CPB and Gini).
+
+```{r}
+all_ineq %$% cor.test(mean_cpb, mean_nzgini, method='spearman')
 ```
 
 # Resistance data
@@ -169,15 +198,14 @@ spearman_model = function(df, dependent_var, explanatory_var) {
     ungroup()
 }
 
-multivariate_term = 'nzgini'
+uni_term = 'cpb' # univariable explanatory term
+multi_term = 'nzg' # multivariable explanatory term (along with fnz)
 models = function(x) {
   dep = 'mean_percent_nonsusceptible'
-  # swo> "mean" is a confusing name
   bind_rows(
-    linear_model(x, dep, 'mean') %>% mutate(model='univariate'),
-    linear_model(x, dep, c('fnz', multivariate_term)) %>% mutate(model='multivariate'),
-    linear_model(x, dep, multivariate_term) %>% mutate(model='uni_nzg'),
-    spearman_model(x, dep, 'mean') %>% mutate(model='spearman')
+    linear_model(x, dep, uni_term) %>% mutate(model='uni'),
+    linear_model(x, dep, c('fnz', multi_term)) %>% mutate(model='multi'),
+    spearman_model(x, dep, uni_term) %>% mutate(model='spearman')
   ) %>%
     mutate(n_data=nrow(x))
 }
@@ -243,23 +271,13 @@ hrr_results %>%
   kable
 ```
 
-## Univariate Gini
-
-```{r}
-filter(results, model=='uni_nzg', term=='nzgini') %>%
-  arrange(p.value) %>%
-  mutate(adj.p=p.adjust(p.value, method='bonferroni')) %>%
-  select(bug, drug_group, estimate, p.value, adj.p, n) %>%
-  kable
-```
-
-## Univariate
+## Univariable
 
 The model here is mean percent nonsusceptible ~ claims per beneficiary. The significant results are:
 
-```{r univariate_models}
+```{r uni_models}
 results %>%
-  filter(model=='univariate', term == 'mean') %>%
+  filter(model=='uni', term==uni_term) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
   #filter(p.value < 0.05) %>%
   arrange(p.value) %>%
@@ -269,13 +287,13 @@ results %>%
 
 ```{r}
 results %>%
-  filter(model=='univariate', term=='mean') %>%
+  filter(model=='uni', term==uni_term) %>%
   interval_plot()
 ```
 
 ```{r}
 results %>%
-  filter(model=='univariate') %>%
+  filter(model=='uni') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
   ggplot(aes(x=estimate, y=-log10(p.adj))) + geom_point() +
   geom_hline(yintercept=-log10(0.05), col='red')
@@ -283,9 +301,9 @@ results %>%
 
 And the same thing with HRRs:
 
-```{r hrr_univariate_models}
+```{r hrr_uni_models}
 hrr_results %>%
-  filter(model=='univariate', term == 'mean') %>%
+  filter(model=='uni', term==uni_term) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
   filter(p.value < 0.05) %>%
   arrange(p.value) %>%
@@ -293,13 +311,13 @@ hrr_results %>%
   kable
 ```
 
-## Multivariate
+## Multivariable
 
 The model here is mean percent nonsusceptible ~ fraction nonzero + nonzero Gini. In some of the models, the nonzero Gini term was significant, but not after adjusting for multiple hypotheses. I show just those terms that met the unadjusted threshold:
 
-```{r multivariate_models}
+```{r multi_models}
 results %>%
-  filter(model=='multivariate', term==multivariate_term) %>%
+  filter(model=='multi', term==multi_term) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
   filter(p.value < 0.05) %>%
   arrange(p.value) %>%
@@ -309,31 +327,30 @@ results %>%
 
 ```{r}
 results %>%
-  filter(model=='multivariate', term==multivariate_term) %>%
+  filter(model=='multi', term==multi_term) %>%
   interval_plot()
 ```
 
 ```{r}
 results %>%
-  filter(model=='multivariate') %>%
-  filter(term == multivariate_term) %>%
+  filter(model=='multi', term==multi_term) %>%
   mutate(bug_drug=interaction(bug, drug_group)) %>%
   ggplot(aes(x=p.value, y=estimate, color=drug_group)) +
   geom_point() +
   scale_color_brewer(palette='Set1')
 ```
 
-And what about looking at multivariate only for ones that passed the threshold for univariate?
+And what about looking at multivariate only for ones that passed the threshold for univariable?
 
 ```{r eval=FALSE}
 sig_bug_drug = results %>%
-  filter(model=='univariate', term=='mean') %>%
+  filter(model=='uni', term==uni_term) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
   filter(p.adj < 0.05) %>%
   select(bug, drug_group)
 
 results %>%
-  filter(model=='multivariate', term==multivariate_term) %>%
+  filter(model=='multi', term==multi_term) %>%
   right_join(sig_bug_drug, by=c('bug', 'drug_group')) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
   select(bug, drug_group, estimate, p.value, p.adj) %>%
@@ -344,7 +361,7 @@ Using HRRs, adjusting $p$ with all possibilities:
 
 ```{r}
 hrr_results %>%
-  filter(model=='multivariate', term==multivariate_term) %>%
+  filter(model=='multi', term==multi_term) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
   filter(p.value < 0.05) %>%
   arrange(p.value) %>%
@@ -354,15 +371,15 @@ hrr_results %>%
 
 And then doing multiple hypothesis correction only for those that made it through the first model:
 
-```{r hrr_multivariate_models}
+```{r hrr_multi_models}
 sig_bug_drug = hrr_results %>%
-  filter(model=='univariate', term=='mean') %>%
+  filter(model=='uni', term==uni_term) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
   filter(p.adj < 0.05) %>%
   select(bug, drug_group)
 
 hrr_results %>%
-  filter(model=='multivariate', term==multivariate_term) %>%
+  filter(model=='multi', term==multi_term) %>%
   right_join(sig_bug_drug, by=c('bug', 'drug_group')) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
   arrange(p.value) %>%
@@ -377,7 +394,7 @@ It turns out that the different drugs have different relationships with the two 
 ```{r nzgini_cpb_drug}
 cbbPalette <- c("#000000", "#D55E00", "#CC79A7", "#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2")
 state_ineq %>%
-  ggplot(aes(x=mean, y=nzgini, color=drug_group)) +
+  ggplot(aes(x=cpb, y=nzg, color=drug_group)) +
   geom_point() +
   ylab('Gini coefficient among users') + xlab('claims per beneficiary') +
   theme_minimal() +
@@ -387,7 +404,7 @@ state_ineq %>%
 ```{r}
 left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   filter(bug %in% c('E. coli', 'Eb. cloacae', 'CNST', 'MSSA', 'MRSA', 'S. pneumoniae')) %>%
-  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=drug_group, shape=bug)) +
+  ggplot(aes(x=cpb, y=mean_percent_nonsusceptible, color=drug_group, shape=bug)) +
   geom_point() +
   xlab('claims per beneficiary')
 ```
@@ -396,7 +413,7 @@ left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
 
 Quinolone consumption predicts *E. coli* quinolone resistance:
 
-```{r ecoli_quin, cache=FALSE}
+```{r ecoli_quin, eval=FALSE}
 left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   left_join(regions, by='state') %>%
   filter(bug=='E. coli', drug_group=='quinolone') %>%
@@ -422,7 +439,7 @@ left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
 
 Bactrim resistance in *E. coli*. First, the aggregate relationship, then the relationship between "excess" resistance (the residual of resistance against aggregate consumption) against nonzero Gini.
 
-```{r ecoli_bactrim}
+```{r ecoli_bactrim, eval=FALSE}
 ecoli_bactrim_dat = left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   left_join(regions, by='state') %>%
   filter(bug=='E. coli', drug_group=='tmp_smx') #%>%
@@ -461,7 +478,7 @@ ecoli_bactrim_dat %>%
 
 ## Pneumococcus and macrolides
 
-```{r}
+```{r, eval=FALSE}
 left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   left_join(regions, by='state') %>%
   filter(bug=='S. pneumoniae', drug_group=='macrolide') %>%
@@ -475,7 +492,7 @@ left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
 
 ## E. cloacae and quinolones
 
-```{r}
+```{r, eval=FALSE}
 left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   left_join(regions, by='state') %>%
   filter(bug=='Eb. cloacae', drug_group=='quinolone') %>%
@@ -489,7 +506,7 @@ left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
 
 ## MSSA and clindamycin
 
-```{r mssa_clinda}
+```{r mssa_clinda, eval=FALSE}
 dat = left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   left_join(regions, by='state') %>%
   filter(bug=='MSSA', drug_group=='clindamycin') #%>%
@@ -519,7 +536,7 @@ dat %>%
 
 ## MRSA clinda
 
-```{r}
+```{r, eval=FALSE}
 left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   left_join(regions, by='state') %>%
   filter(bug=='MRSA', drug_group=='clindamycin') %>%
