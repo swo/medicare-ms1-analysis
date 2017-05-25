@@ -26,10 +26,11 @@ hrr = read_tsv('../../db/hrr/hrr.tsv') %>%
   left_join(zipcodes, by='zipcode') %>%
   left_join(regions, by='state')
 
-all_ineq = read_tsv('data/state_ineq_all_2011.tsv') %>%
+target_year = 2013
+all_ineq = read_tsv(sprintf('data/state_ineq_all_%i.tsv', target_year)) %>%
   left_join(regions, by='state')
-state_ineq = read_tsv('data/state_ineq_2011.tsv')
-hrr_ineq = read_tsv('data/hrr_ineq_2011.tsv')
+state_ineq = read_tsv(sprintf('data/state_ineq_%i.tsv', target_year))
+hrr_ineq = read_tsv(sprintf('data/hrr_ineq_%i.tsv', target_year))
 ```
 
 ## Aggregate usage correlates with fraction of users
@@ -50,7 +51,7 @@ ggplot(all_ineq, aes(x=mean, y=nzgini, color=region, label=state_abbreviation)) 
 geom_point() +
 geom_text(nudge_x=0.04) +
 xlab('claims per beneficiary') +
-ylab('Gini coefficient among benes. w/ >= 1 claim') +
+ylab('Gini coefficient') +
 theme_minimal()
 ```
 
@@ -149,6 +150,7 @@ models = function(x) {
   bind_rows(
     linear_model(x, dep, 'mean') %>% mutate(model='univariate'),
     linear_model(x, dep, c('fnz', multivariate_term)) %>% mutate(model='multivariate'),
+    linear_model(x, dep, multivariate_term) %>% mutate(model='uni_nzg'),
     spearman_model(x, dep, 'mean') %>% mutate(model='spearman')
   ) %>%
     mutate(n_data=nrow(x))
@@ -184,7 +186,7 @@ interval_plot = function(df) {
   arrange(df, estimate) %>%
   mutate(bug_drug=interaction(bug, drug_group),
          bug_drug=factor(bug_drug, levels=bug_drug, ordered=TRUE)) %>% 
-    ggplot(aes(x=bug_drug, y=estimate, ymin=ci_low, ymax=ci_high)) +
+    ggplot(aes(x=bug_drug, y=estimate, ymin=ci_low, ymax=ci_high, color=drug_group)) +
     geom_point() +
     geom_linerange() +
     coord_flip()
@@ -212,6 +214,16 @@ hrr_results %>%
   filter(p.value < 0.05) %>%
   arrange(p.value) %>%
   select(bug, drug_group, estimate, p.value, p.adj) %>%
+  kable
+```
+
+## Univariate Gini
+
+```{r}
+filter(results, model=='uni_nzg', term=='nzgini') %>%
+  arrange(p.value) %>%
+  mutate(adj.p=p.adjust(p.value, method='bonferroni')) %>%
+  select(bug, drug_group, estimate, p.value, adj.p, n) %>%
   kable
 ```
 
@@ -273,6 +285,16 @@ results %>%
 results %>%
   filter(model=='multivariate', term==multivariate_term) %>%
   interval_plot()
+```
+
+```{r}
+results %>%
+  filter(model=='multivariate') %>%
+  filter(term == multivariate_term) %>%
+  mutate(bug_drug=interaction(bug, drug_group)) %>%
+  ggplot(aes(x=p.value, y=estimate, color=drug_group)) +
+  geom_point() +
+  scale_color_brewer(palette='Set1')
 ```
 
 And what about looking at multivariate only for ones that passed the threshold for univariate?
@@ -399,6 +421,15 @@ ecoli_bactrim_dat %>%
   scale_y_continuous(limits=c(-12, 20), breaks=c(-12, 0, 10, 20)) +
   xlab('Skew towards high consumers (Gini coefficient)') +
   ylab('"Excess" E. coli resistance (see caption)') +
+  theme_minimal()
+
+ecoli_bactrim_dat %>%
+  ggplot(aes(x=nzgini, y=mean_percent_nonsusceptible, label=state)) +
+  geom_smooth(method='lm', col='gray', se=FALSE) +
+  geom_point() +
+  geom_text() +
+  xlab('Gini coefficient)') +
+  ylab('E. coli resistance') +
   theme_minimal()
 ```
 
