@@ -64,11 +64,14 @@ x %>%
   spread(year, cpkp) %>%
   arrange(desc(`2011`)) %>%
   kable
+```
 
+```{r}
 x %>% ggplot(aes(x=year, y=cpkp)) +
   facet_wrap(~ antibiotic, ncol=3, scales='free_y') +
   geom_point() + geom_line() +
   theme_minimal()
+ggsave('~/tmp.pdf')
 ```
 
 ## Claims by age group

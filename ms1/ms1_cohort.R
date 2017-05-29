@@ -1,6 +1,7 @@
 # Do all the heavy-lifting analyses so that the Rmd can just show the results
 
 import::from(broom, tidy)
+import::from(stringr, str_replace)
 
 # Load the census regions. Code them as factors so that Northeast is taken as
 # the baseline in the linear models.
@@ -18,7 +19,7 @@ load_data = function(year) {
     mutate(year=year)
 
   pde = read_tsv(sprintf('../pde_%i.tsv', year)) %>%
-    select(bene_id, antibiotic, days_supply, antibiotic_class) %>%
+    select(bene_id, antibiotic, antibiotic_class) %>%
     mutate(year=year)
 
   # get total numbers of PDEs
@@ -37,23 +38,33 @@ load_data = function(year) {
 }
 
 dat = lapply(2011:2014, load_data)
-bene = lapply(dat, function(df) df$bene) %>% bind_rows %>%
-  group_by(bene_id) %>% mutate(min_age=min(age)) %>%
-  ungroup()
+bene = lapply(dat, function(df) df$bene) %>% bind_rows
 pde = lapply(dat, function(df) df$pde) %>% bind_rows
 rm(dat)
 
-output_table = function(x, base) write_tsv(x, sprintf('tables/tbl_%s.tsv', base))
-sem = function(x) sd(x) / length(x)
+output_table = function(x, base) write_tsv(x, sprintf('tables/cohort/tbl_%s.tsv', base))
+
+# make a table that shows when benes are in the data set
+#x = bene %>%
+  #select(bene_id, year) %>%
+  #group_by(bene_id) %>%
+  #summarize(years=paste0(year, collapse=' ')) %>%
+  #count(years) %>%
+  #output_table('cohorts')
+
+# keep only the bene's that have data in all four years
+bene %<>% group_by(bene_id) %>%
+  mutate(start_age=min(age)) %>%
+  filter(n() == 4, start_age >= 68) %>%
+  ungroup()
+pde %<>% filter(bene_id %in% bene$bene_id)
 
 # summary characteristics
 totals = bene %>%
   group_by(year) %>%
   summarize(n_bene=n(),
             mean_age=mean(age),
-            sem_age=sem(age),
             mean_n_cc=mean(n_cc),
-            sem_n_cc=sem(n_cc),
             n_female=sum(is_female),
             n_white=sum(is_white),
             n_dual=sum(is_dual),
@@ -70,14 +81,6 @@ pde %>%
   left_join(select(totals, year, n_bene), by='year') %>%
   mutate(cpkp=n*1000/n_bene) %T>%
   output_table('claims_by_abx')
-
-pde %>%
-  group_by(year, antibiotic) %>%
-  summarize(days_supply=sum(days_supply)) %>%
-  ungroup() %>%
-  left_join(select(totals, year, n_bene), by='year') %>%
-  mutate(did=days_supply*1000/(n_bene*365)) %T>%
-  output_table('days_by_abx')
 
 # antibiotic classes
 pde %>%
@@ -123,34 +126,13 @@ cc_prevalence = bene %>%
   gather('condition', 'prevalence', AMI:HYPOTH) %T>%
   output_table('cc_prevalence')
 
-model_f = function(frmla, output_name) {
-  df = filter(bene, age >= 68)
-  lm(formula=frmla, data=df) %>% tidy %>% output_table(output_name)
-}
-
-model_f(n_claims ~ year, 'model1')
-model_f(n_claims ~ year + age + is_female + is_dual + is_white + n_cc, 'model2')
-model_f(n_claims ~ year + age + is_female + is_dual + is_white + n_cc + region, 'model3')
-model_f(n_claims ~ year + age + is_female + is_dual + is_white + n_cc + region + min_age, 'model4')
-
-single_condition_model = function(condition_code) {
-  filter(bene, age >= 67) %>%
-    rename_(.dots=setNames(condition_code, 'has_condition')) %>%
-    glm(n_claims ~ age + is_female + has_condition + year,
-        family=quasipoisson(link='identity'), data=.) %>%
-    tidy() %>%
-    mutate(condition=condition_code)
-}
-
 conditions = c("AMI", "ALZHDMTA", "ATRIALFB", "CATARACT", "CHRNKIDN", "COPD", "CHF", "DIABETES", "GLAUCOMA", "HIPFRAC", "ISCHMCHT", "DEPRESSN", "OSTEOPRS", "RA_OA", "STRKETIA", "CNCRBRST", "CNCRCLRC", "CNCRPRST", "CNCRLUNG", "CNCRENDM", "ANEMIA", "ASTHMA", "HYPERL", "HYPERP", "HYPERT", "HYPOTH")
-#single_condition_models = lapply(conditions, function(cnd) single_condition_model(cnd)) %>%
-#  bind_rows() %T>%
-#  output_table('single_condition_models')
 
-#all_condition_formula = formula(paste0('n_claims ~ year + age + is_female + is_dual + is_white + region + ', paste0(conditions, collapse=' + ')))
+model_f = function(frmla, output_name) {
+  lm(formula=frmla, data=bene) %>% tidy %>% output_table(output_name)
+}
 
-# do a linear model to guess the coefficients
-#all_condition_model = filter(bene, age >= 67) %>%
-#  lm(all_condition_formula, data=.) %>%
-#  tidy %T>%
-#  output_table('model_all_condition')
+model_f(n_claims ~ year + start_age, 'model1')
+model_f(n_claims ~ year + start_age + n_cc, 'model2')
+model_f(n_claims ~ year + start_age + is_female + is_dual + is_white + n_cc, 'model3')
+model_f(n_claims ~ year + start_age + is_female + is_dual + is_white + n_cc + region, 'model4')
