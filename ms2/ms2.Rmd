@@ -4,14 +4,16 @@ author: "Scott Olesen"
 output: html_document
 ---
 
+# To do
+
+- filter by HRRs, not states
+
 ```{r global_options, include=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
                       pdf.options(useDingbats=FALSE),
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
 import::from(broom, tidy)
 ```
-
-# Consumption data
 
 ```{r load_data}
 regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
@@ -56,63 +58,6 @@ hrr_ineq = read_years('data/hrr_ineq_%i.tsv') %>%
   ungroup()
 ```
 
-## Aggregate usage correlates with fraction of users
-
-Error bars show the s.e.m. across the four data years.
-
-```{r fnz_mean}
-all_ineq %>%
-  mutate_at(vars(matches('fnz')), function(x) x*100) %>%
-  ggplot(aes(x=mean_cpb, xmin=mean_cpb-sem_cpb, xmax=mean_cpb+sem_cpb,
-             y=mean_fnz, ymin=mean_fnz-sem_fnz, ymax=mean_fnz+sem_fnz,
-             color=region, label=state_abbreviation)) +
-  geom_point() +
-  geom_linerange() +
-  geom_errorbarh(height=0) +
-  geom_text(nudge_x=0.04) +
-  xlab('mean claims per beneficiary') +
-  ylab('mean % beneficiaries with at least one claim') +
-  theme_minimal()
-```
-
-```{r}
-all_ineq %$%
-  cor.test(mean_cpb, mean_fnz, method='spearman')
-```
-
-## The two inequality metrics not correlate well
-
-Error bars show the s.e.m. across the four data years.
-
-```{r nzgini_mean}
-all_ineq %>%
-  ggplot(aes(x=mean_fnz, xmin=mean_fnz-sem_fnz, xmax=mean_fnz+sem_fnz,
-             y=mean_nzgini, ymin=mean_nzgini-sem_nzgini, ymax=mean_nzgini+sem_nzgini,
-             color=region, label=state_abbreviation)) +
-  geom_point() +
-  geom_linerange() +
-  geom_errorbarh(height=0) +
-  geom_text(nudge_x=0.04) +
-  xlab('mean fraction with at least one claim') +
-  ylab('mean Gini coefficient') +
-  theme_minimal()
-```
-
-The correlation exists but it's much less strong.
-
-```{r}
-all_ineq %$%
-  cor.test(mean_fnz, mean_nzgini, method='spearman')
-```
-
-There is an intermediate correlation between claims per beneficiary and the Gini coefficient (see below), so in multivariable regressions I will use those two (rather than CPB and Gini).
-
-```{r}
-all_ineq %$% cor.test(mean_cpb, mean_nzgini, method='spearman')
-```
-
-# Resistance data
-
 ```{r load_abg}
 resistance_groups = read_tsv('resistance_groups.tsv')
 bug_names = read_tsv('bug_names.tsv')
@@ -150,20 +95,6 @@ summarize_abg = function(df, place_name) {
 state_abg = summarize_abg(abg, 'state')
 hrr_abg = summarize_abg(abg, 'hrr')
 ```
-
-And I join the resistance drugs into classes:
-
-`r kable(resistance_groups)`
-
-I similarly joined the consumption drugs into similar classes.
-
-I started by considering these bug/drug combinations:
-
-`r kable(possible_bug_drug)`
-
-Then I filtered to keep only those bug/drug combinations that were present in `r min_n_states` states. That means I'm looking at these `r nrow(good_combos)` bug/drug combinations:
-
-`r good_combos %>% arrange(desc(n_places)) %>% kable`
 
 ```{r do_models}
 linear_interval = function(model, level) {
@@ -221,11 +152,33 @@ hrr_results = left_join(hrr_abg, hrr_ineq, by=c('hrr', 'drug_group')) %>%
   ungroup
 ```
 
+# Landscape of bug/drug correlations
+
+## Selecting correlations to test
+
+I join the resistance drugs into classes:
+
+`r kable(resistance_groups)`
+
+I similarly joined the consumption drugs into similar classes.
+
+I started by considering these bug/drug combinations:
+
+`r kable(possible_bug_drug)`
+
+Then I filtered to keep only those bug/drug combinations that were present in `r min_n_states` states. That means I'm looking at these `r nrow(good_combos)` bug/drug combinations:
+
+`r good_combos %>% arrange(desc(n_places)) %>% kable`
+
+## Preparing the consumption data
+
+Unlike previous analyses, this time I treated the consumption and resistance data similarly: I averaged both across all data years. Thus, to get a state's Gini coefficient, I computed that number each year and then took the average.
+
 ## Spearman
 
-Significant results using Spearman correlations of mean percent nonsusceptible ~ claims per beneficiary:
+Significant results using Spearman correlations of mean percent nonsusceptible ~ claims per beneficiary. A star after the bug/drug combination implies that the adjusted $p < 0.05$, and a dot means the unadjusted $p < 0.05$.
 
-```{r spearman_models, cache=FALSE}
+```{r spearman_models}
 results %>%
   filter(model=='spearman') %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
@@ -235,10 +188,16 @@ results %>%
   kable
 ```
 
-```{r}
+Aside from individual significant results, we can look at the landscape of correlations. They are almost all positive, with MRSA/Bactrim making an interesting exception. Lines show 95% confidence intervals.
+
+```{r spearman_interval}
 interval_plot = function(df) {
   arrange(df, estimate) %>%
-  mutate(bug_drug=interaction(bug, drug_group),
+  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
+  mutate(sig=case_when(.$p.adj < 0.05 ~ '*',
+                       .$p.value < 0.05 ~ '.',
+                       TRUE ~ ''),
+         bug_drug=interaction(bug, drug_group, sig),
          bug_drug=factor(bug_drug, levels=bug_drug, ordered=TRUE)) %>% 
     ggplot(aes(x=bug_drug, y=estimate, ymin=ci_low, ymax=ci_high, color=drug_group)) +
     geom_point() +
@@ -248,8 +207,228 @@ interval_plot = function(df) {
 
 results %>%
   filter(model=='spearman') %>%
+  interval_plot() +
+  ylab("Spearman's rho")
+```
+
+## Differences in consumption/resistance patterns explain some of these results
+
+Different bug/drug combinations have different spreads along the consumption and resistance axes, so we would expect to see different strengths of association for each one.
+
+```{r}
+left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
+  filter(bug %in% c('E. coli', 'Eb. cloacae', 'CNST', 'MSSA', 'MRSA', 'S. pneumoniae')) %>%
+  ggplot(aes(x=cpb, y=mean_percent_nonsusceptible, color=drug_group, shape=bug)) +
+  geom_point() +
+  xlab('claims per beneficiary')
+```
+
+# Unevenness of consumption and antibiotic resistance
+
+## Drugs are consumed differently in different places
+
+```{r nzgini_cpb_drug}
+cbbPalette <- c("#000000", "#D55E00", "#CC79A7", "#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2")
+state_ineq %>%
+  ggplot(aes(x=cpb, y=nzg, color=drug_group)) +
+  geom_point() +
+  ylab('Gini coefficient among users') + xlab('claims per beneficiary') +
+  theme_minimal() +
+  scale_color_manual(values=cbbPalette)
+```
+
+## Effect of unevenness on antibiotic resistance
+
+Here we use the same bug/drug combinations, but instead we test the multivariable model mean percent nonsusceptible ~ fraction nonzero + nonzero Gini.
+
+There is only one significant and one marginally significant result:
+
+```{r multi_models}
+results %>%
+  filter(model=='multi', term==multi_term) %>%
+  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
+  filter(p.value < 0.05) %>%
+  arrange(p.value) %>%
+  select(bug, drug_group, estimate, p.value, p.adj) %>%
+  kable
+```
+
+```{r}
+results %>%
+  filter(model=='multi', term==multi_term) %>%
+  interval_plot() +
+  ylab('Gini coefficient')
+```
+
+Using HRRs, one of the answers remains the same, but a different marginally-significant result pops up.
+
+```{r}
+hrr_results %>%
+  filter(model=='multi', term==multi_term) %>%
+  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
+  filter(p.value < 0.05) %>%
+  arrange(p.value) %>%
+  select(bug, drug_group, estimate, p.value, p.adj) %>%
+  kable
+```
+
+```{r}
+hrr_results %>%
+  filter(model=='multi', term==multi_term) %>%
   interval_plot()
 ```
+
+## Specific plots
+
+Quinolone consumption predicts *E. coli* quinolone resistance:
+
+```{r ecoli_quin}
+left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
+  left_join(regions, by='state') %>%
+  filter(bug=='E. coli', drug_group=='quinolone') %>%
+  ggplot(aes(x=cpb, y=mean_percent_nonsusceptible, label=state)) +
+  geom_smooth(method='lm', col='gray', se=FALSE) +
+  geom_point() +
+  geom_text() +
+  xlim(0.2, 0.45) + ylim(0, 50) +
+  xlab('quinolone claims per beneficiary') + ylab('mean percent nonsusceptible E. coli isolates') +
+  theme_minimal()
+```
+
+## E.coli and bactrim
+
+```{r ecoli_bactrim}
+ecoli_bactrim_dat = left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
+  left_join(regions, by='state') %>%
+  filter(bug=='E. coli', drug_group=='tmp_smx') #%>%
+  #filter(!is.na(mean_percent_nonsusceptible))
+
+ecoli_bactrim_dat %>%
+  ggplot(aes(x=cpb, y=mean_percent_nonsusceptible, label=state)) +
+  geom_smooth(method='lm', col='gray', se=FALSE) +
+  geom_point() +
+  geom_text() +
+  scale_x_continuous(limits=c(0.08, 0.2), breaks=c(0.08, 0.1, 0.15, 0.2)) +
+  ylim(10, 45) +
+  xlab('TMP/SMX claims per beneficiary') + ylab('mean percent nonsusceptible E. coli isolates') +
+  theme_minimal()
+```
+
+```{r}
+ecoli_bactrim_dat %>%
+  ggplot(aes(x=nzg, y=mean_percent_nonsusceptible, label=state)) +
+  geom_smooth(method='lm', col='gray', se=FALSE) +
+  geom_point() +
+  geom_text() +
+  xlab('Gini coefficient)') +
+  ylab('E. coli resistance') +
+  theme_minimal()
+```
+
+## Pneumococcus and macrolides
+
+```{r}
+left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
+  left_join(regions, by='state') %>%
+  filter(bug=='S. pneumoniae', drug_group=='macrolide') %>%
+  filter(!is.na(mean_percent_nonsusceptible)) %>% 
+  ggplot(aes(x=cpb, y=mean_percent_nonsusceptible, label=state)) +
+  geom_smooth(method='lm', col='gray', se=FALSE) +
+  geom_point() +
+  geom_text() +
+  theme_minimal()
+```
+
+## E. cloacae and quinolones
+
+```{r}
+left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
+  left_join(regions, by='state') %>%
+  filter(bug=='Eb. cloacae', drug_group=='quinolone') %>%
+  filter(!is.na(mean_percent_nonsusceptible)) %>%
+  ggplot(aes(x=cpb, y=mean_percent_nonsusceptible, label=state)) +
+  geom_smooth(method='lm', col='gray', se=FALSE) +
+  geom_point() +
+  geom_text() +
+  theme_minimal()
+```
+
+## MSSA and clindamycin
+
+```{r mssa_clinda}
+left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
+  left_join(regions, by='state') %>%
+  filter(bug=='MSSA', drug_group=='clindamycin') %>%
+  ggplot(aes(x=cpb, y=mean_percent_nonsusceptible, label=state)) +
+  geom_smooth(method='lm', col='gray', se=FALSE) +
+  geom_point() +
+  geom_text() +
+  xlab('clindamycin claims per beneficiary') + ylab('mean percent nonsusceptible MSSA isolates') +
+  theme_minimal()
+```
+
+# Supplementary results
+
+## Metrics of unevenness
+
+### Aggregate usage correlates with fraction of users
+
+Error bars show the s.e.m. across the four data years.
+
+```{r fnz_mean}
+all_ineq %>%
+  mutate_at(vars(matches('fnz')), function(x) x*100) %>%
+  ggplot(aes(x=mean_cpb, xmin=mean_cpb-sem_cpb, xmax=mean_cpb+sem_cpb,
+             y=mean_fnz, ymin=mean_fnz-sem_fnz, ymax=mean_fnz+sem_fnz,
+             color=region, label=state_abbreviation)) +
+  geom_point() +
+  geom_linerange() +
+  geom_errorbarh(height=0) +
+  geom_text(nudge_x=0.04) +
+  xlab('mean claims per beneficiary') +
+  ylab('mean % beneficiaries with at least one claim') +
+  theme_minimal()
+```
+
+```{r}
+all_ineq %$%
+  cor.test(mean_cpb, mean_fnz, method='spearman')
+```
+
+### The two inequality metrics not correlate well
+
+Error bars show the s.e.m. across the four data years.
+
+```{r nzgini_mean}
+all_ineq %>%
+  ggplot(aes(x=mean_fnz, xmin=mean_fnz-sem_fnz, xmax=mean_fnz+sem_fnz,
+             y=mean_nzgini, ymin=mean_nzgini-sem_nzgini, ymax=mean_nzgini+sem_nzgini,
+             color=region, label=state_abbreviation)) +
+  geom_point() +
+  geom_linerange() +
+  geom_errorbarh(height=0) +
+  geom_text(nudge_x=0.00) +
+  xlab('mean fraction with at least one claim') +
+  ylab('mean Gini coefficient') +
+  theme_minimal()
+```
+
+The correlation exists but it's much less strong.
+
+```{r}
+all_ineq %$%
+  cor.test(mean_fnz, mean_nzgini, method='spearman')
+```
+
+There is an intermediate correlation between claims per beneficiary and the Gini coefficient (see below), so in multivariable regressions I will use those two (rather than CPB and Gini).
+
+```{r}
+all_ineq %$% cor.test(mean_cpb, mean_nzgini, method='spearman')
+```
+
+## Spearman models
+
+### State-level volcano plot
 
 ```{r}
 results %>%
@@ -259,7 +438,7 @@ results %>%
   geom_hline(yintercept=-log10(0.05), col='red')
 ```
 
-And the same thing using HRRs:
+### HRR-level correlations
 
 ```{r hrr_spearman_models}
 hrr_results %>%
@@ -271,9 +450,11 @@ hrr_results %>%
   kable
 ```
 
-## Univariable
+## Univariable regressions
 
-The model here is mean percent nonsusceptible ~ claims per beneficiary. The significant results are:
+Like the Spearman models, the model here is mean percent nonsusceptible ~ claims per beneficiary, only this time it's a normal linear regression.
+
+### State-level
 
 ```{r uni_models}
 results %>%
@@ -299,7 +480,7 @@ results %>%
   geom_hline(yintercept=-log10(0.05), col='red')
 ```
 
-And the same thing with HRRs:
+### HRR-level
 
 ```{r hrr_uni_models}
 hrr_results %>%
@@ -309,243 +490,4 @@ hrr_results %>%
   arrange(p.value) %>%
   select(bug, drug_group, estimate, p.value, p.adj) %>%
   kable
-```
-
-## Multivariable
-
-The model here is mean percent nonsusceptible ~ fraction nonzero + nonzero Gini. In some of the models, the nonzero Gini term was significant, but not after adjusting for multiple hypotheses. I show just those terms that met the unadjusted threshold:
-
-```{r multi_models}
-results %>%
-  filter(model=='multi', term==multi_term) %>%
-  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  filter(p.value < 0.05) %>%
-  arrange(p.value) %>%
-  select(bug, drug_group, estimate, p.value, p.adj) %>%
-  kable
-```
-
-```{r}
-results %>%
-  filter(model=='multi', term==multi_term) %>%
-  interval_plot()
-```
-
-```{r}
-results %>%
-  filter(model=='multi', term==multi_term) %>%
-  mutate(bug_drug=interaction(bug, drug_group)) %>%
-  ggplot(aes(x=p.value, y=estimate, color=drug_group)) +
-  geom_point() +
-  scale_color_brewer(palette='Set1')
-```
-
-And what about looking at multivariate only for ones that passed the threshold for univariable?
-
-```{r eval=FALSE}
-sig_bug_drug = results %>%
-  filter(model=='uni', term==uni_term) %>%
-  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  filter(p.adj < 0.05) %>%
-  select(bug, drug_group)
-
-results %>%
-  filter(model=='multi', term==multi_term) %>%
-  right_join(sig_bug_drug, by=c('bug', 'drug_group')) %>%
-  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  select(bug, drug_group, estimate, p.value, p.adj) %>%
-  kable
-```
-
-Using HRRs, adjusting $p$ with all possibilities:
-
-```{r}
-hrr_results %>%
-  filter(model=='multi', term==multi_term) %>%
-  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  filter(p.value < 0.05) %>%
-  arrange(p.value) %>%
-  select(bug, drug_group, estimate, p.value, p.adj) %>%
-  kable
-```
-
-And then doing multiple hypothesis correction only for those that made it through the first model:
-
-```{r hrr_multi_models}
-sig_bug_drug = hrr_results %>%
-  filter(model=='uni', term==uni_term) %>%
-  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  filter(p.adj < 0.05) %>%
-  select(bug, drug_group)
-
-hrr_results %>%
-  filter(model=='multi', term==multi_term) %>%
-  right_join(sig_bug_drug, by=c('bug', 'drug_group')) %>%
-  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  arrange(p.value) %>%
-  select(bug, drug_group, estimate, p.value, p.adj) %>%
-  kable
-```
-
-## Two metrics
-
-It turns out that the different drugs have different relationships with the two metrics. Each point shows the consumption characteristics for a drug group in a state.
-
-```{r nzgini_cpb_drug}
-cbbPalette <- c("#000000", "#D55E00", "#CC79A7", "#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2")
-state_ineq %>%
-  ggplot(aes(x=cpb, y=nzg, color=drug_group)) +
-  geom_point() +
-  ylab('Gini coefficient among users') + xlab('claims per beneficiary') +
-  theme_minimal() +
-  scale_color_manual(values=cbbPalette)
-```
-
-```{r}
-left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
-  filter(bug %in% c('E. coli', 'Eb. cloacae', 'CNST', 'MSSA', 'MRSA', 'S. pneumoniae')) %>%
-  ggplot(aes(x=cpb, y=mean_percent_nonsusceptible, color=drug_group, shape=bug)) +
-  geom_point() +
-  xlab('claims per beneficiary')
-```
-
-## Specific plots
-
-Quinolone consumption predicts *E. coli* quinolone resistance:
-
-```{r ecoli_quin, eval=FALSE}
-left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
-  left_join(regions, by='state') %>%
-  filter(bug=='E. coli', drug_group=='quinolone') %>%
-  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=region)) +
-  geom_smooth(aes(x=mean, y=mean_percent_nonsusceptible, color=NULL), method='lm', col='black') +
-  geom_point() +
-  xlab('quinolone claims per beneficiary') + ylab('mean percent nonsusceptible E. coli isolates') +
-  theme_minimal()
-
-left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
-  left_join(regions, by='state') %>%
-  filter(bug=='E. coli', drug_group=='quinolone') %>%
-  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state)) +
-  geom_smooth(method='lm', col='black', se=FALSE) +
-  geom_point() +
-  geom_text() +
-  xlim(0.2, 0.45) + ylim(0, 50) +
-  xlab('quinolone claims per beneficiary') + ylab('mean percent nonsusceptible E. coli isolates') +
-  theme_minimal()
-```
-
-## E.coli and bactrim
-
-Bactrim resistance in *E. coli*. First, the aggregate relationship, then the relationship between "excess" resistance (the residual of resistance against aggregate consumption) against nonzero Gini.
-
-```{r ecoli_bactrim, eval=FALSE}
-ecoli_bactrim_dat = left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
-  left_join(regions, by='state') %>%
-  filter(bug=='E. coli', drug_group=='tmp_smx') #%>%
-  #filter(!is.na(mean_percent_nonsusceptible))
-
-ecoli_bactrim_dat %>%
-  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state)) +
-  geom_smooth(method='lm', col='gray', se=FALSE) +
-  geom_point() +
-  geom_text() +
-  scale_x_continuous(limits=c(0.08, 0.2), breaks=c(0.08, 0.1, 0.15, 0.2)) +
-  ylim(10, 45) +
-  xlab('TMP/SMX claims per beneficiary') + ylab('mean percent nonsusceptible E. coli isolates') +
-  theme_minimal()
-
-ecoli_bactrim_dat %>%
-  { mutate(., excess_resistance=residuals(lm(mean_percent_nonsusceptible ~ mean, data=.))) } %>%
-  ggplot(aes(x=nzgini, y=excess_resistance)) +
-  geom_smooth(method='lm', col='gray', se=FALSE) +
-  geom_point() +
-  scale_x_continuous(limits=c(0.25, 0.375)) +
-  scale_y_continuous(limits=c(-12, 20), breaks=c(-12, 0, 10, 20)) +
-  xlab('Skew towards high consumers (Gini coefficient)') +
-  ylab('"Excess" E. coli resistance (see caption)') +
-  theme_minimal()
-
-ecoli_bactrim_dat %>%
-  ggplot(aes(x=nzgini, y=mean_percent_nonsusceptible, label=state)) +
-  geom_smooth(method='lm', col='gray', se=FALSE) +
-  geom_point() +
-  geom_text() +
-  xlab('Gini coefficient)') +
-  ylab('E. coli resistance') +
-  theme_minimal()
-```
-
-## Pneumococcus and macrolides
-
-```{r, eval=FALSE}
-left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
-  left_join(regions, by='state') %>%
-  filter(bug=='S. pneumoniae', drug_group=='macrolide') %>%
-  filter(!is.na(mean_percent_nonsusceptible)) %>% 
-  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state)) +
-  geom_smooth(method='lm', col='gray', se=FALSE) +
-  geom_point() +
-  geom_text() +
-  theme_minimal()
-```
-
-## E. cloacae and quinolones
-
-```{r, eval=FALSE}
-left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
-  left_join(regions, by='state') %>%
-  filter(bug=='Eb. cloacae', drug_group=='quinolone') %>%
-  filter(!is.na(mean_percent_nonsusceptible)) %>%
-  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state)) +
-  geom_smooth(method='lm', col='gray', se=FALSE) +
-  geom_point() +
-  geom_text() +
-  theme_minimal()
-```
-
-## MSSA and clindamycin
-
-```{r mssa_clinda, eval=FALSE}
-dat = left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
-  left_join(regions, by='state') %>%
-  filter(bug=='MSSA', drug_group=='clindamycin') #%>%
-  #filter(!is.na(mean_percent_nonsusceptible))
-
-dat %>%
-  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state)) +
-  geom_smooth(method='lm', col='gray', se=FALSE) +
-  geom_point() +
-  geom_text() +
-  #scale_x_continuous(limits=c(0.08, 0.2), breaks=c(0.08, 0.1, 0.15, 0.2)) +
-  #ylim(10, 45) +
-  xlab('clindamycin claims per beneficiary') + ylab('mean percent nonsusceptible MSSA isolates') +
-  theme_minimal()
-
-dat %>%
-  { mutate(., excess_resistance=residuals(lm(mean_percent_nonsusceptible ~ mean, data=.))) } %>%
-  ggplot(aes(x=nzgini, y=excess_resistance)) +
-  geom_smooth(method='lm', col='gray', se=FALSE) +
-  geom_point() +
-  #scale_x_continuous(limits=c(0.25, 0.375)) +
-  #scale_y_continuous(limits=c(-12, 20), breaks=c(-12, 0, 10, 20)) +
-  xlab('Gini coefficient') +
-  ylab('"Excess" MSSA resistance') +
-  theme_minimal()
-```
-
-## MRSA clinda
-
-```{r, eval=FALSE}
-left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
-  left_join(regions, by='state') %>%
-  filter(bug=='MRSA', drug_group=='clindamycin') %>%
-  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state)) +
-  geom_smooth(method='lm', col='gray', se=FALSE) +
-  geom_point() +
-  geom_text() +
-  #scale_x_continuous(limits=c(0.08, 0.2), breaks=c(0.08, 0.1, 0.15, 0.2)) +
-  #ylim(10, 45) +
-  xlab('clindamycin claims per beneficiary') + ylab('mean percent nonsusceptible MRSA isolates') +
-  theme_minimal()
 ```
