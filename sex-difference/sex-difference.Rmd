@@ -35,11 +35,9 @@ knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', '
 ```{r load_data}
 year = 2011
 bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
-  filter(between(age, 66, 96), hmo_months==0, sex %in% c('male', 'female')) %>%
   mutate(is_female=sex=='female', is_white=race=='white')
   
-pde = read_tsv(sprintf('../pde_%i.tsv', year)) %>%
-  filter(bene_id %in% bene$bene_id)
+pde = read_tsv(sprintf('../pde_%i.tsv', year))
 
 total_pde = pde %>% count(bene_id) %>% rename(n_claims=n)
 ```
@@ -95,15 +93,14 @@ ubs = pde %>%
 
 ```{r drug_by_sex_plot}
 ubs %>%
-  select(antibiotic, sex, cpkp) %>%
-  spread(sex, cpkp) %>%
   ggplot(aes(x=male, y=female, label=antibiotic)) +
-  geom_label() +
+  geom_text() +
   geom_point() +
   geom_abline() +
   xlab('claims per 1,000 male beneficiaries') +
   ylab('claims per 1,000 female beneficiaries') +
-  theme_minimal()
+  theme_minimal() +
+  coord_fixed()
 ```
 
 For a more quantitative approach, this is a table showing, for each antibiotic, the CPKP for female and males, the difference (residual) between the two, and the residual fraction (the residual over the mean of the female and male consumptions). Positive residuals means more consumption by females.
