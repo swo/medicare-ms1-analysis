@@ -217,7 +217,7 @@ Different bug/drug combinations have different spreads along the consumption and
 
 ```{r}
 left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
-  filter(bug %in% c('E. coli', 'Eb. cloacae', 'CNST', 'MSSA', 'MRSA', 'S. pneumoniae')) %>%
+  filter(bug %in% c('E. coli', 'Eb. cloacae', 'CoNS', 'MSSA', 'MRSA', 'S. pneumoniae')) %>%
   ggplot(aes(x=cpb, y=mean_percent_nonsusceptible, color=drug_group, shape=bug)) +
   geom_point() +
   xlab('claims per beneficiary')
