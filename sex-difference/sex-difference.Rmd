@@ -5,6 +5,11 @@ date: "2/24/2017"
 output: html_document
 ---
 
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
+```
+
 # Background
 
 Why do females account for 25% more antibiotic claims per capita than males? I have two easy explanations:
@@ -25,12 +30,11 @@ I'll use the Medicare 2011 data. Or, use all years, pool that data, and include 
 
 Before a model, I should just stratify by sex and exposure. Do we already see the signal (or lack of it)? Then we can go onto including age and calendar year as covariates.
 
-# Results
+## Diagnosis codes
 
-```{r global_options, include=FALSE}
-knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
-                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
-```
+For COPD, I use the codes recommended by the Chronic Condition Warehouse, but I exclude 490 ("Bronchitis, not specified as acute or chronic") because acute bronchitis seems more common than
+
+# Results
 
 ```{r load_data}
 year = 2011
@@ -39,7 +43,41 @@ bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
   
 pde = read_tsv(sprintf('../pde_%i.tsv', year))
 
+icd = read_tsv('../../db/icd/icd.tsv') %>%
+  rename(dx_code=code, dx_desc=desc)
+
+sex_icd = read_tsv('sex_codes.tsv', col_types=cols(dx_code='c'))
+```
+
+```{r load_dx}
+rc_dxs = c('4610', '4619', '462', '4659', '4660', '4739', '486', '490', '7862')
+uti_dxs = c('5950', '5959', '5989', '5990', '6235', '7881')
+
+dx = read_tsv(sprintf('../../data/dx/dx_car_claims_%i.tsv', year), col_types=cols(diagnosis='c')) %>%
+  select(bene_id=BENE_ID, dx_code=diagnosis)
+
+dx_counts = dx %>% count(dx_code) %>% left_join(icd, by='dx_code') %>% arrange(desc(n))
+
+stopifnot(all(dx_counts$dx_code %in% c(rc_dxs, uti_dxs)))
+
 total_pde = pde %>% count(bene_id) %>% rename(n_claims=n)
+```
+
+## Diagnostic codes
+
+For UTIs:
+
+```{r}
+sex_icd %>%
+  left_join(dx_counts, by='dx_code') %>%
+  arrange(dx_group, desc(n)) %>%
+  kable
+```
+
+For RCs:
+
+```{r}
+dx_counts %>% filter(dx_code %in% rc_dxs) %>% kable
 ```
 
 ## Consumption by age and sex
