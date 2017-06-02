@@ -1,0 +1,28 @@
+condition_code	condition_desc	condition_ref_years
+AMI	Acute Myocardial Infarction	1
+ALZH	Alzheimer's Disease	3
+ALZHDMTA	Alzheimer's Disease and Rltd Disorders or Senile Dementia	3
+ATRIALFB	Atrial Fibrillation	1
+CATARACT	Cataract	1
+CHRNKIDN	Chronic Kidney Disease	2
+COPD	Chronic Obstructive Pulmonary Disease	1
+CHF	Heart Failure	2
+DIABETES	Diabetes	2
+GLAUCOMA	Glaucoma	1
+HIPFRAC	Hip/Pelvic Fracture	1
+ISCHMCHT	Ischemic Heart Disease	2
+DEPRESSN	Depression	1
+OSTEOPRS	Osteoporosis	1
+RA_OA	Rheumatoid Arthritis / Osteoarthritis	2
+STRKETIA	Stroke / Transient Ischemic Attack	1
+CNCRBRST	Breast Cancer	1
+CNCRCLRC	Colorectal Cancer	1
+CNCRPRST	Prostate Cancer	1
+CNCRLUNG	Lung Cancer	1
+CNCRENDM	Endometrial Cancer	1
+ANEMIA	Anemia	1
+ASTHMA	Asthma	1
+HYPERL	Hyperlipidemia	1
+HYPERP	Benign Prostatic Hyperplasia	1
+HYPERT	Hypertension	1
+HYPOTH	Acquired Hypothyroidism	1
