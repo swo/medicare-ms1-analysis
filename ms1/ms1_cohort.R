@@ -3,14 +3,22 @@
 import::from(broom, tidy)
 import::from(stringr, str_replace)
 
+sum_over = function(target_columns) {
+  dummy_vars = sapply(1:length(target_columns), function(i) sprintf('x%i', i))
+  dummy_vars_string = paste0(dummy_vars, collapse=',')
+  dummy_vars_list = lapply(target_columns, as.name) %>% setNames(dummy_vars)
+  f = as.formula(paste0(c('~sum(', dummy_vars_string, ')'), collapse=''))
+  lazyeval::interp(f, .values=dummy_vars_list)
+}
+
 # Load the census regions. Code them as factors so that Northeast is taken as
 # the baseline in the linear models.
 # NB: I put DC into the South
 regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
   select(state, region)
 
-condition_names = read_tsv('../chronic-conditions/names.txt',
-                           col_names=c('condition', 'condition_name'))
+condition_names = read_tsv('../chronic-conditions/names.tsv')
+names_1yr_ccs = condition_names %>% filter(condition_ref_years==1) %$% condition_code
 
 load_data = function(year) {
   bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
@@ -30,7 +38,10 @@ load_data = function(year) {
 
   cc = read_feather(sprintf('../cc_%i.feather', year)) %>%
     select(-ALZH) %>%
-    mutate(n_cc=rowSums(select_(., '-bene_id')))
+    rowwise() %>%
+    mutate_(n_1yr_cc=sum_over(names_1yr_ccs),
+            n_all_cc=sum_over(condition_names$condition_code)) %>%
+    ungroup()
 
   bene %<>% left_join(cc, by='bene_id')
 
