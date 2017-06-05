@@ -1,0 +1,16 @@
+code	short_desc	diagnosis_type
+7862	cough	acute_rc
+486	pneumonia	acute_rc
+4660	bronchitis	acute_rc
+4659	AURTI	acute_rc
+4619	sinusitis	acute_rc
+462	pharyngitis	acute_rc
+4610	maxillary sinusitis	acute_rc
+49121	COPD with acute	acute_rc
+496	COPD	copd
+49121	COPD with acute	copd
+4928	emphysema	copd
+49120	COPD (bronchitis)	copd
+4910	chronic bronchitis	copd
+5990	UTI	uti
+7881	dysuria	uti
