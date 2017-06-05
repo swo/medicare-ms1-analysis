@@ -156,37 +156,47 @@ model_f = function(bene, frmla, table_name) {
   lm(formula=frmla, data=bene) %>% tidy %>% output_table(table_name)
 }
 
-# change the year & age values so that the intercepts are more interpretable
-# (but without changing the coefficients)
-
+# models predicting consumption
+# models with all beneficiaries
 model_f(bene, n_claims ~ year, 'model1')
 model_f(bene, n_claims ~ year + age*n_cc + is_female + is_dual + is_white + region, 'model2')
 
+# models using just the cohort
 lm_cohort_bene = bene %>% filter(in_cohort)
 
 model_f(lm_cohort_bene, n_claims ~ year, 'cohort_model1')
+model_f(lm_cohort_bene, n_claims ~ year + start_age + is_female + is_dual + is_white + region, 'cohort_model_test')
 model_f(lm_cohort_bene, n_claims ~ year + start_age*n_cc + is_female + is_dual + is_white + region, 'cohort_model2')
 
-single_abx_model = function(abx, bene, frmla) {
+# models for each individual drug
+subtract_min = function(x) x - min(x)
+single_abx_model = function(bene, abx, frmla) {
   pde %>%
     rename(y=n_claims) %>%
     filter(antibiotic==abx) %>%
     right_join(bene, by=c('year', 'bene_id')) %>%
     replace_na(list(y=0)) %>%
+    mutate_at(vars(year, age), subtract_min) %>%
     lm(formula=frmla, data=.) %>%
     tidy %>%
     mutate(model=abx)
 }
 
-f = function(a) single_abx_model(a, bene, y ~ year + age*n_cc + is_female + is_dual + is_white + region)
+f = function(a) single_abx_model(bene, a, y ~ year + age*n_cc + is_female + is_dual + is_white + region)
 lapply(top_abx, f) %>%
   bind_rows() %T>%
   output_table('model_abx')
 
-f = function(a) single_abx_model(a, lm_cohort_bene, y ~ year + start_age*n_cc + is_female + is_dual + is_white + region)
+f = function(a) single_abx_model(lm_cohort_bene, a, y ~ year + start_age*n_cc + is_female + is_dual + is_white + region)
 lapply(top_abx, f) %>%
   bind_rows() %T>%
   output_table('cohort_model_abx')
+
+# special levo & azithro models
+single_abx_model(lm_cohort_bene, 'azithromycin', y ~ year + start_age + is_female + is_dual + is_white + region + COPD + ASTHMA) %>%
+  output_table('cohort_model_azithro')
+single_abx_model(lm_cohort_bene, 'levofloxacin', y ~ year + start_age + is_female + is_dual + is_white + region + COPD + ASTHMA) %>%
+  output_table('cohort_model_levo')
 
 #single_condition_model = function(condition_code) {
 #  filter(bene, age >= 67) %>%
