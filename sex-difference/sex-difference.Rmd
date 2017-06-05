@@ -40,7 +40,7 @@ For COPD, I use the codes recommended by the Chronic Condition Warehouse, but I 
 year = 2011
 bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
   mutate(is_female=sex=='female', is_white=race=='white')
-  
+
 pde = read_tsv(sprintf('../pde_%i.tsv', year))
 
 icd = read_tsv('../../db/icd/icd.tsv') %>%
@@ -131,7 +131,8 @@ ubs = pde %>%
 
 ```{r drug_by_sex_plot}
 ubs %>%
-  ggplot(aes(x=male, y=female, label=antibiotic)) +
+  mutate(highlight=antibiotic %in% c('azithromycin', 'ciprofloxacin', 'trimethoprim/sulfamethoxazole', 'fosfomycin', 'nitrofurantoin')) %>%
+  ggplot(aes(x=male, y=female, label=antibiotic, color=highlight)) +
   geom_text() +
   geom_point() +
   geom_abline() +
@@ -274,4 +275,4 @@ azi_usage %>%
   kable
 ```
 
-The coefficient for being female (0.05) accounts for almost the entire difference in consumption between men and women (56 per thousand). Note that age has an approximately zero correlation (i.e., 
+The coefficient for being female (0.05) accounts for almost the entire difference in consumption between men and women (56 per thousand). Note that age has an approximately zero correlation (i.e.,
