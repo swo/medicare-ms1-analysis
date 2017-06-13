@@ -21,6 +21,8 @@ pctize = function(df, denom_name) {
   }
   df
 }
+
+trend_p = function(x) t.test(diff(x))$p.value
 ```
 
 # Summary of data
@@ -39,7 +41,12 @@ read_tsv('tables/tbl_totals.tsv') %>%
   kable
 ```
 
-And the same in the cohort:
+In the cohort, all the values remain fixed, except for:
+
+- age
+- chronic conditions
+- to a lesser degree, dual enrollment
+- to a very small degree, geographical location
 
 ```{r}
 read_tsv('tables/tbl_cohort_totals.tsv') %>%
@@ -83,12 +90,6 @@ top_abx_f = function(df) {
     mutate(antibiotic=factor(antibiotic, levels=c('all', top_abx)))
 }
 
-#top_abx_f(dat) %>%
-#  mutate(cpkp=round(cpkp)) %>%
-#  spread(year, cpkp) %>%
-#  arrange(desc(`2011`)) %>%
-#  kable
-
 all_dat = bind_rows(
   top_abx_f(dat) %>% mutate(group='all'),
   top_abx_f(cohort_dat) %>% mutate(group='cohort')
@@ -102,7 +103,22 @@ all_dat %>%
   ggtitle('Unadjusted consumption, overall or in cohort')
 ```
 
-This shows a subset of the above data, but using percent changes from 2011 to 2014:
+P-values for trends in the data. (These are $t$-tests on the differences between subsequent years, comparing their mean to zero.)
+
+```{r}
+all_dat %>%
+  arrange(group, antibiotic, year) %>%
+  group_by(group, antibiotic) %>%
+  summarize(p.value=trend_p(cpkp)) %>%
+  ungroup() %>%
+  mutate(adj.p.value=p.adjust(p.value, method='BH')) %>%
+  select(antibiotic, group, adj.p.value) %>%
+  spread(group, adj.p.value) %>%
+  mutate(sig=if_else(all < 0.05 | cohort < 0.05, '*', '')) %>%
+  kable
+```
+
+This shows a summary of the above data, using percent changes from 2011 to 2014:
 
 ```{r}
 all_dat %>%
@@ -164,6 +180,8 @@ read_tsv('tables/tbl_claims_by_race.tsv') %>%
 
 # Adjusted consumption changes
 
+"Adjusted" means the `year` coefficient in `y ~ year + age*n_cc + is_female + is_dual + is_white + region`.
+
 Only in the cohort:
 
 ```{r}
@@ -180,31 +198,41 @@ read_tsv('tables/tbl_cohort_model_abx.tsv') %>%
   theme_minimal()
 ```
 
-# Prevalence of conditions
+# Azithro and levo
 
-```{r, eval=FALSE}
-condition_names = read_tsv('../chronic-conditions/names.tsv')
+I used the encounter data to anotate which beneficiaries had COPD or an ARTI in that year. I used these primary diagnoses:
 
-read_tsv('tables/tbl_cc_prevalence.tsv') %>%
-  left_join(condition_names, by='condition') %>%
-  select(condition=condition_name, year, prevalence) %>%
-  spread(year, prevalence) %>%
-  mutate(change=(`2014`-`2011`)/`2011`) %>%
-  mutate_at(vars(-condition), function(x) round(x * 100, 1)) %>%
-  arrange(desc(change)) %>%
+```{r}
+read_tsv('../sex-difference/sex_codes.tsv') %>%
+  filter(diagnosis_type %in% c('acute_rc', 'copd')) %>%
   kable
 ```
 
-# All-condition model
+Then I ran models predicting azithromycin and levofloxacin consumption using these some standard demographic variables and a narrowly-defined health status (COPD and ARTI).
 
-```{r, eval=FALSE}
-read_tsv('tables/tbl_all_condition_model.tsv') %>%
-  mutate(term=stringr::str_replace(term, 'TRUE$', '')) %>%
-  left_join(condition_names, by=c('term'='condition')) %>%
-  mutate(term=if_else(is.na(condition_name), term, condition_name),
-         log10.adj.p.value=log10(p.adjust(p.value, method='BH'))) %>%
-  select(term, estimate, p.value, log10.adj.p.value) %>%
-  filter(term != '(Intercept)') %>%
-  arrange(desc(estimate)) %>%
-  kable
+## Azithromycin
+
+`y ~ year + start_age + is_female + is_dual + is_white + region + copd + copd:year + copd:start_age + acute_rc + acute_rc:year + acute_rc:start_age`
+
+That is, add COPD, ARTI, and the interactions of those terms with beneficiary age (in 2011) and calendar year.
+
+```{r}
+read_tsv('tables/tbl_cohort_model_azithro.tsv') %>% kable
 ```
+
+Azithromycin prescribing decreases with calendar year and with age, even for those who have COPD or an ARTI.
+
+## Levofloxacin
+
+`y ~ year + start_age + is_female + is_dual + is_white + region + acute_rc + acute_rc:year + acute_rc:start_age`
+
+That is, add ARTI and the interactions with beneficiary age and calendar year.
+
+```{r}
+read_tsv('tables/tbl_cohort_model_levo.tsv') %>% kable
+```
+
+By contrast, levofloxacin prescribing increases with calendar year and with age, including for those who have and ARTI. The overall increase with time is about half the size of the increase with time for those who have an ARTI, meaning that levofloxacin, aside from being prescribed more overall, is being prescribed more especially for those with ARTIs.
+
+Interestingly, the effect of dual-enrollment is much higher for levofloxacin than azithromycin (about triple). Why would being poorer make you more likely to take levofloxacin?
+

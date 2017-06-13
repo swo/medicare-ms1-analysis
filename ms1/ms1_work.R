@@ -19,6 +19,9 @@ regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
 condition_names = read_tsv('../chronic-conditions/names.tsv') %>% filter(condition_code != 'ALZH')
 names_1yr_ccs = condition_names %>% filter(condition_ref_years==1) %$% condition_code
 
+dx_codes = read_tsv('../sex-difference/sex_codes.tsv') %>%
+  select(code, diagnosis_type)
+
 load_data = function(year) {
   bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
     mutate(is_female=sex=='female', is_white=race=='white', is_dual=buyin_months>0) %>%
@@ -33,12 +36,17 @@ load_data = function(year) {
     summarize(n_claims=n(), days_supply=sum(days_supply)) %>%
     ungroup() %>%
     mutate(year=year)
+  
+  # diagnosis claims
+  dx = read_tsv(sprintf('../../data/dx_car_claims_%i.tsv', year)) %>%
+    select(bene_id=BENE_ID, code=diagnosis) %>%
+    left_join(dx_codes, by='code') %>%
+    distinct %>%
+    mutate(dummy=TRUE) %>%
+    spread(diagnosis_type, dummy)
 
   # get total numbers of PDEs
   n_claims = pde %>% group_by(bene_id) %>% summarize(n_claims=sum(n_claims))
-  bene %<>%
-    left_join(n_claims, by='bene_id') %>%
-    replace_na(list(n_claims=0))
 
   # count chronic conditions. 'n_cc' means one-year cc's
   cc = read_feather(sprintf('../cc_%i.feather', year)) %>%
@@ -46,7 +54,13 @@ load_data = function(year) {
     mutate_(n_cc=sum_over(names_1yr_ccs)) %>%
     ungroup()
 
-  bene %<>% left_join(cc, by='bene_id')
+  # join the cc, summary PDE, and dx data into bene
+  bene %<>%
+    left_join(cc, by='bene_id') %>%
+    left_join(n_claims, by='bene_id') %>% replace_na(list(n_claims=0)) %>%
+    left_join(dx, by='bene_id') %>% replace_na(list(acute_rc=FALSE,
+                                                    copd=FALSE,
+                                                    uti=FALSE))
 
   list(bene=bene, pde=pde)
 }
@@ -193,9 +207,9 @@ lapply(top_abx, f) %>%
   output_table('cohort_model_abx')
 
 # special levo & azithro models
-single_abx_model(lm_cohort_bene, 'azithromycin', y ~ year + start_age + is_female + is_dual + is_white + region + COPD + ASTHMA) %>%
+single_abx_model(lm_cohort_bene, 'azithromycin', y ~ year + start_age + is_female + is_dual + is_white + region + copd + copd:year + copd:start_age + acute_rc + acute_rc:year + acute_rc:start_age) %>%
   output_table('cohort_model_azithro')
-single_abx_model(lm_cohort_bene, 'levofloxacin', y ~ year + start_age + is_female + is_dual + is_white + region + COPD + ASTHMA) %>%
+single_abx_model(lm_cohort_bene, 'levofloxacin', y ~ year + start_age + is_female + is_dual + is_white + region + acute_rc + acute_rc:year + acute_rc:start_age) %>%
   output_table('cohort_model_levo')
 
 #single_condition_model = function(condition_code) {

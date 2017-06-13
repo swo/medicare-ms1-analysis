@@ -22,19 +22,13 @@ Why do females account for 25% more antibiotic claims per capita than males? I h
 
 I'll use the Medicare 2011 data. Or, use all years, pool that data, and include calendar year as part of the regression.
 
-*Outcome*: At least one claim for azithromycin, Bactrim, TMP/SMX, or nitrofurantoin. *Exposure*: A diagnosis with a UTI or an acute RTI.
+*Outcome*: At least one claim for azithromycin, Bactrim, TMP/SMX, or nitrofurantoin. *Exposure*: A diagnosis with a UTI, COPD, or an acute RTI.
 
 - In the first pass, look for any claim and any diagnosis.
 - In a second pass, look for a diagnosis that came at most two weeks before a claim.
 - Maybe, in a third pass, look for diagnosis that came at most two weeks before the first claim for that drug for the beneficiary. (Imagine someone is on year-long prophylaxis. Then a diagnosis at any time of the year will make it look like the diagnosis caused the claims.)
 
 Before a model, I should just stratify by sex and exposure. Do we already see the signal (or lack of it)? Then we can go onto including age and calendar year as covariates.
-
-## Diagnosis codes
-
-For COPD, I use the codes recommended by the Chronic Condition Warehouse, but I exclude 490 ("Bronchitis, not specified as acute or chronic") because acute bronchitis seems more common than
-
-# Results
 
 ```{r load_data}
 year = 2011
@@ -43,42 +37,30 @@ bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
 
 pde = read_tsv(sprintf('../pde_%i.tsv', year))
 
-icd = read_tsv('../../db/icd/icd.tsv') %>%
-  rename(dx_code=code, dx_desc=desc)
-
-sex_icd = read_tsv('sex_codes.tsv', col_types=cols(dx_code='c'))
+sex_icd = read_tsv('sex_codes.tsv', col_types=cols(code='c')) %>%
+  rename(dx_code=code, dx_desc=short_desc)
 ```
 
 ```{r load_dx}
-rc_dxs = c('4610', '4619', '462', '4659', '4660', '4739', '486', '490', '7862')
-uti_dxs = c('5950', '5959', '5989', '5990', '6235', '7881')
-
 dx = read_tsv(sprintf('../../data/dx/dx_car_claims_%i.tsv', year), col_types=cols(diagnosis='c')) %>%
-  select(bene_id=BENE_ID, dx_code=diagnosis)
+  select(bene_id=BENE_ID, dx_code=diagnosis) %>%
+  left_join(sex_icd, by='dx_code')
 
-dx_counts = dx %>% count(dx_code) %>% left_join(icd, by='dx_code') %>% arrange(desc(n))
-
-stopifnot(all(dx_counts$dx_code %in% c(rc_dxs, uti_dxs)))
+dx_counts = dx %>%
+  count(dx_code)
 
 total_pde = pde %>% count(bene_id) %>% rename(n_claims=n)
 ```
 
-## Diagnostic codes
-
-For UTIs:
+## Diagnostic codes and counts
 
 ```{r}
 sex_icd %>%
   left_join(dx_counts, by='dx_code') %>%
-  arrange(dx_group, desc(n)) %>%
   kable
 ```
 
-For RCs:
-
-```{r}
-dx_counts %>% filter(dx_code %in% rc_dxs) %>% kable
-```
+# Results
 
 ## Consumption by age and sex
 
@@ -144,7 +126,11 @@ ubs %>%
 
 For a more quantitative approach, this is a table showing, for each antibiotic, the CPKP for female and males, the difference (residual) between the two, and the residual fraction (the residual over the mean of the female and male consumptions). Positive residuals means more consumption by females.
 
-```{r drug_by_sex_residuals}
+```{r}
+dbs %>% head %>% kable
+```
+
+```{r drug_by_sex_residuals, eval=FALSE}
 dbs %>%
   select(antibiotic, sex, cpkp) %>%
   spread(sex, cpkp) %>%
@@ -158,7 +144,7 @@ dbs %>%
 
 Nitrofurantoin, ciprofloxacin, and TMP-SMX are all used as urinary anti-infectives, and UTIs more commonly affect women. This does not explain, however, the increased consumption of azithromycin.
 
-```{r women_azithro_vs_uai}
+```{r women_azithro_vs_uai, eval=FALSE}
 any_in = function(lst, elts) match(elts, lst) %>% { .[!is.na(.)] } %>% { length(.) > 0 }
 
 usage %>%
@@ -199,7 +185,7 @@ Does that mean that:
 
 The older people are more female: age 65 is about 60% female. This stays constant around 60% (or dips slightly) until age 75, when it steadily increases up to 85-90% female at age 100. So we'll need to account for this age difference.
 
-```{r sex_by_age}
+```{r sex_by_age, eval=FALSE}
 plot_dat = usage %>%
   select(age, sex) %>%
   filter(sex %in% c('male', 'female')) %>%
@@ -223,7 +209,7 @@ Cf. the chronic conditions report.
 
 Do women have more encounters than men? Does that explain their increased usage?
 
-```{r load_carrier_data}
+```{r load_carrier_data, eval=FALSE}
 carrier = read_tsv('../../data/carrier_count_2011.tsv') %>%
   rename(bene_id=BENE_ID, n_carrier_dates=n_from_dates)
 
