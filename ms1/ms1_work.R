@@ -23,13 +23,7 @@ dx_codes = read_tsv('../sex-difference/sex_codes.tsv') %>%
   select(code, diagnosis_type)
 
 load_data = function(year) {
-  bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
-    mutate(is_female=sex=='female', is_white=race=='white', is_dual=buyin_months>0) %>%
-    left_join(regions, by='state') %>%
-    mutate(year=year)
-
-  # get the PDE data. record the number of claims (and days) for each bene
-  # and drug
+  # pde data
   pde = read_tsv(sprintf('../pde_%i.tsv', year)) %>%
     select(bene_id, antibiotic, days_supply) %>%
     group_by(bene_id, antibiotic) %>%
@@ -46,7 +40,7 @@ load_data = function(year) {
     mutate(dummy=TRUE) %>%
     spread(diagnosis_type, dummy)
 
-  # get total numbers of PDEs
+  # total numbers of PDEs
   n_claims = pde %>% group_by(bene_id) %>% summarize(n_claims=sum(n_claims))
 
   # count chronic conditions. 'n_cc' means one-year cc's
@@ -56,7 +50,10 @@ load_data = function(year) {
     ungroup()
 
   # join the cc, summary PDE, and dx data into bene
-  bene %<>%
+  bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
+    mutate(is_female=sex=='female', is_white=race=='white', is_dual=buyin_months>0) %>%
+    left_join(regions, by='state') %>%
+    mutate(year=year) %>%
     left_join(cc, by='bene_id') %>%
     left_join(n_claims, by='bene_id') %>% replace_na(list(n_claims=0)) %>%
     left_join(dx, by='bene_id') %>% replace_na(list(acute_rc=FALSE,
@@ -76,9 +73,9 @@ bene = lapply(dat, function(df) df$bene) %>% bind_rows %>%
   ungroup()
 
 pde = lapply(dat, function(df) df$pde) %>% bind_rows %>%
-  left_join(select(bene, bene_id, in_cohort), by='bene_id')
+  left_join(distinct(select(bene, bene_id, in_cohort)), by='bene_id')
 
-rm(dat)
+#rm(dat)
 
 output_table = function(x, base) write_tsv(x, sprintf('tables/tbl_%s.tsv', base))
 sem = function(x) sd(x) / length(x)
@@ -86,8 +83,10 @@ sem = function(x) sd(x) / length(x)
 summarize_totals = function(df) {
   summarize(df, n_bene=n(),
             mean_age=mean(age),
+            sd_age=sd(age),
             sem_age=sem(age),
             mean_n_cc=mean(n_cc),
+            sd_n_cc=sd(n_cc),
             sem_n_cc=sem(n_cc),
             n_female=sum(is_female),
             n_white=sum(is_white),
