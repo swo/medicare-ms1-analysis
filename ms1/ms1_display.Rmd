@@ -4,7 +4,7 @@ author: "Scott Olesen"
 output: html_document
 ---
 
-```{r global_options, include=FALSE, cache=FALSE}
+```{r global_options, include=FALSE}
 knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='fig/', dev=c('pdf', 'png'),
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE,
                       error=FALSE, autodep=TRUE)
@@ -27,20 +27,6 @@ trend_p = function(x) t.test(diff(x))$p.value
 
 # Summary of data
 
-```{r}
-read_tsv('tables/tbl_totals.tsv') %>%
-  pctize('n_bene') %>%
-  select(year, n_bene, mean_age, mean_n_cc,
-         pct_female, pct_white, pct_dual,
-         pct_region_south, pct_region_midwest, pct_region_northeast, pct_region_west) %>%
-  mutate_at(vars(starts_with('pct_')), function(x) round(x, digits=1)) %>%
-  mutate(n_bene=prettyNum(n_bene, big.mark=','),
-         mean_age=round(mean_age, digits=1),
-         mean_n_cc=round(mean_n_cc, digits=2)) %>%
-  gather('var', 'val', -year) %>% spread(year, val) %>% # transpose
-  kable
-```
-
 In the cohort, all the values remain fixed, except for:
 
 - age
@@ -49,16 +35,32 @@ In the cohort, all the values remain fixed, except for:
 - to a very small degree, geographical location
 
 ```{r}
-read_tsv('tables/tbl_cohort_totals.tsv') %>%
+totals_dat = read_tsv('tables/tbl_cohort_totals.tsv') %>%
   pctize('n_bene') %>%
-  select(year, n_bene, mean_age, mean_n_cc,
+  select(year, n_bene, mean_age, sd_age, mean_n_cc, sd_n_cc,
          pct_female, pct_white, pct_dual,
-         pct_region_south, pct_region_midwest, pct_region_northeast, pct_region_west) %>%
+         pct_region_south, pct_region_midwest, pct_region_northeast, pct_region_west)
+
+totals_dat %>%
   mutate_at(vars(starts_with('pct_')), function(x) round(x, digits=1)) %>%
   mutate(n_bene=prettyNum(n_bene, big.mark=','),
-         mean_age=round(mean_age, digits=1),
-         mean_n_cc=round(mean_n_cc, digits=2)) %>%
+         mean_age=round(mean_age, digits=1)) %>%
+  mutate_at(vars(mean_n_cc, sd_age, sd_n_cc),
+            function(x) round(x, digits=2)) %>% 
   gather('var', 'val', -year) %>% spread(year, val) %>% # transpose
+  kable
+```
+
+```{r}
+linear_trend_p = function(x) tidy(t.test(diff(x)))$p.value
+
+totals_dat %>%
+  gather('var', 'val', -year) %>%
+  arrange(var, year, val) %>%
+  group_by(var) %>%
+  summarize(p=linear_trend_p(val)) %>%
+  mutate(adj.p=p.adjust(p, method='BH'),
+         sig=if_else(adj.p<0.05, '*', '')) %>%
   kable
 ```
 
@@ -69,10 +71,9 @@ All consumption rates are reported as claims per thousand people per year (CPKP)
 ## Claims by abx
 
 ```{r}
-dat = read_tsv('tables/tbl_claims_by_abx.tsv')
 cohort_dat = read_tsv('tables/tbl_cohort_claims_by_abx.tsv')
 
-top_abx = dat %>%
+top_abx = cohort_dat %>%
   group_by(antibiotic) %>%
   summarize(cpkp=mean(cpkp)) %>%
   arrange(desc(cpkp)) %$%
@@ -89,56 +90,44 @@ top_abx_f = function(df) {
     bind_rows(totals) %>%
     mutate(antibiotic=factor(antibiotic, levels=c('all', top_abx)))
 }
+```
 
-all_dat = bind_rows(
-  top_abx_f(dat) %>% mutate(group='all'),
-  top_abx_f(cohort_dat) %>% mutate(group='cohort')
-)
-
-all_dat %>%
-  ggplot(aes(x=year, y=cpkp, color=group)) +
+```{r}
+cohort_dat %>%
+  top_abx_f() %>%
+  ggplot(aes(x=year, y=cpkp)) +
   facet_wrap(~ antibiotic, ncol=3, scales='free_y') +
   geom_point() + geom_line() +
   theme_minimal() +
-  ggtitle('Unadjusted consumption, overall or in cohort')
+  ggtitle('Unadjusted consumption, in cohort')
+
+cohort_dat %>%
+  top_abx_f() %>%
+  filter(year %in% c(2011, 2014)) %>%
+  spread(year, cpkp) %>%
+  mutate(pct_change=(`2014`-`2011`)/`2011`*100) %>%
+  kable
 ```
 
 P-values for trends in the data. (These are $t$-tests on the differences between subsequent years, comparing their mean to zero.)
 
 ```{r}
-all_dat %>%
-  arrange(group, antibiotic, year) %>%
-  group_by(group, antibiotic) %>%
+cohort_dat %>%
+  top_abx_f() %>%
+  arrange(antibiotic, year) %>%
+  group_by(antibiotic) %>%
   summarize(p.value=trend_p(cpkp)) %>%
   ungroup() %>%
   mutate(adj.p.value=p.adjust(p.value, method='BH')) %>%
-  select(antibiotic, group, adj.p.value) %>%
-  spread(group, adj.p.value) %>%
-  mutate(sig=if_else(all < 0.05 | cohort < 0.05, '*', '')) %>%
+  select(antibiotic, adj.p.value) %>%
+  mutate(sig=if_else(adj.p.value < 0.05, '*', '')) %>%
   kable
-```
-
-This shows a summary of the above data, using percent changes from 2011 to 2014:
-
-```{r}
-all_dat %>%
-  arrange(year) %>%
-  group_by(group, antibiotic) %>%
-  summarize(mean_cpkp=mean(cpkp),
-            pct_change=(tail(cpkp, 1)/head(cpkp, 1) - 1)*100) %>%
-  ungroup() %>%
-  filter(antibiotic %in% top_abx) %>%
-  { levels = filter(., group=='cohort') %>% arrange(pct_change) %$% antibiotic;
-    mutate(., antibiotic=factor(.$antibiotic, levels=levels)) } %>%
-  ggplot(aes(x=antibiotic, y=pct_change, color=group)) +
-  geom_point() +
-  coord_flip()
 ```
 
 ## Claims by age group
 
 ```{r claims_by_age}
-read_tsv('tables/tbl_claims_by_age.tsv') %>%
+read_tsv('tables/tbl_cohort_claims_by_age.tsv') %>%
   mutate(cpkp=round(cpkp)) %>%
   select(year, age_group, cpkp) %>%
   spread(year, cpkp) %>%
@@ -148,7 +137,7 @@ read_tsv('tables/tbl_claims_by_age.tsv') %>%
 ## Consumption by sex
 
 ```{r}
-read_tsv('tables/tbl_claims_by_sex.tsv') %>%
+read_tsv('tables/tbl_cohort_claims_by_sex.tsv') %>%
   select(sex, year, cpkp) %>%
   spread(year, cpkp) %>%
   arrange(desc(`2011`)) %>% 
@@ -159,7 +148,7 @@ read_tsv('tables/tbl_claims_by_sex.tsv') %>%
 ## Consumption by region
 
 ```{r}
-read_tsv('tables/tbl_claims_by_region.tsv') %>%
+read_tsv('tables/tbl_cohort_claims_by_region.tsv') %>%
   select(region, year, cpkp) %>%
   spread(year, cpkp) %>%
   arrange(desc(`2011`)) %>% 
@@ -170,7 +159,7 @@ read_tsv('tables/tbl_claims_by_region.tsv') %>%
 ## Consumption by race
 
 ```{r}
-read_tsv('tables/tbl_claims_by_race.tsv') %>%
+read_tsv('tables/tbl_cohort_claims_by_race.tsv') %>%
   select(race, year, cpkp) %>%
   spread(year, cpkp) %>%
   arrange(desc(`2011`)) %>% 
@@ -180,7 +169,7 @@ read_tsv('tables/tbl_claims_by_race.tsv') %>%
 
 # Adjusted consumption changes
 
-"Adjusted" means the `year` coefficient in `y ~ year + age*n_cc + is_female + is_dual + is_white + region`.
+"Adjusted" means the `year` coefficient in `y ~ year + age + n_cc + is_female + is_dual + is_white + region`.
 
 Only in the cohort:
 
@@ -217,7 +206,11 @@ Then I ran models predicting azithromycin and levofloxacin consumption using the
 That is, add COPD, ARTI, and the interactions of those terms with beneficiary age (in 2011) and calendar year.
 
 ```{r}
-read_tsv('tables/tbl_cohort_model_azithro.tsv') %>% kable
+read_tsv('tables/tbl_cohort_model_azithro.tsv') %>%
+  mutate(cpkp=estimate*1000) %>%
+  filter(term != '(Intercept)') %>%
+  select(term, cpkp, p.value) %>%
+  kable
 ```
 
 Azithromycin prescribing decreases with calendar year and with age, even for those who have COPD or an ARTI.
@@ -229,10 +222,49 @@ Azithromycin prescribing decreases with calendar year and with age, even for tho
 That is, add ARTI and the interactions with beneficiary age and calendar year.
 
 ```{r}
-read_tsv('tables/tbl_cohort_model_levo.tsv') %>% kable
+read_tsv('tables/tbl_cohort_model_levo.tsv') %>%
+  mutate(cpkp=estimate*1000) %>%
+  filter(term != '(Intercept)') %>%
+  select(term, cpkp, p.value) %>%
+  kable
 ```
 
 By contrast, levofloxacin prescribing increases with calendar year and with age, including for those who have and ARTI. The overall increase with time is about half the size of the increase with time for those who have an ARTI, meaning that levofloxacin, aside from being prescribed more overall, is being prescribed more especially for those with ARTIs.
 
 Interestingly, the effect of dual-enrollment is much higher for levofloxacin than azithromycin (about triple). Why would being poorer make you more likely to take levofloxacin?
 
+# Supplemental results
+
+## Summary of data for the entire group
+
+```{r}
+read_tsv('tables/tbl_totals.tsv') %>%
+  pctize('n_bene') %>%
+  select(year, n_bene, mean_age, sem_age, mean_n_cc, sem_n_cc,
+         pct_female, pct_white, pct_dual,
+         pct_region_south, pct_region_midwest, pct_region_northeast, pct_region_west) %>%
+  mutate_at(vars(starts_with('pct_')), function(x) round(x, digits=1)) %>%
+  mutate(n_bene=prettyNum(n_bene, big.mark=','),
+         mean_age=round(mean_age, digits=1),
+         mean_n_cc=round(mean_n_cc, digits=2)) %>%
+  gather('var', 'val', -year) %>% spread(year, val) %>% # transpose
+  kable
+```
+
+## Consumption trends in both groups
+
+```{r}
+dat = read_tsv('tables/tbl_claims_by_abx.tsv')
+
+all_dat = bind_rows(
+  top_abx_f(dat) %>% mutate(group='all'),
+  top_abx_f(cohort_dat) %>% mutate(group='cohort')
+)
+
+all_dat %>%
+  ggplot(aes(x=year, y=cpkp, color=group)) +
+  facet_wrap(~ antibiotic, ncol=3, scales='free_y') +
+  geom_point() + geom_line() +
+  theme_minimal() +
+  ggtitle('Unadjusted consumption, overall or in cohort')
+```
