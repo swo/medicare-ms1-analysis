@@ -41,6 +41,7 @@ load_data = function(year) {
   dx = read_tsv(sprintf('../../data/dx_car_claims_%i.tsv', year)) %>%
     select(bene_id=BENE_ID, code=diagnosis) %>%
     left_join(dx_codes, by='code') %>%
+    select(bene_id, diagnosis_type) %>%
     distinct %>%
     mutate(dummy=TRUE) %>%
     spread(diagnosis_type, dummy)
@@ -66,21 +67,18 @@ load_data = function(year) {
 }
 
 dat = lapply(2011:2014, load_data)
-bene = lapply(dat, function(df) df$bene) %>% bind_rows
-pde = lapply(dat, function(df) df$pde) %>% bind_rows
-rm(dat)
 
-# specify the constant cohort
-bene %<>%
+bene = lapply(dat, function(df) df$bene) %>% bind_rows %>%
   group_by(bene_id) %>%
   mutate(n_years=n(),
          start_age=min(age),
          in_cohort=n_years==4) %>%
   ungroup()
 
-# and include that information with the PDEs
-pde %<>%
+pde = lapply(dat, function(df) df$pde) %>% bind_rows %>%
   left_join(select(bene, bene_id, in_cohort), by='bene_id')
+
+rm(dat)
 
 output_table = function(x, base) write_tsv(x, sprintf('tables/tbl_%s.tsv', base))
 sem = function(x) sd(x) / length(x)
@@ -166,6 +164,7 @@ bene %>%
     between(.$age, 87, 96) ~ '87-96')) %>%
   summarize_by_with_cohort('age_group', 'claims_by_age')
 
+# run a model, tidy, and save the output
 model_f = function(bene, frmla, table_name) {
   lm(formula=frmla, data=bene) %>% tidy %>% output_table(table_name)
 }
@@ -173,20 +172,19 @@ model_f = function(bene, frmla, table_name) {
 # models predicting consumption
 # models with all beneficiaries
 model_f(bene, n_claims ~ year, 'model1')
-model_f(bene, n_claims ~ year + age*n_cc + is_female + is_dual + is_white + region, 'model2')
+model_f(bene, n_claims ~ year + age + n_cc + is_female + is_dual + is_white + region, 'model2')
 
 # models using just the cohort
 lm_cohort_bene = bene %>% filter(in_cohort)
 
 model_f(lm_cohort_bene, n_claims ~ year, 'cohort_model1')
-model_f(lm_cohort_bene, n_claims ~ year + start_age + is_female + is_dual + is_white + region, 'cohort_model_test')
-model_f(lm_cohort_bene, n_claims ~ year + start_age*n_cc + is_female + is_dual + is_white + region, 'cohort_model2')
+model_f(lm_cohort_bene, n_claims ~ year + start_age + n_cc + is_female + is_dual + is_white + region, 'cohort_model2')
 
 # models for each individual drug
 subtract_min = function(x) x - min(x)
-single_abx_model = function(bene, abx, frmla) {
+single_abx_model = function(bene, abx, frmla, y_name='n_claims') {
   pde %>%
-    rename(y=n_claims) %>%
+    rename_(y=y_name) %>% 
     filter(antibiotic==abx) %>%
     right_join(bene, by=c('year', 'bene_id')) %>%
     replace_na(list(y=0)) %>%
@@ -196,40 +194,26 @@ single_abx_model = function(bene, abx, frmla) {
     mutate(model=abx)
 }
 
-f = function(a) single_abx_model(bene, a, y ~ year + age*n_cc + is_female + is_dual + is_white + region)
+f = function(a) single_abx_model(bene, a, y ~ year + age + n_cc + is_female + is_dual + is_white + region)
 lapply(top_abx, f) %>%
   bind_rows() %T>%
   output_table('model_abx')
 
-f = function(a) single_abx_model(lm_cohort_bene, a, y ~ year + start_age*n_cc + is_female + is_dual + is_white + region)
+f = function(a) single_abx_model(lm_cohort_bene, a, y ~ year + start_age + n_cc + is_female + is_dual + is_white + region)
 lapply(top_abx, f) %>%
   bind_rows() %T>%
   output_table('cohort_model_abx')
 
 # special levo & azithro models
-single_abx_model(lm_cohort_bene, 'azithromycin', y ~ year + start_age + is_female + is_dual + is_white + region + copd + copd:year + copd:start_age + acute_rc + acute_rc:year + acute_rc:start_age) %>%
+azithro_f = y ~ year + start_age + is_female + is_dual + is_white + region + copd + copd:year + copd:start_age + acute_rc + acute_rc:year + acute_rc:start_age
+single_abx_model(lm_cohort_bene, 'azithromycin', azithro_f) %>%
   output_table('cohort_model_azithro')
-single_abx_model(lm_cohort_bene, 'levofloxacin', y ~ year + start_age + is_female + is_dual + is_white + region + acute_rc + acute_rc:year + acute_rc:start_age) %>%
+levo_f = y ~ year + start_age + is_female + is_dual + is_white + region + acute_rc + acute_rc:year + acute_rc:start_age
+single_abx_model(lm_cohort_bene, 'levofloxacin', levo_f) %>%
   output_table('cohort_model_levo')
 
-#single_condition_model = function(condition_code) {
-#  filter(bene, age >= 67) %>%
-#    rename_(.dots=setNames(condition_code, 'has_condition')) %>%
-#    glm(n_claims ~ age + is_female + has_condition + year,
-#        family=quasipoisson(link='identity'), data=.) %>%
-#    tidy() %>%
-#    mutate(condition=condition_code)
-#}
-
-#conditions = c("AMI", "ALZHDMTA", "ATRIALFB", "CATARACT", "CHRNKIDN", "COPD", "CHF", "DIABETES", "GLAUCOMA", "HIPFRAC", "ISCHMCHT", "DEPRESSN", "OSTEOPRS", "RA_OA", "STRKETIA", "CNCRBRST", "CNCRCLRC", "CNCRPRST", "CNCRLUNG", "CNCRENDM", "ANEMIA", "ASTHMA", "HYPERL", "HYPERP", "HYPERT", "HYPOTH")
-#single_condition_models = lapply(conditions, function(cnd) single_condition_model(cnd)) %>%
-#  bind_rows() %T>%
-#  output_table('single_condition_models')
-
-#all_condition_formula = formula(paste0('n_claims ~ year + age + is_female + is_dual + is_white + region + ', paste0(conditions, collapse=' + ')))
-
-# do a linear model to guess the coefficients
-#all_condition_model = filter(bene, age >= 67) %>%
-#  lm(all_condition_formula, data=.) %>%
-#  tidy %T>%
-#  output_table('model_all_condition')
+# repeated those models with days supply
+single_abx_model(lm_cohort_bene, 'azithromycin', azithro_f, y_name='days_supply') %>%
+  output_table('cohort_model_azithro_days')
+single_abx_model(lm_cohort_bene, 'levofloxacin', levo_f) %>%
+  output_table('cohort_model_levo_days')
