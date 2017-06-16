@@ -55,3 +55,6 @@ print()
 # Azithromycin uses respiratory complaints as denominators
 print('women', 'azithro', rrci_total(177843, 402523, 109681, 1153928, 0.95))
 print('men', 'azithro', rrci_total(84145, 208697, 54134, 713150, 0.95))
+
+# Cipro, with the new data
+print('women', 'cipro', 'newdata', rrci(122298, 127054, 138795, 1168304, 0.95))

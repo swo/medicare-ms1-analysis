@@ -10,6 +10,11 @@ knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', '
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
 ```
 
+# To do
+
+- Separate beneficiaries into "high users" and "low users" based on the median number of outpatient claim dates
+- Try segmenting azithromycin consumption by low/high in wo/men and by RC+/- in wo/men. We want to say that RC, more than low/high, accounts for differences in azithromycin risk, i.e., it's that women get more respiratory complaint diagnoses, not that women just have more complaints. Or vice versa.
+
 # Background
 
 Why do females account for 25% more antibiotic claims per capita than males? I have two easy explanations:
@@ -32,24 +37,31 @@ Before a model, I should just stratify by sex and exposure. Do we already see th
 
 ```{r load_data}
 year = 2011
-bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
-  mutate(is_female=sex=='female', is_white=race=='white')
 
 pde = read_tsv(sprintf('../pde_%i.tsv', year))
 
 sex_icd = read_tsv('sex_codes.tsv', col_types=cols(code='c')) %>%
   rename(dx_code=code, dx_desc=short_desc)
-```
 
-```{r load_dx}
-dx = read_tsv(sprintf('../../data/dx/dx_car_claims_%i.tsv', year), col_types=cols(diagnosis='c')) %>%
+dx = read_tsv(sprintf('../../data/dx_car_claims_%i.tsv', year), col_types=cols(diagnosis='c')) %>%
   select(bene_id=BENE_ID, dx_code=diagnosis) %>%
   left_join(sex_icd, by='dx_code')
 
 dx_counts = dx %>%
   count(dx_code)
 
+bene_dx = dx %>%
+  select(bene_id, diagnosis_type) %>%
+  distinct() %>%
+  mutate(val=TRUE) %>%
+  spread(diagnosis_type, val)
+
 total_pde = pde %>% count(bene_id) %>% rename(n_claims=n)
+
+bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
+  mutate(is_female=sex=='female', is_white=race=='white') %>%
+  left_join(total_pde, by='bene_id') %>% replace_na(list(n_claims=0)) %>%
+  left_join(bene_dx, by='bene_id') %>% replace_na(list(acute_rc=FALSE, copd=FALSE, uti=FALSE))
 ```
 
 ## Diagnostic codes and counts
@@ -57,25 +69,12 @@ total_pde = pde %>% count(bene_id) %>% rename(n_claims=n)
 ```{r}
 sex_icd %>%
   left_join(dx_counts, by='dx_code') %>%
-  kable
+  arrange(diagnosis_type, desc(n)) %>%
+  mutate(n=format(n, big.mark=',')) %>%
+  kable(align='lllr')
 ```
 
 # Results
-
-## Consumption by age and sex
-
-It seems that females consume more antibiotics even within each age bracket (except for those over 95).
-
-```{r consumption_by_age_and_sex}
-bene %>%
-  left_join(total_pde, by='bene_id') %>%
-  replace_na(list(n_claims=0)) %>%
-  group_by(sex, age) %>%
-  summarize(mean_n_claims=mean(n_claims)) %>%
-  ungroup() %>%
-  ggplot(aes(x=age, y=mean_n_claims, color=sex)) +
-  geom_point()
-```
 
 ## Consumption of drugs by sex
 
@@ -84,6 +83,7 @@ Looking at top drugs by sex.
 ```{r drugs_by_sex}
 usage_by_sex = function(drug) {
   bene %>%
+    select(-n_claims) %>%
     left_join(pde %>% filter(antibiotic==drug) %>% count(bene_id) %>% rename(n_claims=n), by='bene_id') %>%
     replace_na(list(n_claims=0)) %>%
     group_by(sex) %>%
@@ -115,6 +115,7 @@ ubs = pde %>%
 ubs %>%
   mutate(highlight=antibiotic %in% c('azithromycin', 'ciprofloxacin', 'trimethoprim/sulfamethoxazole', 'fosfomycin', 'nitrofurantoin')) %>%
   ggplot(aes(x=male, y=female, label=antibiotic, color=highlight)) +
+  scale_color_manual(values=c('black', 'red')) +
   geom_text() +
   geom_point() +
   geom_abline() +
@@ -124,20 +125,45 @@ ubs %>%
   coord_fixed()
 ```
 
-For a more quantitative approach, this is a table showing, for each antibiotic, the CPKP for female and males, the difference (residual) between the two, and the residual fraction (the residual over the mean of the female and male consumptions). Positive residuals means more consumption by females.
+Alternatively, I look at the mean usage (across men and women), the residual (the difference between the fraction of female beneficiaries taking the drug and male beneficiaries), and the fractional residual (the residual over the mean). I keep only those drugs with mean fraction at least 1%, and I also keep fosfomycin.
 
 ```{r}
-dbs %>% head %>% kable
+ubs %>%
+  mutate(mean_fraction=0.5*(male+female),
+         residual=female-male,
+         fractional_residual=residual/mean_fraction) %>%
+  filter(mean_fraction > 0.01 | antibiotic=='fosfomycin') %>%
+  ggplot(aes(x=mean_fraction, y=fractional_residual, label=antibiotic)) +
+  geom_point() +
+  geom_text()
 ```
 
-```{r drug_by_sex_residuals, eval=FALSE}
-dbs %>%
-  select(antibiotic, sex, cpkp) %>%
-  spread(sex, cpkp) %>%
-  mutate(residual=female-male, residual_fraction=residual/(0.5 * (male + female))) %>%
-  arrange(desc(abs(residual))) %>%
-  head(10) %>%
-  kable
+This makes the same four look interesting; maybe levofloxacin and metronidazole would be next. Levo fits in with the ARTI story; metro does not.
+
+## UTIs
+
+Are the increased consumptions of cipro and TMP/SMX explained by UTIs? That is, do men and women who have UTIs get cipro and TMP/SMX at similar rates, and it's just that women get more UTIs than men?
+
+### Cipro
+
+```{r}
+outcome_bene = pde %>% filter(antibiotic=='ciprofloxacin') %$% bene_id %>% unique
+epi = bene %>%
+  mutate(outcome=bene_id %in% outcome_bene) %>%
+  count(sex, uti, outcome) %>%
+  ungroup()
+```
+
+```{r}
+group_by_all_ = function(df, group_name) {
+  bind_rows(df, mutate_(df, .dots=setNames(list(~'all'), group_name))) %>%
+    group_by_(group_name)
+}
+
+epi %>%
+  group_by_all_('sex') %>%
+  summarize(n_cases=sum(n)) %>%
+  
 ```
 
 ## Azithromycin
@@ -222,7 +248,7 @@ outpatient = read_tsv('../../data/outpatient_count_2011.tsv') %>%
 denom = usage %>% select(bene_id, sex, age) %>% distinct
 ```
 
-```{r azithromycin_usage}
+```{r azithromycin_usage, eval=FALSE}
 na_to_zero = function(x) if_else(is.na(x), 0L, x)
 
 azi_usage = usage %>%
@@ -238,7 +264,7 @@ azi_usage = usage %>%
   mutate_at(vars(n_claims, n_carrier_dates, n_inpatient_dates, n_outpatient_dates), na_to_zero)
 ```
 
-```{r azithromycin_usage_table}
+```{r azithromycin_usage_table, eval=FALSE}
 azi_usage %>%
   group_by(age_group, sex) %>%
   summarize(n_beneficiaries=n(),
@@ -251,7 +277,7 @@ azi_usage %>%
 
 And I'll do a Poisson regression of number of azithromycin claims against age, being female, and number of carrier dates:
 
-```{r azithromycin_usage_model}
+```{r azithromycin_usage_model, eval=FALSE}
 library(broom)
 azi_usage %>%
   mutate(is_female=sex=='female') %>%
@@ -262,3 +288,21 @@ azi_usage %>%
 ```
 
 The coefficient for being female (0.05) accounts for almost the entire difference in consumption between men and women (56 per thousand). Note that age has an approximately zero correlation (i.e.,
+
+# Supplement
+
+## Consumption by age and sex
+
+At every age, women consume more antibiotics than men.
+
+```{r consumption_by_age_and_sex}
+bene %>%
+  left_join(total_pde, by='bene_id') %>%
+  replace_na(list(n_claims=0)) %>%
+  group_by(sex, age) %>%
+  summarize(mean_n_claims=mean(n_claims)) %>%
+  ungroup() %>%
+  ggplot(aes(x=age, y=mean_n_claims, color=sex)) +
+  geom_point()
+```
+
