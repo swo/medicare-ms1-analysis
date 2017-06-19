@@ -13,6 +13,7 @@ import::from(lazyeval, interp)
 import::from(broom, tidy)
 import::from(stringr, str_replace, str_detect)
 import::from(forcats, as_factor)
+import::from(tools, md5sum)
 
 pctize = function(df, denom_name) {
   for (n_name in Filter(function(x) str_detect(x, '^n_'), names(df))) {
@@ -23,6 +24,33 @@ pctize = function(df, denom_name) {
 }
 
 trend_p = function(x) t.test(diff(x))$p.value
+```
+
+# Abstract
+
+```{r}
+model_ci = function(df) {
+  mutate(df, ci_range=1.96*std.error,
+         ci_low=estimate-ci_range,
+         ci_high=estimate+ci_range)
+}
+
+model_ci_cpkp = function(df) {
+  model_ci(df) %>%
+    mutate_at(vars(ci_range, ci_low, ci_high, estimate), function(x) x * 1000) %>%
+    rename(cpkp=estimate)
+}
+
+read_tsv('tables/tbl_cohort_model2.tsv') %>%
+  filter(term=='year') %>%
+  model_ci_cpkp() %>%
+  kable
+
+read_tsv('tables/tbl_cohort_model_abx.tsv') %>%
+  filter(model %in% c('azithromycin', 'levofloxacin'), term=='year') %>%
+  select(term, estimate, std.error, model) %>%
+  model_ci_cpkp() %>%
+  kable
 ```
 
 # Summary of data
@@ -171,20 +199,29 @@ read_tsv('tables/tbl_cohort_claims_by_race.tsv') %>%
 
 "Adjusted" means the `year` coefficient in `y ~ year + age + n_cc + is_female + is_dual + is_white + region`.
 
-Only in the cohort:
-
-```{r}
-read_tsv('tables/tbl_cohort_model_abx.tsv') %>%
+```{r adjusted_changes, cache.extra=md5sum('tables/tbl_cohort_model_abx.tsv')}
+x = read_tsv('tables/tbl_cohort_model_abx.tsv') %>%
   filter(term=='year', model %in% top_abx) %>%
   arrange(estimate) %>%
   mutate(cpkp_per_year=estimate*1000,
          antibiotic=as_factor(model)) %>%
-  select(antibiotic, cpkp_per_year) %>%
+  select(antibiotic, cpkp_per_year)
+
+p = x %>%
   ggplot(aes(x=antibiotic, y=cpkp_per_year)) +
   geom_point() +
+  geom_linerange(aes(x=antibiotic, ymin=0, ymax=cpkp_per_year)) +
   coord_flip() +
   ggtitle('Adjusted changes in consumption') +
+  xlab('') +
+  ylab('adjusted yearly change in claims per 1,000 beneficiaries per year') +
+  scale_y_continuous(limits=c(-16, 17), breaks=c(-15, -10, -5, 0, 5, 10, 15)) +
   theme_minimal()
+
+show(p)
+ggsave('fig/fig_adjusted_changes.pdf', plot=p)
+
+x %>% kable
 ```
 
 # Azithro and levo
@@ -205,11 +242,12 @@ Then I ran models predicting azithromycin and levofloxacin consumption using the
 
 That is, add COPD, ARTI, and the interactions of those terms with beneficiary age (in 2011) and calendar year.
 
-```{r}
+```{r, cache.extra=md5sum('tables/tbl_cohort_model_azithro.tsv')}
 read_tsv('tables/tbl_cohort_model_azithro.tsv') %>%
-  mutate(cpkp=estimate*1000) %>%
+  model_ci_cpkp() %>%
   filter(term != '(Intercept)') %>%
-  select(term, cpkp, p.value) %>%
+  select(term, cpkp, ci_low, ci_high, p.value) %>%
+  mutate_at(vars(cpkp, ci_low, ci_high), function(x) round(x, 1)) %>%
   kable
 ```
 
@@ -221,11 +259,12 @@ Azithromycin prescribing decreases with calendar year and with age, even for tho
 
 That is, add ARTI and the interactions with beneficiary age and calendar year.
 
-```{r}
+```{r, cache.extra=md5sum('tables/tbl_cohort_model_levo.tsv')}
 read_tsv('tables/tbl_cohort_model_levo.tsv') %>%
-  mutate(cpkp=estimate*1000) %>%
+  model_ci_cpkp() %>%
   filter(term != '(Intercept)') %>%
-  select(term, cpkp, p.value) %>%
+  select(term, cpkp, ci_low, ci_high, p.value) %>%
+  mutate_at(vars(cpkp, ci_low, ci_high), function(x) round(x, 1)) %>%
   kable
 ```
 
