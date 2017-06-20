@@ -65,16 +65,16 @@ raw_abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='
   mutate(drug=tolower(drug), percent_nonsusceptible=100-percent_susceptible) %>%
   left_join(hrr, by=c('zipcode', 'state')) %>%
   right_join(resistance_groups, by='drug') %>%
-  select(bug, drug, drug_group, state, hrr, percent_nonsusceptible, n_isolates)
+  select(bug, raw_drug=drug, drug_group, state, hrr, percent_nonsusceptible, n_isolates)
 
 # Keep only the abundant bug/drug combinations
-min_n_states = 35
-good_combos = semi_join(raw_abg, possible_bug_drug, by=c('bug', 'drug_group')) %>%
-  select(bug, drug_group, state) %>%
-  distinct %>%
-  count(bug, drug_group) %>% ungroup() %>% 
-  rename(n_places=n) %>%
-  filter(n_places >= min_n_states)
+# min_n_states = 35
+# good_combos = semi_join(raw_abg, possible_bug_drug, by=c('bug', 'drug_group')) %>%
+#   select(bug, drug_group, state) %>%
+#   distinct %>%
+#   count(bug, drug_group) %>% ungroup() %>% 
+#   rename(n_places=n) %>%
+#   filter(n_places >= min_n_states)
 
 abg = raw_abg %>%
   #mutate(raw_bug=bug) %>%
@@ -85,9 +85,9 @@ abg = raw_abg %>%
   left_join(bug_groups, by=c('bug', 'drug_group')) %>%
   mutate(bug_group=if_else(is.na(bug_group), bug, bug_group)) %>%
   select(-bug) %>% rename(bug=bug_group) %>%
-  right_join(good_combos, by=c('bug', 'drug_group')) %>%
+  #right_join(good_combos, by=c('bug', 'drug_group')) %>%
   # keep only particular bug/drug combos
-  right_join(possible_bug_drug, by=c('bug', 'drug_group')) #%>%
+  right_join(possible_bug_drug, by=c('bug', 'drug_group'))
   #filter(!is.na(percent_nonsusceptible), !is.na(n_isolates))
 
 # get the median number of isolates for each bug/drug
@@ -97,11 +97,29 @@ median_n_isolates = abg %>%
   summarize(median_n_isolates=as.integer(median(n_isolates))) %>%
   ungroup()
 
+# get the number of states in which each bug/drug appears
+min_n_states = 37
+abg_n_states = abg %>%
+  select(bug, drug_group, state) %>%
+  distinct() %>%
+  count(bug, drug_group) %>%
+  ungroup() %>%
+  rename(n_states=n)
+abg_n_hrr = abg %>%
+  select(bug, drug_group, hrr) %>%
+  distinct() %>%
+  count(bug, drug_group) %>%
+  ungroup() %>%
+  rename(n_hrr=n)
+
 # replace the NA number of isolates with the median for that bug/drug
 abg %<>%
   left_join(median_n_isolates) %>%
   mutate(n_isolates=if_else(is.na(n_isolates), median_n_isolates, n_isolates)) %>%
-  select(-median_n_isolates)
+  select(-median_n_isolates) %>%
+  left_join(abg_n_states, by=c('bug', 'drug_group')) %>%
+  left_join(abg_n_hrr, by=c('bug', 'drug_group'))
+  #filter(n_places >= min_n_states)
 
 # check that all the short names made it in
 for (x in c('bug', 'n_isolates', 'percent_nonsusceptible')) {
