@@ -4,15 +4,12 @@ author: "Scott Olesen"
 output: html_document
 ---
 
-# To do
-
-- filter by HRRs, not states
-
 ```{r global_options, include=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
                       pdf.options(useDingbats=FALSE),
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
 import::from(broom, tidy)
+import::from(tools, md5sum)
 ```
 
 ```{r load_data}
@@ -58,11 +55,11 @@ hrr_ineq = read_years('data/hrr_ineq_%i.tsv') %>%
   ungroup()
 ```
 
-```{r load_abg}
+```{r load_abg, cache.extra=md5sum('bug_drug.tsv')}
 resistance_groups = read_tsv('resistance_groups.tsv')
 bug_names = read_tsv('bug_names.tsv')
 
-abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c')) %>%
+raw_abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c')) %>%
   mutate(drug=tolower(drug), percent_nonsusceptible=100-percent_susceptible) %>%
   left_join(hrr, by=c('zipcode', 'state')) %>%
   right_join(resistance_groups, by='drug') %>%
@@ -71,14 +68,17 @@ abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c'))
 possible_bug_drug = read_tsv('bug_drug.tsv')
 
 # Keep only the abundant bug/drug combinations
-min_n_states = 35
-good_combos = semi_join(abg, possible_bug_drug, by=c('bug', 'drug_group')) %>%
-  select(bug, drug_group, state) %>%
-  distinct %>%
-  count(bug, drug_group) %>% rename(n_places=n) %>%
-  filter(n_places >= min_n_states)
+#min_n_states = 25
+#good_combos = semi_join(raw_abg, possible_bug_drug, by=c('bug', 'drug_group')) %>%
+#  select(bug, drug_group, state) %>%
+#  distinct %>%
+#  count(bug, drug_group) %>% ungroup() %>% 
+#  rename(n_places=n) %>%
+#  filter(n_places >= min_n_states)
 
-abg %<>% right_join(good_combos, by=c('bug', 'drug_group')) %>%
+abg = raw_abg %>%
+  #right_join(good_combos, by=c('bug', 'drug_group')) %>%
+  right_join(possible_bug_drug, by=c('bug', 'drug_group')) %>%
   rename(bug_long=bug) %>% left_join(bug_names, by='bug_long') %>% select(-bug_long) %>%
   filter(!is.na(percent_nonsusceptible), !is.na(n_isolates))
 
@@ -162,13 +162,17 @@ I join the resistance drugs into classes:
 
 I similarly joined the consumption drugs into similar classes.
 
-I started by considering these bug/drug combinations:
+I started by considering these bug/drug combinations on the basis of their clinical relevance and plausibility:
 
 `r kable(possible_bug_drug)`
 
-Then I filtered to keep only those bug/drug combinations that were present in `r min_n_states` states. That means I'm looking at these `r nrow(good_combos)` bug/drug combinations:
+In previous iterations, I filtered by the number of states in which each bug/drug combination appeared. Increasing that threshold ends up testing the relationships for which we have the best data, and therefore we are the best powered for. Unfortunately, my simulations mostly make it seem like we should, to get the best power, use all the bug/drug combinations.
 
-`r good_combos %>% arrange(desc(n_places)) %>% kable`
+```{r, eval=FALSE}
+#Then I filtered to keep only those bug/drug combinations that were present in `r min_n_states` states. That means I'm looking at these `r nrow(good_combos)` bug/drug combinations:
+
+#`r good_combos %>% arrange(desc(n_places)) %>% kable`
+```
 
 ## Preparing the consumption data
 
@@ -427,6 +431,24 @@ all_ineq %$% cor.test(mean_cpb, mean_nzgini, method='spearman')
 ```
 
 ## Spearman models
+
+### Comparing state and HRR
+
+HRR-level Spearman correlations between consumption and resistance (almost) always underestimate the correlation reported at the state level:
+
+```{r}
+bind_rows(mutate(results, group='state'),
+          mutate(hrr_results, group='hrr')) %>%
+  filter(model=='spearman') %>%
+  arrange(estimate) %>%
+  mutate(bug_drug=interaction(bug, drug_group)) %>%
+  select(bug_drug, group, estimate) %>%
+  spread(group, estimate) %>%
+  ggplot(aes(x=state, y=hrr, label=bug_drug)) +
+  geom_point() +
+  geom_text() +
+  geom_abline()
+```
 
 ### State-level volcano plot
 

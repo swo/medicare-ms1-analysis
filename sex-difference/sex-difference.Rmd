@@ -40,35 +40,50 @@ year = 2011
 
 pde = read_tsv(sprintf('../pde_%i.tsv', year))
 
-sex_icd = read_tsv('sex_codes.tsv', col_types=cols(code='c')) %>%
-  rename(dx_code=code, dx_desc=short_desc)
+sex_icd = read_tsv('sex_codes.tsv', col_types=cols(code='c'))
 
-dx = read_tsv(sprintf('../../data/dx_car_claims_%i.tsv', year), col_types=cols(diagnosis='c')) %>%
-  select(bene_id=BENE_ID, dx_code=diagnosis) %>%
-  left_join(sex_icd, by='dx_code')
+dx_car = sprintf('../../data/dx_car_claims_%i.tsv', year) %>%
+  read_tsv(col_types=cols(diagnosis='c'))
+dx_op = sprintf('../../data/dx_op_claims_%i.tsv', year) %>%
+  read_tsv(col_types=cols(diagnosis='c'))
+
+dx = bind_rows(dx_car, dx_op) %>%
+  mutate(date=dmy(from_date)) %>%
+  select(bene_id=BENE_ID, date, code=diagnosis) %>%
+  left_join(sex_icd, by='code')
 
 dx_counts = dx %>%
-  count(dx_code)
+  count(code)
 
 bene_dx = dx %>%
   select(bene_id, diagnosis_type) %>%
   distinct() %>%
-  mutate(val=TRUE) %>%
-  spread(diagnosis_type, val)
+  mutate(dummy=TRUE) %>%
+  spread(diagnosis_type, dummy)
+
+rc_dx = dx %>%
+  filter(diagnosis_type=='acute_rc') %>%
+  select(bene_id, date) %>%
+  group_by(bene_id) %>%
+  summarize(n_acute_rc=length(unique(date)))
 
 total_pde = pde %>% count(bene_id) %>% rename(n_claims=n)
+
+cc = read_feather(sprintf('../cc_%i.feather', year))
 
 bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
   mutate(is_female=sex=='female', is_white=race=='white') %>%
   left_join(total_pde, by='bene_id') %>% replace_na(list(n_claims=0)) %>%
-  left_join(bene_dx, by='bene_id') %>% replace_na(list(acute_rc=FALSE, copd=FALSE, uti=FALSE))
+  left_join(bene_dx, by='bene_id') %>% replace_na(list(acute_rc=FALSE, copd=FALSE, uti=FALSE)) %>%
+  left_join(select(cc, bene_id, COPD), by='bene_id') %>%
+  left_join(rc_dx, by='bene_id') %>% replace_na(list(n_acute_rc=0))
 ```
 
 ## Diagnostic codes and counts
 
 ```{r}
 sex_icd %>%
-  left_join(dx_counts, by='dx_code') %>%
+  left_join(dx_counts, by='code') %>%
   arrange(diagnosis_type, desc(n)) %>%
   mutate(n=format(n, big.mark=',')) %>%
   kable(align='lllr')
@@ -207,26 +222,6 @@ Does that mean that:
 - women have more chronic conditions (esp. COPD) and therefore use more, or
 - women have more encounters with doctors and therefore are prescribed more?
 
-### Sex by age
-
-The older people are more female: age 65 is about 60% female. This stays constant around 60% (or dips slightly) until age 75, when it steadily increases up to 85-90% female at age 100. So we'll need to account for this age difference.
-
-```{r sex_by_age, eval=FALSE}
-plot_dat = usage %>%
-  select(age, sex) %>%
-  filter(sex %in% c('male', 'female')) %>%
-  group_by(age) %>% count(sex) %>% ungroup() %>%
-  spread(sex, n, fill=0L) %>%
-  mutate(total=female+male, grand_total=sum(total),
-         fraction_year=total/grand_total, fraction_female=female/total)
-
-ggplot(mapping=aes(x=age, y=fraction)) +
-  geom_point(data=rename(plot_dat, fraction=fraction_female)) +
-  geom_line(data=mutate(plot_dat, fraction=fraction_year*10), col='red') +
-  ylab('fraction female') + ylim(0, 1) +
-  theme_minimal()
-```
-
 ### Chronic conditions
 
 Cf. the chronic conditions report.
@@ -306,3 +301,22 @@ bene %>%
   geom_point()
 ```
 
+### Sex by age
+
+The older people are more female: age 65 is about 60% female. This stays constant around 60% (or dips slightly) until age 75, when it steadily increases up to 85-90% female at age 100. So we'll need to account for this age difference.
+
+```{r sex_by_age, eval=FALSE}
+plot_dat = usage %>%
+  select(age, sex) %>%
+  filter(sex %in% c('male', 'female')) %>%
+  group_by(age) %>% count(sex) %>% ungroup() %>%
+  spread(sex, n, fill=0L) %>%
+  mutate(total=female+male, grand_total=sum(total),
+         fraction_year=total/grand_total, fraction_female=female/total)
+
+ggplot(mapping=aes(x=age, y=fraction)) +
+  geom_point(data=rename(plot_dat, fraction=fraction_female)) +
+  geom_line(data=mutate(plot_dat, fraction=fraction_year*10), col='red') +
+  ylab('fraction female') + ylim(0, 1) +
+  theme_minimal()
+```
