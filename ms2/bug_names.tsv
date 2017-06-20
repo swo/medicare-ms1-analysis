@@ -1,9 +1,10 @@
-bug_long	bug
+bug	bug_short
 Coagulase-negative staphylococci	CoNS
 Enterobacter cloacae	Eb. cloacae
 Enterococcus faecium	Ec. faecium
 Escherichia coli	E. coli
 Methicillin-susceptible S. aureus (MSSA)	MSSA
 Methicillin-resistant S. aureus (MRSA)	MRSA
+Staphyloccocus aureus	General S. aureus
 Proteus mirabilis	P. mirabilis
 Streptococcus pneumoniae (non-meningitis)	S. pneumoniae

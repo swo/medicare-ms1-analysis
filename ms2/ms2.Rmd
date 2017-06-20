@@ -58,37 +58,61 @@ hrr_ineq = read_years('data/hrr_ineq_%i.tsv') %>%
 ```{r load_abg, cache.extra=md5sum('bug_drug.tsv')}
 resistance_groups = read_tsv('resistance_groups.tsv')
 bug_names = read_tsv('bug_names.tsv')
+bug_groups = read_tsv('bug_groups.tsv')
+possible_bug_drug = read_tsv('bug_drug.tsv')
 
 raw_abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c')) %>%
   mutate(drug=tolower(drug), percent_nonsusceptible=100-percent_susceptible) %>%
   left_join(hrr, by=c('zipcode', 'state')) %>%
   right_join(resistance_groups, by='drug') %>%
-  select(bug, drug_group, state, hrr, percent_nonsusceptible, n_isolates)
-
-possible_bug_drug = read_tsv('bug_drug.tsv')
+  select(bug, drug, drug_group, state, hrr, percent_nonsusceptible, n_isolates)
 
 # Keep only the abundant bug/drug combinations
-#min_n_states = 25
-#good_combos = semi_join(raw_abg, possible_bug_drug, by=c('bug', 'drug_group')) %>%
-#  select(bug, drug_group, state) %>%
-#  distinct %>%
-#  count(bug, drug_group) %>% ungroup() %>% 
-#  rename(n_places=n) %>%
-#  filter(n_places >= min_n_states)
+min_n_states = 35
+good_combos = semi_join(raw_abg, possible_bug_drug, by=c('bug', 'drug_group')) %>%
+  select(bug, drug_group, state) %>%
+  distinct %>%
+  count(bug, drug_group) %>% ungroup() %>% 
+  rename(n_places=n) %>%
+  filter(n_places >= min_n_states)
 
 abg = raw_abg %>%
-  #right_join(good_combos, by=c('bug', 'drug_group')) %>%
-  right_join(possible_bug_drug, by=c('bug', 'drug_group')) %>%
-  rename(bug_long=bug) %>% left_join(bug_names, by='bug_long') %>% select(-bug_long) %>%
-  filter(!is.na(percent_nonsusceptible), !is.na(n_isolates))
+  #mutate(raw_bug=bug) %>%
+  # shorten the bug names
+  left_join(bug_names, by='bug') %>%
+  select(-bug) %>% rename(bug=bug_short) %>%
+  # group the different S. aureus into meta-groups depending on the drug
+  left_join(bug_groups, by=c('bug', 'drug_group')) %>%
+  mutate(bug_group=if_else(is.na(bug_group), bug, bug_group)) %>%
+  select(-bug) %>% rename(bug=bug_group) %>%
+  right_join(good_combos, by=c('bug', 'drug_group')) %>%
+  # keep only particular bug/drug combos
+  right_join(possible_bug_drug, by=c('bug', 'drug_group')) #%>%
+  #filter(!is.na(percent_nonsusceptible), !is.na(n_isolates))
+
+# get the median number of isolates for each bug/drug
+median_n_isolates = abg %>%
+  filter(!is.na(n_isolates)) %>%
+  group_by(bug, drug_group) %>%
+  summarize(median_n_isolates=as.integer(median(n_isolates))) %>%
+  ungroup()
+
+# replace the NA number of isolates with the median for that bug/drug
+abg %<>%
+  left_join(median_n_isolates) %>%
+  mutate(n_isolates=if_else(is.na(n_isolates), median_n_isolates, n_isolates)) %>%
+  select(-median_n_isolates)
 
 # check that all the short names made it in
-if (any(is.na(abg$bug))) stop('missing bug names')
+for (x in c('bug', 'n_isolates', 'percent_nonsusceptible')) {
+  if (any(is.na(abg[[x]]))) stop(sprintf('NAs in field "%s"', x))
+}
 
 summarize_abg = function(df, place_name) {
     group_by_(df, 'bug', 'drug_group', place_name) %>%
     summarize(mean_percent_nonsusceptible=weighted.mean(percent_nonsusceptible, sqrt(n_isolates)),
               n_place_antibiograms=n()) %>%
+    ungroup() %>%
     mutate(place_weight=sqrt(n_place_antibiograms))
 }
 
@@ -162,7 +186,7 @@ I join the resistance drugs into classes:
 
 I similarly joined the consumption drugs into similar classes.
 
-I started by considering these bug/drug combinations on the basis of their clinical relevance and plausibility:
+I started by considering these `r nrow(possible_bug_drug)` bug/drug combinations on the basis of their clinical relevance and plausibility:
 
 `r kable(possible_bug_drug)`
 
@@ -213,6 +237,17 @@ results %>%
   filter(model=='spearman') %>%
   interval_plot() +
   ylab("Spearman's rho")
+```
+
+```{r}
+x = abg %>% 
+  select(bug, drug_group, state) %>%
+  distinct() %>%
+  count(bug, drug_group) %>% ungroup() %>% rename(n_places=n)
+results %>% filter(model=='spearman') %>%
+  left_join(x, by=c('bug', 'drug_group')) %>%
+  ggplot(aes(x=n_places, y=estimate)) +
+  geom_point()
 ```
 
 ## Differences in consumption/resistance patterns explain some of these results
