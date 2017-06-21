@@ -8,8 +8,7 @@ nitrofurantoin	E. coli
 beta_lactam	E. coli
 quinolone	E. coli
 tmp_smx	E. coli
-clindamycin	MRSA
-clindamycin	MSSA
+clindamycin	S. aureus
 tmp_smx	S. aureus
 tetracycline	S. aureus
 cephalosporin_gen1	Non-MR SA

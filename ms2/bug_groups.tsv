@@ -1,0 +1,12 @@
+bug	drug_group	bug_group
+General S. aureus	tetracycline	S. aureus
+MRSA	tetracycline	S. aureus
+MSSA	tetracycline	S. aureus
+General S. aureus	tmp_smx	S. aureus
+MRSA	tmp_smx	S. aureus
+MSSA	tmp_smx	S. aureus
+General S. aureus	clindamycin	S. aureus
+MRSA	clindamycin	S. aureus
+MSSA	clindamycin	S. aureus
+General S. aureus	cephalosporin_gen1	Non-MR SA
+MSSA	cephalosporin_gen1	Non-MR SA

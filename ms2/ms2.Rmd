@@ -43,15 +43,15 @@ all_ineq = read_years('data/state_ineq_all_%i.tsv') %>%
   left_join(regions, by='state')
   
 state_ineq = read_years('data/state_ineq_%i.tsv') %>%
-  rename(cpb=mean) %>%
+  rename(cpb=mean, nzg=nzgini, nzr=mean_fnz_residual) %>%
   group_by(state, drug_group) %>%
-  summarize(cpb=mean(cpb), fnz=mean(fnz), nzg=mean(nzgini)) %>%
+  summarize_at(vars(-state, -drug_group, -total), mean) %>%
   ungroup()
 
 hrr_ineq = read_years('data/hrr_ineq_%i.tsv') %>%
-  rename(cpb=mean) %>%
+  rename(cpb=mean, nzg=nzgini, nzr=mean_fnz_residual) %>%
   group_by(hrr, drug_group) %>%
-  summarize(cpb=mean(cpb), fnz=mean(fnz), nzg=mean(nzgini)) %>%
+  summarize_at(vars(-hrr, -drug_group, -total), mean) %>%
   ungroup()
 ```
 
@@ -172,12 +172,13 @@ spearman_model = function(df, dependent_var, explanatory_var) {
 }
 
 uni_term = 'cpb' # univariable explanatory term
-multi_term = 'nzg' # multivariable explanatory term (along with fnz)
+multi_term_adjuster = 'cpb'
+multi_term = 'nb_prob' # multivariable explanatory term (along with fnz)
 models = function(x) {
   dep = 'mean_percent_nonsusceptible'
   bind_rows(
     linear_model(x, dep, uni_term) %>% mutate(model='uni'),
-    linear_model(x, dep, c('fnz', multi_term)) %>% mutate(model='multi'),
+    linear_model(x, dep, c(multi_term_adjuster, multi_term)) %>% mutate(model='multi'),
     spearman_model(x, dep, uni_term) %>% mutate(model='spearman')
   ) %>%
     mutate(n_data=nrow(x))
