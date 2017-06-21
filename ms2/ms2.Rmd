@@ -258,7 +258,18 @@ results %>%
   ylab("Spearman's rho")
 ```
 
-```{r}
+HRR spearman:
+
+```{r hrr_spearman_interval}
+hrr_results %>%
+  filter(model=='spearman') %>%
+  interval_plot() +
+  ylab("Spearman's rho")
+```
+
+```{r, eval=FALSE}
+# Used this to show that there's a correlation between
+# strength of correlation and amount of data
 x = abg %>% 
   select(bug, drug_group, state) %>%
   distinct() %>%
@@ -411,17 +422,17 @@ left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   theme_minimal()
 ```
 
-## MSSA and clindamycin
+## S. aureus and clindamycin
 
-```{r mssa_clinda}
+```{r staph_clinda}
 left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
   left_join(regions, by='state') %>%
-  filter(bug=='MSSA', drug_group=='clindamycin') %>%
+  filter(bug=='S. aureus', drug_group=='clindamycin') %>%
   ggplot(aes(x=cpb, y=mean_percent_nonsusceptible, label=state)) +
   geom_smooth(method='lm', col='gray', se=FALSE) +
   geom_point() +
   geom_text() +
-  xlab('clindamycin claims per beneficiary') + ylab('mean percent nonsusceptible MSSA isolates') +
+  xlab('clindamycin claims per beneficiary') + ylab('mean percent nonsusceptible S. aureus isolates') +
   theme_minimal()
 ```
 
