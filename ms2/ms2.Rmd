@@ -67,17 +67,7 @@ raw_abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='
   right_join(resistance_groups, by='drug') %>%
   select(bug, raw_drug=drug, drug_group, state, hrr, percent_nonsusceptible, n_isolates)
 
-# Keep only the abundant bug/drug combinations
-# min_n_states = 35
-# good_combos = semi_join(raw_abg, possible_bug_drug, by=c('bug', 'drug_group')) %>%
-#   select(bug, drug_group, state) %>%
-#   distinct %>%
-#   count(bug, drug_group) %>% ungroup() %>% 
-#   rename(n_places=n) %>%
-#   filter(n_places >= min_n_states)
-
 abg = raw_abg %>%
-  #mutate(raw_bug=bug) %>%
   # shorten the bug names
   left_join(bug_names, by='bug') %>%
   select(-bug) %>% rename(bug=bug_short) %>%
@@ -85,10 +75,8 @@ abg = raw_abg %>%
   left_join(bug_groups, by=c('bug', 'drug_group')) %>%
   mutate(bug_group=if_else(is.na(bug_group), bug, bug_group)) %>%
   select(-bug) %>% rename(bug=bug_group) %>%
-  #right_join(good_combos, by=c('bug', 'drug_group')) %>%
   # keep only particular bug/drug combos
   right_join(possible_bug_drug, by=c('bug', 'drug_group'))
-  #filter(!is.na(percent_nonsusceptible), !is.na(n_isolates))
 
 # get the median number of isolates for each bug/drug
 median_n_isolates = abg %>%
@@ -97,29 +85,11 @@ median_n_isolates = abg %>%
   summarize(median_n_isolates=as.integer(median(n_isolates))) %>%
   ungroup()
 
-# get the number of states in which each bug/drug appears
-min_n_states = 37
-abg_n_states = abg %>%
-  select(bug, drug_group, state) %>%
-  distinct() %>%
-  count(bug, drug_group) %>%
-  ungroup() %>%
-  rename(n_states=n)
-abg_n_hrr = abg %>%
-  select(bug, drug_group, hrr) %>%
-  distinct() %>%
-  count(bug, drug_group) %>%
-  ungroup() %>%
-  rename(n_hrr=n)
-
 # replace the NA number of isolates with the median for that bug/drug
 abg %<>%
   left_join(median_n_isolates) %>%
   mutate(n_isolates=if_else(is.na(n_isolates), median_n_isolates, n_isolates)) %>%
-  select(-median_n_isolates) %>%
-  left_join(abg_n_states, by=c('bug', 'drug_group')) %>%
-  left_join(abg_n_hrr, by=c('bug', 'drug_group'))
-  #filter(n_places >= min_n_states)
+  select(-median_n_isolates)
 
 # check that all the short names made it in
 for (x in c('bug', 'n_isolates', 'percent_nonsusceptible')) {
@@ -172,8 +142,9 @@ spearman_model = function(df, dependent_var, explanatory_var) {
 }
 
 uni_term = 'cpb' # univariable explanatory term
-multi_term_adjuster = 'cpb'
-multi_term = 'nb_prob' # multivariable explanatory term (along with fnz)
+multi_term = 'nzg' #'nb_prob' # multivariable explanatory term
+multi_term_adjuster = 'cpb' # other multivarible explanatory term
+
 models = function(x) {
   dep = 'mean_percent_nonsusceptible'
   bind_rows(
@@ -199,23 +170,17 @@ hrr_results = left_join(hrr_abg, hrr_ineq, by=c('hrr', 'drug_group')) %>%
 
 ## Selecting correlations to test
 
-I join the resistance drugs into classes:
+I join the resistance drugs into the classes shown below. (I also joined the consumption drugs into similar classes.)
 
 `r kable(resistance_groups)`
 
-I similarly joined the consumption drugs into similar classes.
+The *S. aureus* antibiograms are listed as MSSA, MRSA, or plain old *S. aureus*. For tetracycline, Bactrim, and clindamycin, I didn't find any big difference in resistance patterns about the three groups, so I merged them all into one group for purposes of the analysis. For the cephalosporins, I joined MSSA and plain old *S. aureus*. (MRSA, on the other hand, had clear indications that the data were artificially set to 100% resistance. Intriguingly, it seemed like this was also the case for MSSA and the beta-lactams [penicillin and ampicillin], so I did not include those.)
 
 I started by considering these `r nrow(possible_bug_drug)` bug/drug combinations on the basis of their clinical relevance and plausibility:
 
 `r kable(possible_bug_drug)`
 
-In previous iterations, I filtered by the number of states in which each bug/drug combination appeared. Increasing that threshold ends up testing the relationships for which we have the best data, and therefore we are the best powered for. Unfortunately, my simulations mostly make it seem like we should, to get the best power, use all the bug/drug combinations.
-
-```{r, eval=FALSE}
-#Then I filtered to keep only those bug/drug combinations that were present in `r min_n_states` states. That means I'm looking at these `r nrow(good_combos)` bug/drug combinations:
-
-#`r good_combos %>% arrange(desc(n_places)) %>% kable`
-```
+(In previous iterations, I filtered by the number of states/HRRs in which each bug/drug combination appeared. Weirdly, there is a relationship in the data, that better-represented bug/drug combinations are the ones with the stronger relationships [i.e., the higher $\rho$, not necessarily the lower $p$]. When using the HRR data, that kind of fancy footwork wasn't necessary, so I just didn't do it.)
 
 ## Preparing the consumption data
 
@@ -223,21 +188,9 @@ Unlike previous analyses, this time I treated the consumption and resistance dat
 
 ## Spearman
 
-Significant results using Spearman correlations of mean percent nonsusceptible ~ claims per beneficiary. A star after the bug/drug combination implies that the adjusted $p < 0.05$, and a dot means the unadjusted $p < 0.05$.
+For each bug/drug combination, I computed `mean percent nonsusceptible ~ claims per beneficiary`. A star after the bug/drug combination implies that the adjusted $p < 0.05$, and a dot means the unadjusted $p < 0.05$. Intervals show 95% confidence intervals. 
 
-```{r spearman_models}
-results %>%
-  filter(model=='spearman') %>%
-  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  filter(p.value < 0.05) %>%
-  arrange(p.adj) %>%
-  select(bug, drug_group, estimate, p.value, p.adj, n) %>%
-  kable
-```
-
-Aside from individual significant results, we can look at the landscape of correlations. They are almost all positive, with MRSA/Bactrim making an interesting exception. Lines show 95% confidence intervals.
-
-```{r spearman_interval}
+```{r hrr_spearman_interval}
 interval_plot = function(df) {
   arrange(df, estimate) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
@@ -252,45 +205,28 @@ interval_plot = function(df) {
     coord_flip()
 }
 
-results %>%
-  filter(model=='spearman') %>%
-  interval_plot() +
-  ylab("Spearman's rho")
-```
-
-HRR spearman:
-
-```{r hrr_spearman_interval}
 hrr_results %>%
   filter(model=='spearman') %>%
   interval_plot() +
   ylab("Spearman's rho")
 ```
 
-```{r, eval=FALSE}
-# Used this to show that there's a correlation between
-# strength of correlation and amount of data
-x = abg %>% 
-  select(bug, drug_group, state) %>%
-  distinct() %>%
-  count(bug, drug_group) %>% ungroup() %>% rename(n_places=n)
-results %>% filter(model=='spearman') %>%
-  left_join(x, by=c('bug', 'drug_group')) %>%
-  ggplot(aes(x=n_places, y=estimate)) +
-  geom_point()
+All the demonstrably-different-from-zero relationships are positive. This jives with our general understanding that more consumption means more resistance. Note also the bunching by drug type, rather than organism.
+
+This table has the significant and marginally significant results from the previous figure.
+
+```{r hrr_spearman_table}
+hrr_results %>%
+  filter(model=='spearman') %>%
+  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
+  filter(p.value < 0.05) %>%
+  select(bug, drug_group, p.adj, p.value, rho=estimate, ci_low, ci_high) %>%
+  arrange(p.value) %>%
+  kable
 ```
 
-## Differences in consumption/resistance patterns explain some of these results
+Univariable linear regressions are in the Supplement. A crazy visualization of all the bug/drug combinations and resistances is also in the Supplement.
 
-Different bug/drug combinations have different spreads along the consumption and resistance axes, so we would expect to see different strengths of association for each one.
-
-```{r}
-left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
-  filter(bug %in% c('E. coli', 'Eb. cloacae', 'CoNS', 'MSSA', 'MRSA', 'S. pneumoniae')) %>%
-  ggplot(aes(x=cpb, y=mean_percent_nonsusceptible, color=drug_group, shape=bug)) +
-  geom_point() +
-  xlab('claims per beneficiary')
-```
 
 # Unevenness of consumption and antibiotic resistance
 
@@ -438,6 +374,20 @@ left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
 
 # Supplementary results
 
+## Amount of data vs. strength of correlation
+
+There is a correlation between the amount of data (i.e., the number of HRRs in which there is an antibiogram for a bug/drug combination) and the correlation coefficient for that relationship. The bug/drug combinations with more data tend to be the ones with more positive $\rho$ values. This makes it advantageous to the study's power to filter the poorly-represented combinations.
+
+```{r}
+abg %>% 
+  select(bug, drug_group, hrr) %>%
+  distinct() %>%
+  count(bug, drug_group) %>% ungroup() %>% rename(n_places=n) %>%
+  right_join(filter(hrr_results, model=='spearman')) %>%
+  ggplot(aes(x=n_places, y=estimate)) +
+  geom_point()
+```
+
 ## Metrics of unevenness
 
 ### Aggregate usage correlates with fraction of users
@@ -495,9 +445,26 @@ There is an intermediate correlation between claims per beneficiary and the Gini
 all_ineq %$% cor.test(mean_cpb, mean_nzgini, method='spearman')
 ```
 
-## Spearman models
+## State-level Spearman models
 
-### Comparing state and HRR
+```{r state_spearman_table}
+results %>%
+  filter(model=='spearman') %>%
+  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
+  filter(p.value < 0.05) %>%
+  arrange(p.adj) %>%
+  select(bug, drug_group, estimate, p.value, p.adj, n) %>%
+  kable
+```
+
+```{r state_spearman_interval}
+results %>%
+  filter(model=='spearman') %>%
+  interval_plot() +
+  ylab("Spearman's rho")
+```
+
+## Comparing Spearman models state and HRR
 
 HRR-level Spearman correlations between consumption and resistance (almost) always underestimate the correlation reported at the state level:
 
@@ -515,21 +482,13 @@ bind_rows(mutate(results, group='state'),
   geom_abline()
 ```
 
-### State-level volcano plot
+## Univariable regressions
 
-```{r}
-results %>%
-  filter(model=='spearman') %>%
-  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  ggplot(aes(x=estimate, y=-log10(p.adj))) + geom_point() +
-  geom_hline(yintercept=-log10(0.05), col='red')
-```
+Like the Spearman models, the model here is `mean percent nonsusceptible ~ claims per beneficiary`, only this time it's a normal linear regression. At the HRR level:
 
-### HRR-level correlations
-
-```{r hrr_spearman_models}
+```{r hrr_uni_table}
 hrr_results %>%
-  filter(model=='spearman') %>%
+  filter(model=='uni', term==uni_term) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
   filter(p.value < 0.05) %>%
   arrange(p.value) %>%
@@ -537,44 +496,38 @@ hrr_results %>%
   kable
 ```
 
-## Univariable regressions
-
-Like the Spearman models, the model here is mean percent nonsusceptible ~ claims per beneficiary, only this time it's a normal linear regression.
-
-### State-level
-
-```{r uni_models}
-results %>%
+```{r hrr_uni_interval}
+hrr_results %>%
   filter(model=='uni', term==uni_term) %>%
-  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  #filter(p.value < 0.05) %>%
-  arrange(p.value) %>%
-  select(bug, drug_group, estimate, p.value, p.adj, n) %>%
-  kable
+  interval_plot()
 ```
 
-```{r}
+And at the state level:
+
+```{r state_uni_interval}
 results %>%
   filter(model=='uni', term==uni_term) %>%
   interval_plot()
 ```
 
-```{r}
+```{r state_uni_table}
 results %>%
-  filter(model=='uni') %>%
-  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
-  ggplot(aes(x=estimate, y=-log10(p.adj))) + geom_point() +
-  geom_hline(yintercept=-log10(0.05), col='red')
-```
-
-### HRR-level
-
-```{r hrr_uni_models}
-hrr_results %>%
   filter(model=='uni', term==uni_term) %>%
   mutate(p.adj=p.adjust(p.value, method='BH')) %>%
   filter(p.value < 0.05) %>%
   arrange(p.value) %>%
-  select(bug, drug_group, estimate, p.value, p.adj) %>%
+  select(bug, drug_group, estimate, p.value, p.adj, n) %>%
   kable
+```
+
+## Consumption/resistance patterns
+
+Different bug/drug combinations have different spreads along the consumption and resistance axes, so we would expect to see different strengths of association for each one.
+
+```{r consumption_resistance_patterns}
+left_join(state_abg, state_ineq, by=c('state', 'drug_group')) %>%
+  filter(bug %in% c('E. coli', 'Eb. cloacae', 'CoNS', 'MSSA', 'MRSA', 'S. pneumoniae')) %>%
+  ggplot(aes(x=cpb, y=mean_percent_nonsusceptible, color=drug_group, shape=bug)) +
+  geom_point() +
+  xlab('claims per beneficiary')
 ```

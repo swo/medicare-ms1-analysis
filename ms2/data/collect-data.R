@@ -1,13 +1,13 @@
 #!/usr/bin/env Rscript
 
 # inequality function
-import::from(ineq, Gini)
+import::from(ineq, ineq)
 nonzero = function(x) x[x > 0]
 fraction_nonzero = function(x) length(nonzero(x)) / length(x)
 
 pad0 = function(x, to) c(x, rep(0, to - length(x)))
 
-lm_residuals = function(y, x) residuals(lm(y ~ x))
+hoover = function(x) 0.5 * sum(abs(x - mean(x))) / sum(x)
 
 inequalities = function(x) {
   nb_par = fitdistrplus::mledist(x, 'nbinom')$estimate
@@ -16,9 +16,14 @@ inequalities = function(x) {
   data_frame(total=sum(x),
              mean=mean(x),
              fnz=fraction_nonzero(x),
-             nzgini=Gini(nonzero(x)),
+             gini=ineq(x, type='Gini'),
+             nzgini=ineq(nonzero(x), type='Gini'),
              nb_size=nb_size,
-             nb_prob=nb_prob
+             nb_prob=nb_prob,
+             pietra=ineq(x, type='RS'),
+             nzpieta=ineq(nonzero(x), type='RS'),
+             hoover=hoover(x),
+             nzhoover=hoover(nonzero(x))
              )
 }
 
@@ -60,8 +65,7 @@ summarize_inequality = function(year) {
     replace_na(list(n_claims=0)) %>%
     group_by(state) %>%
     do(inequalities(.$n_claims)) %>%
-    ungroup() %>%
-    mutate(mean_fnz_residual=lm_residuals(mean, fnz))
+    ungroup()
 
   write_tsv(total_pde, state_all_fn)
 
@@ -72,8 +76,7 @@ summarize_inequality = function(year) {
     left_join(state_denom, by='state') %>%
     group_by(state, drug_group) %>%
     do(inequalities(pad0(.$n_claims, unique(.$n_bene)))) %>%
-    ungroup() %>%
-    mutate(mean_fnz_residual=lm_residuals(mean, fnz))
+    ungroup()
 
   write_tsv(state_inequality, state_fn)
 
@@ -85,8 +88,7 @@ summarize_inequality = function(year) {
     replace_na(list(n_claims=0)) %>%
     group_by(hrr) %>%
     do(inequalities(.$n_claims)) %>%
-    ungroup() %>%
-    mutate(mean_fnz_residual=lm_residuals(mean, fnz))
+    ungroup()
 
   write_tsv(hrr_total_pde, hrr_all_fn)
 
@@ -97,8 +99,7 @@ summarize_inequality = function(year) {
     left_join(hrr_denom, by='hrr') %>%
     group_by(hrr, drug_group) %>%
     do(inequalities(pad0(.$n_claims, unique(.$n_bene)))) %>%
-    ungroup() %>%
-    mutate(mean_fnz_residual=lm_residuals(mean, fnz))
+    ungroup()
 
   write_tsv(hrr_inequality, hrr_fn)
 }
