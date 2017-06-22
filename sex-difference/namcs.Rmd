@@ -1,0 +1,161 @@
+---
+title: "Drivers of sex differences in consumption (NAMCS)"
+author: "Scott Olesen"
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
+
+import::from(survey, svyglm)
+import::from(survey, svydesign)
+```
+
+```{r load_data}
+sex_codes = read_tsv('namcs_sex_codes.tsv') %>%
+  rename(dx=code)
+
+dx = read_tsv('../../db/namcs/data/namcs_2013_dx.tsv') %>%
+  left_join(sex_codes, by='dx')
+
+dx_visit = dx %>%
+  group_by(record_id) %>%
+  summarize(uti='uti' %in% diagnosis_type,
+            skin='skin' %in% diagnosis_type,
+            vaginitis='vaginitis' %in% diagnosis_type)
+
+abx_drug_codes = read_tsv('../../db/namcs/drug-codes/abx-codes.tsv') %>%
+  select(drug_code, antibiotic) %>%
+  mutate(antibiotic=tolower(antibiotic))
+
+drugs = read_tsv('../../db/namcs/data/namcs_2013_drugs.tsv')
+
+abx = drugs %>% left_join(abx_drug_codes, by='drug_code') %>% filter(!is.na(antibiotic))
+
+abx_visits = abx %>%
+  select(antibiotic, record_id) %>%
+  distinct() %>%
+  mutate(value=TRUE) %>% spread(antibiotic, value)
+
+visits = read_tsv('../../db/namcs/data/namcs_2013_visits.tsv') %>%
+  left_join(dx_visit, by='record_id') %>%
+  replace_na(list(uti=FALSE, skin=FALSE, vaginitis=FALSE)) %>%
+  left_join(abx_visits, by='record_id') %>%
+  mutate_at(vars(amoxclav:tmp_smx), function(x) !is.na(x))
+
+abx_names = visits %>% select(amoxclav:tmp_smx) %>% names
+stopifnot(length(abx_names) == length(unique(abx_drug_codes$antibiotic)))
+```
+
+Most antibiotics are prescribed in the context of a new (less than 3 month onset) problem, but the people who get antibiotics in the context of a chronic problem tend to be older:
+
+```{r}
+abx %>%
+  select(antibiotic, record_id) %>% distinct %>%
+  left_join(visits, by='record_id') %>%
+  group_by(major_reason) %>%
+  summarize(n=n(), mean_age=mean(age), sd_age=sd(age)) %>%
+  arrange(desc(n)) %>%
+  kable
+```
+
+# Overall
+
+```{r}
+visits %>%
+  right_join(abx, by='record_id') %>%
+  group_by(sex, antibiotic) %>%
+  summarize(n_rx=sum(weight)) %>%
+  ungroup() %>%
+  spread(sex, n_rx) %>%
+  ggplot(aes(x=male, y=female, label=antibiotic)) +
+  geom_point() +
+  geom_text() +
+  coord_fixed() +
+  geom_abline()
+```
+
+```{r models}
+des = visits %>%
+  mutate(sex=factor(sex, levels=c('male', 'female'))) %>%
+  svydesign(data=., id=~0, weights=~weight)
+
+f = function(drug) {
+  svyglm(as.formula(sprintf('%s ~ sex', drug)), des, family=binomial(link='log'), start=c(-5, 0)) %>%
+    tidy %>%
+    filter(term=='sexfemale') %>%
+    mutate(drug=drug)
+}
+
+sex_diff_by_drug = lapply(abx_names, f) %>%
+  bind_rows() %>%
+  mutate(ci=1.96*std.error,
+         ci_low=estimate-ci,
+         ci_hi=estimate+ci,
+         p.adj=p.adjust(p.value, method='BH')) %>%
+  mutate(sig=case_when(.$p.adj < 0.05 ~ '**',
+                       .$p.value < 0.05 ~ '*',
+                       TRUE ~ '')) %>%
+  select(-ci) %>%
+  mutate_at(vars(estimate, ci_low, ci_hi), function(x) exp(x))
+```
+
+```{r diff_plot}
+sex_diff_by_drug %>%
+  mutate(drug=forcats::fct_reorder(factor(drug), estimate)) %>%
+  ggplot(aes(x=drug, y=estimate, ymin=ci_low, ymax=ci_hi)) +
+  geom_point() + geom_linerange() +
+  geom_text(aes(y=1, label=sig), cex=6) +
+  coord_flip() +
+  scale_y_continuous(breaks=c(0, 1, 2, 5, 10), limits=c(0, 10)) +
+  ylab('relative risk of being female for getting drug')
+```
+
+```{r diff_table}
+sex_diff_by_drug %>%
+  select(drug, ci_low, estimate, ci_hi, p.value, p.adj, sig) %>%
+  mutate_at(vars(ci_low:ci_hi), function(x) round(x, digits=2)) %>%
+  mutate_at(vars(p.value, p.adj), function(x) round(x, digits=3)) %>%
+  arrange(desc(estimate)) %>%
+  kable
+```
+
+```{r model_helpers}
+m = function(frmla) svyglm(frmla, design=des, family=binomial(link='log'))
+
+# explained excess risk ratio
+eerr = function(m1, m2, coeff='sexfemale') {
+  (1 - (exp(m2$coefficients[coeff]) - 1)/(exp(m1$coefficients[coeff]) - 1)) %>% unname
+}
+report_eerr = function(m1, m2) round(100 * eerr(m1, m2), 1)
+```
+
+# Nitrofurantoin
+
+```{r nitro_models}
+nitro1 = m(nitrofurantoin ~ sex)
+nitro2 = m(nitrofurantoin ~ sex + uti)
+```
+
+This should be easy to explain by UTIs. They explain `r report_eerr(nitro1, nitro2)`% of the relative risk.
+
+# Metronidazole
+
+```{r metro_models}
+metro1 = m(metronidazole ~ sex)
+metro2 = m(metronidazole ~ sex + vaginitis)
+```
+
+Metronidazole consumption is increased in women. This is probably vaginitis (`61610`). So vaginitis explains `r report_eerr(metro1, metro2)`% of the relative risk. Not stupendous.
+
+# Clindamycin
+
+Clinda is only marginally significant in the models.
+
+```{r clinda_models}
+clinda1 = m(clindamycin ~ sex)
+clinda2 = m(clindamycin ~ sex + skin)
+```
+
+Skin conditions explain `r report_eerr(clinda1, clinda2)`% of the relative risk. Also not stupendous.
