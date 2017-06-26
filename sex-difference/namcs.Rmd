@@ -16,146 +16,190 @@ import::from(survey, svydesign)
 sex_codes = read_tsv('namcs_sex_codes.tsv') %>%
   rename(dx=code)
 
-dx = read_tsv('../../db/namcs/data/namcs_2013_dx.tsv') %>%
+dx = read_tsv('../../db/namcs/data/namcs_2014_dx.tsv') %>%
   left_join(sex_codes, by='dx')
 
 dx_visit = dx %>%
-  group_by(record_id) %>%
+  group_by(visit_id) %>%
   summarize(uti='uti' %in% diagnosis_type,
             skin='skin' %in% diagnosis_type,
             vaginitis='vaginitis' %in% diagnosis_type)
 
-abx_drug_codes = read_tsv('../../db/namcs/drug-codes/abx-codes.tsv') %>%
-  select(drug_code, antibiotic) %>%
-  mutate(antibiotic=tolower(antibiotic))
+top_abx = read_tsv('../../db/namcs/analysis/top_abx.tsv')
 
-drugs = read_tsv('../../db/namcs/data/namcs_2013_drugs.tsv')
+# abx_drug_codes = read_tsv('../../db/namcs/drug-codes/abx-codes.tsv') %>%
+#   select(drug_code, antibiotic) %>%
+#   mutate(antibiotic=tolower(antibiotic))
 
-abx = drugs %>% left_join(abx_drug_codes, by='drug_code') %>% filter(!is.na(antibiotic))
+drug = read_tsv('../../db/namcs/data/namcs_2014_drugs.tsv')
 
-abx_visits = abx %>%
-  select(antibiotic, record_id) %>%
+abx = top_abx %>% left_join(drug, by='desc')
+
+abx_visit = abx %>%
+  select(visit_id, abx) %>%
   distinct() %>%
-  mutate(value=TRUE) %>% spread(antibiotic, value)
+  mutate(value=TRUE) %>% spread(abx, value) %>%
+  mutate(any_abx=TRUE)
 
-visits = read_tsv('../../db/namcs/data/namcs_2013_visits.tsv') %>%
-  left_join(dx_visit, by='record_id') %>%
+visit = read_tsv('../../db/namcs/data/namcs_2014_visits.tsv') %>%
+  left_join(dx_visit, by='visit_id') %>%
   replace_na(list(uti=FALSE, skin=FALSE, vaginitis=FALSE)) %>%
-  left_join(abx_visits, by='record_id') %>%
-  mutate_at(vars(amoxclav:tmp_smx), function(x) !is.na(x))
-
-abx_names = visits %>% select(amoxclav:tmp_smx) %>% names
-stopifnot(length(abx_names) == length(unique(abx_drug_codes$antibiotic)))
+  left_join(abx_visit, by='visit_id') %>%
+  mutate_at(c('any_abx', top_abx$abx), function(x) !is.na(x))
 ```
 
-Most antibiotics are prescribed in the context of a new (less than 3 month onset) problem, but the people who get antibiotics in the context of a chronic problem tend to be older:
+# Methods
 
-```{r}
-abx %>%
-  select(antibiotic, record_id) %>% distinct %>%
-  left_join(visits, by='record_id') %>%
-  group_by(major_reason) %>%
-  summarize(n=n(), mean_age=mean(age), sd_age=sd(age)) %>%
-  arrange(desc(n)) %>%
+## The most-consumed antibiotics
+
+I wanted to focus my analysis on the top few most important antibiotics. The NAMCS data includes information about the therapeutic category of each drug. I looked through those categories and identified the ones that could refer to antibiotics.
+
+```{r abx_cat_table}
+abx_cat = read_tsv('../../db/namcs/data/parse/drug_codes/abx_codes.tsv')
+abx_cat %>% kable
+```
+
+Then I looked through all the drugs that fell into one of these categories, summed up their usage, and then looked at the names of the top 20 drugs:
+
+```{r find_top_abx}
+drug %>%
+  semi_join(abx_cat, by=c('cat1'='category')) %>%
+  select(visit_id, desc) %>%
+  left_join(select(visit, visit_id, survey_id, stratum, weight), by='visit_id') %>%
+  mutate(dummy=1) %>%
+  svydesign(data=., ids=~survey_id, strata=~stratum, weights=~weight) %>%
+  svyby(~dummy, ~desc, design=., svytotal) %>%
+  arrange(desc(dummy)) %>%
+  select(abx=desc, n_rx=dummy, se) %>%
+  mutate(f=100*round(n_rx/sum(n_rx), 2),
+         cum_f_rx=100*round(cumsum(n_rx/sum(n_rx)), 2),
+         relative_se=100*round(se/n_rx, 2)) %>%
+  select(drug=abx, `fraction (%)`=f, `relative SE (%)`=relative_se, `cumulative fraction (%)`=cum_f_rx) %>%
+  head(15) %>%
   kable
 ```
 
-# Overall
+I kept the drugs from azithromycin through clindamycin. I skipped moxifloxacin because it has a high relative SE and mostly won't make it through future analyses. I keep nitrofurantoin because it's interesting from the Medicare data.
 
-```{r}
-visits %>%
-  right_join(abx, by='record_id') %>%
-  group_by(sex, antibiotic) %>%
-  summarize(n_rx=sum(weight)) %>%
-  ungroup() %>%
-  spread(sex, n_rx) %>%
-  ggplot(aes(x=male, y=female, label=antibiotic)) +
-  geom_point() +
-  geom_text() +
-  coord_fixed() +
-  geom_abline()
+# Results
+
+## Overall consumption by sex
+
+Overall, more of the antibiotic claims were made by women. Women consume roughly 21% more antibiotics than men.
+
+```{r sex_total_odds}
+drug %>%
+  semi_join(abx_cat, by=c('cat1'='category')) %>%
+  select(visit_id, desc) %>%
+  left_join(select(visit, visit_id, sex, survey_id, stratum, weight), by='visit_id') %>%
+  mutate(dummy=1) %>%
+  svydesign(data=., ids=~survey_id, strata=~stratum, weights=~weight) %>%
+  svyby(~dummy, ~sex, design=., svytotal) %>%
+  mutate_at(vars(-sex), function(x) x/1e6) %>%
+  mutate(fraction=dummy/sum(dummy),
+         odds=fraction/min(fraction)) %>%
+  select(sex, `no. rx. (millions)`=dummy, `SE (millions)`=se, odds) %>%
+  kable
 ```
 
 ```{r models}
-des = visits %>%
+des = visit %>%
   mutate(sex=factor(sex, levels=c('male', 'female'))) %>%
-  svydesign(data=., id=~0, weights=~weight)
+  as.data.frame() %>%
+  svydesign(data=., id=~survey_id, strata=~stratum, weights=~weight)
 
-f = function(drug) {
-  svyglm(as.formula(sprintf('%s ~ sex', drug)), des, family=binomial(link='log'), start=c(-5, 0)) %>%
-    tidy %>%
-    filter(term=='sexfemale') %>%
-    mutate(drug=drug)
+abx_total_f = function(abx) {
+  svyby(as.formula(paste0('~', abx)), ~sex, des, svytotal) %>%
+    rename_(.dots=setNames(list(paste0(abx, 'TRUE'), paste0('se.', abx, 'TRUE')), c('total', 'se'))) %>%
+    select(sex, total, se) %>%
+    mutate(abx=abx)
 }
 
-sex_diff_by_drug = lapply(abx_names, f) %>%
-  bind_rows() %>%
-  mutate(ci=1.96*std.error,
-         ci_low=estimate-ci,
-         ci_hi=estimate+ci,
-         p.adj=p.adjust(p.value, method='BH')) %>%
-  mutate(sig=case_when(.$p.adj < 0.05 ~ '**',
-                       .$p.value < 0.05 ~ '*',
-                       TRUE ~ '')) %>%
-  select(-ci) %>%
-  mutate_at(vars(estimate, ci_low, ci_hi), function(x) exp(x))
+chisq_f = function(abx) {
+  svychisq(as.formula(paste0('~sex+', abx)), des) %>%
+    tidy %>%
+    mutate(abx=abx) %>%
+    select(abx, p.value)
+}
+
+ttest_f = function(abx) {
+  svyttest(as.formula(paste0(abx, '~sex')), des) %>%
+    tidy %>%
+    mutate(abx=abx) %>% select(abx, estimate, p.value)
+}
+
+abx_totals = lapply(top_abx$abx, abx_total_f) %>% bind_rows()
+abx_chisq = lapply(top_abx$abx, chisq_f) %>% bind_rows()
+abx_ttest = lapply(top_abx$abx, ttest_f) %>% bind_rows()
 ```
 
-```{r diff_plot}
-sex_diff_by_drug %>%
-  mutate(drug=forcats::fct_reorder(factor(drug), estimate)) %>%
-  ggplot(aes(x=drug, y=estimate, ymin=ci_low, ymax=ci_hi)) +
-  geom_point() + geom_linerange() +
-  geom_text(aes(y=1, label=sig), cex=6) +
-  coord_flip() +
-  scale_y_continuous(breaks=c(0, 1, 2, 5, 10), limits=c(0, 10)) +
-  ylab('relative risk of being female for getting drug')
+For each drug, I asked how many visits were made, stratified by sex. I show two lines on the graph. The lower lines is exactly $y=x$ and shows the line of equal consumption. The upper line has a slope equal to the odds of a visit belong to a female; this is the line of equal consumption per visit. 
+
+```{r total_plot}
+abx_totals %>%
+  mutate_at(vars(total, se), function(x) x/1e6) %>%
+  mutate(ci=se*1.96,
+         ci_low=total-ci,
+         ci_high=total+ci) %>%
+  select(abx, sex, total, ci_low, ci_high) %>%
+  gather('key', 'value', total:ci_high) %>%
+  mutate(key=case_when(.$sex=='male' & .$key=='total' ~ 'x',
+                       .$sex=='male' & .$key=='ci_low' ~ 'xmin',
+                       .$sex=='male' & .$key=='ci_high' ~ 'xmax',
+                       .$sex=='female' & .$key=='total' ~ 'y',
+                       .$sex=='female' & .$key=='ci_low' ~ 'ymin',
+                       .$sex=='female' & .$key=='ci_high' ~ 'ymax')) %>%
+  select(-sex) %>%
+  spread(key, value) %>%
+  mutate(ymin=if_else(ymin<0, 0, ymin)) %>% # fix the negative ymin for moxi
+  mutate(highlight=abx %in% c('nitro')) %>%
+  ggplot(aes(x=x, xmin=xmin, xmax=xmax, y=y, ymin=ymin, ymax=ymax, label=abx, color=highlight)) +
+  geom_abline(col='gray') + geom_abline(slope=1.21277, col='gray') +
+  geom_point() + geom_errorbar() + geom_errorbarh() +
+  scale_color_manual(values=c('black', 'red')) +
+  geom_text(nudge_x=1, nudge_y=0.5) +
+  scale_x_continuous(breaks=c(0, 5, 10), limits=c(0, 10)) + xlab('No. rx. for men (millions)') +
+  scale_y_continuous(breaks=c(0, 5, 10), limits=c(0, 12)) + ylab('No. rx. for women (millions)') +
+  coord_fixed() +
+  theme_minimal()
 ```
 
-```{r diff_table}
-sex_diff_by_drug %>%
-  select(drug, ci_low, estimate, ci_hi, p.value, p.adj, sig) %>%
-  mutate_at(vars(ci_low:ci_hi), function(x) round(x, digits=2)) %>%
-  mutate_at(vars(p.value, p.adj), function(x) round(x, digits=3)) %>%
-  arrange(desc(estimate)) %>%
+Caveat: As per NAMCS recommendations, the male/nitro combination is too small (20 records) and too disperse (relative standard error 31%) to be considered accurate, and the female/moxi combination is too disperse (RSE 56%) to be considered accurate. (The female/moxi error bar actually doesn't even fit on the page!)
+
+## Claims per visit
+
+To examine claims per visit (the upper line), I run $\chi^2$ tests of independence on the 2x2 contingency tables: female vs. male, this drug prescribed vs. not. Nitrofurantoin is definitely distributed differently (minding the caveat mentioned above), and amoxicillin and amox/clav only marginally so (they are the two crosses that could maybe be falling *below* the line of equal consumption per visit; i.e., men getting more of those drugs per visit).
+
+```{r chisq_table}
+scientific_round = function(x, digits) {
+  if_else(round(x, digits) == 0, sprintf(paste0('%.', as.character(digits), 'g'), x), as.character(round(x, digits)))
+}
+
+abx_chisq %>%
+  arrange(p.value) %>%
+  mutate(p.value.adj=p.adjust(p.value, method='BH')) %>%
+  mutate_at(vars(-abx), function(x) scientific_round(x, 3)) %>%
   kable
 ```
 
-```{r model_helpers}
-m = function(frmla) svyglm(frmla, design=des, family=binomial(link='log'))
+## Claims overall
 
-# explained excess risk ratio
-eerr = function(m1, m2, coeff='sexfemale') {
-  (1 - (exp(m2$coefficients[coeff]) - 1)/(exp(m1$coefficients[coeff]) - 1)) %>% unname
-}
-report_eerr = function(m1, m2) round(100 * eerr(m1, m2), 1)
+To evaluate the difference in overall numbers of claims by sex, I use *t*-tests. Again, nitro is the only clear deviation.
+
+```{r ttest_table}
+abx_ttest %>%
+  arrange(p.value) %>%
+  mutate(p.value.adj=p.adjust(p.value, method='BH')) %>%
+  mutate_at(vars(-abx), function(x) scientific_round(x, 3)) %>%
+  kable
 ```
 
-# Nitrofurantoin
+# Conclusions
 
-```{r nitro_models}
-nitro1 = m(nitrofurantoin ~ sex)
-nitro2 = m(nitrofurantoin ~ sex + uti)
-```
+Women definitely have more prescriptions overall than men, and definitely more nitrofurantoin prescriptions. However, the difference in nitrofurantoin prescriptions (slightly less than 2 million) is a small fraction of the total difference in prescriptions (about 11 million).
 
-This should be easy to explain by UTIs. They explain `r report_eerr(nitro1, nitro2)`% of the relative risk.
+Broadly speaking, it seems like the increased consumption of antibiotics among women is mostly due to increased healthcaure utilization. Unfortunately, NAMCS doesn't have enough data (at least from a single year) to be able to show that any particular drug beyond nitrofurantoin is definitely consumed more among women than men.
 
-# Metronidazole
+Interestingly, there are some hints that amox and amox/clav, though consumed at nearly-equal rates overall, are prescribed at a lower rate *per visit* for women.
 
-```{r metro_models}
-metro1 = m(metronidazole ~ sex)
-metro2 = m(metronidazole ~ sex + vaginitis)
-```
-
-Metronidazole consumption is increased in women. This is probably vaginitis (`61610`). So vaginitis explains `r report_eerr(metro1, metro2)`% of the relative risk. Not stupendous.
-
-# Clindamycin
-
-Clinda is only marginally significant in the models.
-
-```{r clinda_models}
-clinda1 = m(clindamycin ~ sex)
-clinda2 = m(clindamycin ~ sex + skin)
-```
-
-Skin conditions explain `r report_eerr(clinda1, clinda2)`% of the relative risk. Also not stupendous.
+The lack of power in this single year motivates either adding more years and/or moving toward Medicare.
