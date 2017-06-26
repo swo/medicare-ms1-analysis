@@ -50,6 +50,14 @@ visit = read_tsv('../../db/namcs/data/namcs_2014_visits.tsv') %>%
 
 # Methods
 
+## Data & overall methods
+
+I used the 2014 NAMCS data. Because this is a survey, you can't just look at the individual records; they all need to be weighted, and the variances need to be adjusted by the stratum sampling used. I rely on the `survey` package, to which the entry point is the `svydesign` function, for which I use:
+
+- NAMCS's `CPSUM` variable for `ids`
+- `CSTRATM` for `strata`
+- `PATWT` for `weights`
+
 ## The most-consumed antibiotics
 
 I wanted to focus my analysis on the top few most important antibiotics. The NAMCS data includes information about the therapeutic category of each drug. I looked through those categories and identified the ones that could refer to antibiotics.
