@@ -8,8 +8,7 @@ output: html_document
 knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
 
-import::from(survey, svyglm)
-import::from(survey, svydesign)
+library(survey)
 ```
 
 ```{r load_data}
@@ -160,7 +159,7 @@ abx_totals %>%
   select(-sex) %>%
   spread(key, value) %>%
   mutate(ymin=if_else(ymin<0, 0, ymin)) %>% # fix the negative ymin for moxi
-  mutate(highlight=abx %in% c('nitro')) %>%
+  mutate(highlight=abx %in% c('nitro', 'amox', 'amoxclav')) %>%
   ggplot(aes(x=x, xmin=xmin, xmax=xmax, y=y, ymin=ymin, ymax=ymax, label=abx, color=highlight)) +
   geom_abline(col='gray') + geom_abline(slope=1.21277, col='gray') +
   geom_point() + geom_errorbar() + geom_errorbarh() +
