@@ -157,17 +157,20 @@ I kept the drugs from azithromycin through clarithromycin, accounting for 80% of
 ```{r visit_total_odds}
 x = svymean(~sex, design=adult_design) %>%
   as_data_frame() %>%
-  mutate(sex=c('female', 'male'),
-         odds=mean/min(mean))
+  mutate(sex=c('female', 'male'))
 
-female_visit_odds = x %>% filter(sex=='female') %$% odds
+odds = function(x) x/(1-x)
+
+p = x %>% filter(sex=='female') %$% mean
+se = x %>% filter(sex=='female') %$% SE
+female_visit_odds = odds(c(p-se, p, p+se))
 
 x %>%
-  select(sex, `fraction of visits`=mean, SE, odds) %>%
+  select(sex, `fraction of visits`=mean, SE) %>%
   kable
 ```
 
-Overall, more of the visits were made by women. Women make `r round(female_visit_odds - 1, 2)*100`% more visits than men. I'll therefore evaluate consumption by two standards: first, do women consume more antibiotics overall; second, do women consume more antibiotics *per visit*.
+Overall, more of the visits were made by women. Women make `r round(female_visit_odds[2], 3)*100`% more visits than men. I'll therefore evaluate consumption by two standards: first, do women consume more antibiotics overall; second, do women consume more antibiotics *per visit*.
 
 ## Consumption by drug
 
@@ -182,15 +185,15 @@ abx_diff_f = function(abx) {
     data_frame(abx=abx, estimate=estimate, p.value=p.value)
 }
 
-abx_total_f = function(abx) {
-  svyby(as.formula(paste0('~', abx)), ~sex, adult_design, svytotal) %>%
+abx_total_f = function(abx, design=adult_design) {
+  svyby(as.formula(paste0('~', abx)), ~sex, design, svytotal) %>%
     rename_(.dots=setNames(list(abx), c('total'))) %>%
     select(sex, total, se) %>%
     mutate(abx=abx)
 }
 
-poisson_f = function(abx) {
-  svyglm(as.formula(paste0(abx, '~sex')), adult_design) %>%
+poisson_f = function(abx, design=adult_design) {
+  svyglm(as.formula(paste0(abx, '~sex')), design) %>%
     tidy %>%
     filter(term != '(Intercept)') %>%
     mutate(abx=abx) %>%
@@ -205,32 +208,39 @@ abx_pois = lapply(top_abx$abx, poisson_f) %>% bind_rows()
 For each drug, I asked how many visits were made, stratified by sex. I show two lines on the graph. The lower line is exactly $y=x$ and shows the line of equal consumption. The upper line has a slope equal to the odds of a visit belong to a female; this is the line of equal consumption per visit. 
 
 ```{r total_plot}
-abx_totals %>%
-  mutate_at(vars(total, se), mpy) %>%
-  mutate(ci=se*1.96,
-         ci_low=total-ci,
-         ci_high=total+ci) %>%
-  select(abx, sex, total, ci_low, ci_high) %>%
-  gather('key', 'value', total:ci_high) %>%
-  mutate(key=case_when(.$sex=='male' & .$key=='total' ~ 'x',
-                       .$sex=='male' & .$key=='ci_low' ~ 'xmin',
-                       .$sex=='male' & .$key=='ci_high' ~ 'xmax',
-                       .$sex=='female' & .$key=='total' ~ 'y',
-                       .$sex=='female' & .$key=='ci_low' ~ 'ymin',
-                       .$sex=='female' & .$key=='ci_high' ~ 'ymax')) %>%
-  select(-sex) %>%
-  spread(key, value) %>%
-  mutate(highlight=abx %in% c('nitro', 'clinda')) %>%
-  ggplot(aes(x=x, xmin=xmin, xmax=xmax, y=y, ymin=ymin, ymax=ymax, label=abx, color=highlight)) +
-  geom_abline(col='gray') + geom_abline(slope=female_visit_odds, col='gray') +
-  geom_point() + geom_errorbar() + geom_errorbarh() +
-  scale_color_manual(values=c('black', 'red')) +
-  geom_text() +
-  #geom_text(nudge_x=1, nudge_y=0.5) +
-  #scale_x_continuous(breaks=c(0, 5, 10), limits=c(0, 12)) + xlab('No. rx. for men (millions)') +
-  #scale_y_continuous(breaks=c(0, 5, 10), limits=c(0, 14)) + ylab('No. rx. for women (millions)') +
-  coord_fixed() +
-  theme_minimal()
+total_plot_f = function(df, highlight=character(0)) {
+  df %>%
+    mutate_at(vars(total, se), mpy) %>%
+    mutate(ci=se*1.96,
+           ci_low=total-ci,
+           ci_high=total+ci) %>%
+    select(abx, sex, total, ci_low, ci_high) %>%
+    gather('key', 'value', total:ci_high) %>%
+    mutate(key=case_when(.$sex=='male' & .$key=='total' ~ 'x',
+                         .$sex=='male' & .$key=='ci_low' ~ 'xmin',
+                         .$sex=='male' & .$key=='ci_high' ~ 'xmax',
+                         .$sex=='female' & .$key=='total' ~ 'y',
+                         .$sex=='female' & .$key=='ci_low' ~ 'ymin',
+                         .$sex=='female' & .$key=='ci_high' ~ 'ymax')) %>%
+    select(-sex) %>%
+    spread(key, value) %>%
+    mutate(highlight=abx %in% highlight) %>%
+    ggplot(aes(x=x, xmin=xmin, xmax=xmax, y=y, ymin=ymin, ymax=ymax, label=abx, color=highlight)) +
+    geom_abline(col='gray') +
+    geom_point() + geom_errorbar() + geom_errorbarh() +
+    scale_color_manual(values=c('black', 'red')) +
+    geom_text() +
+    #geom_text(nudge_x=1, nudge_y=0.5) +
+    #scale_x_continuous(breaks=c(0, 5, 10), limits=c(0, 12)) +
+    #scale_y_continuous(breaks=c(0, 5, 10), limits=c(0, 14)) +
+    xlab('No. rx. for men (millions)') + ylab('No. rx. for women (millions)') +
+    coord_fixed() +
+    theme_minimal()
+}
+  
+total_plot_f(abx_totals, highlight=c('nitro', 'clinda')) +
+  geom_abline(slope=female_visit_odds[2], col='gray') +
+  geom_abline(slope=female_visit_odds[-2], col='gray', linetype='dotted')
 ```
 
 ## Prescriptions overall
@@ -244,11 +254,16 @@ scientific_round = function(x, digits=3) {
   if_else(round(x, digits) == 0, sprintf(paste0('%.', as.character(digits), 'g'), x), as.character(round(x, digits)))
 }
 
+sig_f = function(df) {
+  stopifnot('adj.p.value' %in% names(df) && 'p.value' %in% names(df))
+  case_when(df$adj.p.value < 0.05 ~ '**',
+            df$p.value < 0.05 ~ '*',
+            TRUE ~ '')
+}
+
 abx_diff %>%
   mutate(adj.p.value=p.adjust(p.value, method='BH')) %>%
-  mutate(sig=case_when(.$adj.p.value < 0.05 ~ '**',
-                       .$p.value < 0.05 ~ '*',
-                       TRUE ~ '')) %>%
+  mutate(sig=sig_f(.)) %>%
   mutate_if(is.numeric, scientific_round) %>%
   kable
 ```
@@ -261,8 +276,9 @@ To examine claims per visit (the upper line), I run Poisson regressions of the n
 abx_pois %>%
   select(abx, estimate, p.value) %>%
   arrange(p.value) %>%
-  mutate(p.value.adj=p.adjust(p.value, method='BH')) %>%
-  mutate_at(vars(-abx), scientific_round) %>%
+  mutate(adj.p.value=p.adjust(p.value, method='BH')) %>%
+  mutate(sig=sig_f(.)) %>%
+  mutate_if(is.numeric, scientific_round) %>%
   kable
 ```
 
@@ -280,6 +296,26 @@ clinda_f_expl = 1 - exp(-m2$coefficients['sexmale']+m1$coefficients['sexmale'])
 
 The only clindamycin-associated diagnosis that meets (maybe) the data validity criterion is acne (`7061-`). However, acne explains only a small fraction (`r 100*round(clinda_f_expl, digits=3)`%) of the difference between the sexes.
 
+## Just among the elderly
+
+```{r elderly}
+elderly_design = subset(design, age_group == 'elderly')
+
+elderly_usage = svymean(~sex, design=elderly_design) %>%
+  as_data_frame() %>%
+  mutate(sex=c('female', 'male'))
+
+elderly_female_odds = elderly_usage %>% filter(sex=='female') %$% mean %>% odds
+
+elderly_totals = abx_totals = lapply(top_abx$abx, function(x) abx_total_f(x, design=elderly_design)) %>% bind_rows()
+total_plot_f(elderly_totals) +
+  geom_abline(slope=elderly_female_odds, color='gray')
+```
+
+Usage among the elderly is more even: women make `r 100*round(elderly_female_odds - 1, digits=3)`% more visits than men. Patterns of consumption appear to be a little difference: more ciprofloxacin, azithro is more concentrated among women, and some drugs (e.g., doxy) appear to approach the line of equal consumption.
+
 # Conclusions
 
 Women definitely have more prescriptions overall than men, but that consumption seems to be distributed broadly across drugs. For only a few drugs---nitro and clinda---do these data suggest that consumption per visit is greater among women, and those drugs contribute to a minority of the difference in total consumption.
+
+Among the elderly, patterns of consumption appear to be somewhat different, and those patterns are not exactly what we see in the adult NAMCS data or even in the Medicare data I have.

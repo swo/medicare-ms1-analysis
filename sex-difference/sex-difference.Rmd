@@ -91,6 +91,19 @@ sex_icd %>%
 
 # Results
 
+## Top drugs
+
+Which drugs are the most used?
+
+```{r top_drugs}
+top_abx = pde %>%
+  count(antibiotic) %>%
+  arrange(desc(n)) %>%
+  head(20)
+
+kable(top_abx)
+```
+
 ## Consumption of drugs by sex
 
 Looking at top drugs by sex.
@@ -98,17 +111,18 @@ Looking at top drugs by sex.
 ```{r drugs_by_sex}
 usage_by_sex = function(drug) {
   bene %>%
-    select(-n_claims) %>%
-    left_join(pde %>% filter(antibiotic==drug) %>% count(bene_id) %>% rename(n_claims=n), by='bene_id') %>%
-    replace_na(list(n_claims=0)) %>%
+    left_join(pde %>% filter(antibiotic==drug) %>% count(bene_id), by='bene_id') %>%
+    replace_na(list(n=0)) %>%
     group_by(sex) %>%
-    summarize(mean_n_claims=mean(n_claims)) %>%
-    ungroup() %>%
-    spread(sex, mean_n_claims) %>%
-    mutate(drug=drug)
+    summarize(n_bene=n(),
+              n_claims=sum(n),
+              mean_n_claims=mean(n),
+              sd_n_claims=sd(n)) %>%
+    mutate(se_n_claims=sd_n_claims/sqrt(n_bene),
+           drug=drug)
 }
 
-dbs = lapply(unique(pde$antibiotic), usage_by_sex) %>% bind_rows
+ubs = lapply(top_abx$antibiotic, usage_by_sex) %>% bind_rows
 ```
 
 ```{r}
@@ -131,13 +145,50 @@ ubs %>%
   mutate(highlight=antibiotic %in% c('azithromycin', 'ciprofloxacin', 'trimethoprim/sulfamethoxazole', 'fosfomycin', 'nitrofurantoin')) %>%
   ggplot(aes(x=male, y=female, label=antibiotic, color=highlight)) +
   scale_color_manual(values=c('black', 'red')) +
+  geom_abline() +
+  geom_abline(slope=1.28, col='gray') +
   geom_text() +
   geom_point() +
-  geom_abline() +
   xlab('claims per 1,000 male beneficiaries') +
   ylab('claims per 1,000 female beneficiaries') +
   theme_minimal() +
   coord_fixed()
+```
+
+```{r drug_by_sex_plot2}
+total_plot_f = function(df, highlight=character(0)) {
+  df %>%
+    #mutate_at(vars(total, se), mpy) %>%
+    mutate(ci=se*1.96,
+           ci_low=total-ci,
+           ci_high=total+ci) %>%
+    select(drug, sex, total, ci_low, ci_high) %>%
+    gather('key', 'value', total, ci_low, ci_high) %>%
+    mutate(key=case_when(.$sex=='male' & .$key=='total' ~ 'x',
+                         .$sex=='male' & .$key=='ci_low' ~ 'xmin',
+                         .$sex=='male' & .$key=='ci_high' ~ 'xmax',
+                         .$sex=='female' & .$key=='total' ~ 'y',
+                         .$sex=='female' & .$key=='ci_low' ~ 'ymin',
+                         .$sex=='female' & .$key=='ci_high' ~ 'ymax')) %>%
+    select(-sex) %>%
+    spread(key, value) %>%
+    mutate(highlight=drug %in% highlight) %>%
+    ggplot(aes(x=x, xmin=xmin, xmax=xmax, y=y, ymin=ymin, ymax=ymax, label=drug, color=highlight)) +
+    geom_abline(col='gray') +
+    geom_point() + geom_errorbar() + geom_errorbarh() +
+    scale_color_manual(values=c('black', 'red')) +
+    geom_text() +
+    #geom_text(nudge_x=1, nudge_y=0.5) +
+    #scale_x_continuous(breaks=c(0, 5, 10), limits=c(0, 12)) +
+    #scale_y_continuous(breaks=c(0, 5, 10), limits=c(0, 14)) +
+    xlab('No. rx. for men (millions)') + ylab('No. rx. for women (millions)') +
+    coord_fixed() +
+    theme_minimal()
+}
+
+ubs %>%
+  rename(total=mean_n_claims, se=se_n_claims) %>%
+  total_plot_f()
 ```
 
 Alternatively, I look at the mean usage (across men and women), the residual (the difference between the fraction of female beneficiaries taking the drug and male beneficiaries), and the fractional residual (the residual over the mean). I keep only those drugs with mean fraction at least 1%, and I also keep fosfomycin.
@@ -169,15 +220,15 @@ epi = bene %>%
   ungroup()
 ```
 
-```{r}
-group_by_all_ = function(df, group_name) {
-  bind_rows(df, mutate_(df, .dots=setNames(list(~'all'), group_name))) %>%
-    group_by_(group_name)
-}
-
-epi %>%
-  group_by_all_('sex') %>%
-  summarize(n_cases=sum(n)) %>%
+```{r, eval=FALSE}
+# group_by_all_ = function(df, group_name) {
+#   bind_rows(df, mutate_(df, .dots=setNames(list(~'all'), group_name))) %>%
+#     group_by_(group_name)
+# }
+# 
+# epi %>%
+#   group_by_all_('sex') %>%
+#   summarize(n_cases=sum(n)) %>%
   
 ```
 
@@ -290,7 +341,7 @@ The coefficient for being female (0.05) accounts for almost the entire differenc
 
 At every age, women consume more antibiotics than men.
 
-```{r consumption_by_age_and_sex}
+```{r consumption_by_age_and_sex, eval=FALSE}
 bene %>%
   left_join(total_pde, by='bene_id') %>%
   replace_na(list(n_claims=0)) %>%
@@ -325,7 +376,7 @@ ggplot(mapping=aes(x=age, y=fraction)) +
 
 Maybe women take more azithromycin because usage is more concentrated in women than in men. Then we could explain the increased consumption by a small number of people taking more drug. (Yonatan points to Lady Windmere syndrome.) In fact, consumption is more even among women. As always, this is driven by the extensive fraction: more women took at least one dose:
 
-```{r}
+```{r, eval=FALSE}
 pde %>%
   filter(drug=='azithromycin') %>%
   count(bene_id) %>% rename(n=n_azi) %>%
