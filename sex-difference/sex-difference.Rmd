@@ -10,11 +10,6 @@ knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', '
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
 ```
 
-# To do
-
-- Separate beneficiaries into "high users" and "low users" based on the median number of outpatient claim dates
-- Try segmenting azithromycin consumption by low/high in wo/men and by RC+/- in wo/men. We want to say that RC, more than low/high, accounts for differences in azithromycin risk, i.e., it's that women get more respiratory complaint diagnoses, not that women just have more complaints. Or vice versa.
-
 # Background
 
 Why do females account for 25% more antibiotic claims per capita than males? I have two easy explanations:
@@ -25,68 +20,110 @@ Why do females account for 25% more antibiotic claims per capita than males? I h
 
 # Methods
 
-I'll use the Medicare 2011 data. Or, use all years, pool that data, and include calendar year as part of the regression.
+*Data*: Medicare 2011-2014 in the cohort.
 
-*Outcome*: At least one claim for azithromycin, Bactrim, TMP/SMX, or nitrofurantoin. *Exposure*: A diagnosis with a UTI, COPD, or an acute RTI.
+*Outcome*: Antibiotic claims overall and for the top 10 or so individual drugs.
 
-- In the first pass, look for any claim and any diagnosis.
-- In a second pass, look for a diagnosis that came at most two weeks before a claim.
-- Maybe, in a third pass, look for diagnosis that came at most two weeks before the first claim for that drug for the beneficiary. (Imagine someone is on year-long prophylaxis. Then a diagnosis at any time of the year will make it look like the diagnosis caused the claims.)
-
-Before a model, I should just stratify by sex and exposure. Do we already see the signal (or lack of it)? Then we can go onto including age and calendar year as covariates.
+*Exposure*: A diagnosis with a UTI, COPD, or an acute RTI.
 
 ```{r load_data}
-year = 2014
+sum_over = function(target_columns) {
+  dummy_vars = sapply(1:length(target_columns), function(i) sprintf('x%i', i))
+  dummy_vars_string = paste0(dummy_vars, collapse=',')
+  dummy_vars_list = lapply(target_columns, as.name) %>% setNames(dummy_vars)
+  f = as.formula(paste0(c('~sum(', dummy_vars_string, ')'), collapse=''))
+  lazyeval::interp(f, .values=dummy_vars_list)
+}
 
-pde = read_tsv(sprintf('../pde_%i.tsv', year))
+regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
+  select(state, region)
 
-sex_icd = read_tsv('sex_codes.tsv', col_types=cols(code='c'))
+condition_names = read_tsv('../chronic-conditions/names.tsv') %>% filter(condition_code != 'ALZH')
+names_1yr_ccs = condition_names %>% filter(condition_ref_years==1) %$% condition_code
 
-dx_car = sprintf('../../data/dx_car_claims_%i.tsv', year) %>%
-  read_tsv(col_types=cols(diagnosis='c'))
-dx_op = sprintf('../../data/dx_op_claims_%i.tsv', year) %>%
-  read_tsv(col_types=cols(diagnosis='c'))
+dx_codes = read_tsv('../sex-difference/sex_codes.tsv')
 
-dx = bind_rows(dx_car, dx_op) %>%
-  mutate(date=dmy(from_date)) %>%
-  select(bene_id=BENE_ID, date, code=diagnosis) %>%
-  left_join(sex_icd, by='code')
+load_data = function(year) {
+  # pde data
+  pde = read_tsv(sprintf('../pde_%i.tsv', year)) %>%
+    select(bene_id, antibiotic, days_supply) %>%
+    group_by(bene_id, antibiotic) %>%
+    summarize(n_claims=n(), days_supply=sum(days_supply)) %>%
+    ungroup() %>%
+    mutate(year=year)
+  
+  # diagnosis claims
+  dx_car_fn = sprintf('../../data/dx_car_claims_%i.tsv', year)
+  dx_op_fn = sprintf('../../data/dx_op_claims_%i.tsv', year)
+  
+  dx = bind_rows(read_tsv(dx_car_fn),
+                 read_tsv(dx_op_fn)) %>%
+    mutate(date=dmy(from_date)) %>%
+    rename(bene_id=BENE_ID, code=diagnosis) %>%
+    left_join(dx_codes, by='code')
+  
+  dx_presence = dx %>%
+    group_by(bene_id) %>%
+    summarize(rc='acute_rc' %in% diagnosis_type,
+              uti='uti' %in% diagnosis_type)
+  
+  count_car_fn = sprintf('../../data/count_car_claims_%i.tsv', year)
+  count_op_fn = sprintf('../../data/count_op_claims_%i.tsv', year)
+  n_op_days = bind_rows(read_tsv(count_car_fn), read_tsv(count_op_fn)) %>%
+    rename(bene_id=BENE_ID) %>%
+    group_by(bene_id) %>%
+    summarize(n_op_days=sum(n_from_date))
 
-dx_counts = dx %>%
-  count(code)
+  # total numbers of PDEs
+  n_claims = pde %>% group_by(bene_id) %>% summarize(n_claims=sum(n_claims))
 
-bene_dx = dx %>%
-  select(bene_id, diagnosis_type) %>%
-  distinct() %>%
-  mutate(dummy=TRUE) %>%
-  spread(diagnosis_type, dummy)
+  # count chronic conditions. 'n_cc' means one-year cc's
+  cc = read_feather(sprintf('../cc_%i.feather', year)) %>%
+    rowwise() %>%
+    mutate_(n_cc=sum_over(names_1yr_ccs)) %>%
+    ungroup()
 
-rc_dx = dx %>%
-  filter(diagnosis_type=='acute_rc') %>%
-  select(bene_id, date) %>%
+  # join the cc, summary PDE, and dx data into bene
+  bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
+    mutate(is_female=sex=='female', is_white=race=='white', is_dual=buyin_months>0) %>%
+    left_join(regions, by='state') %>%
+    mutate(year=year) %>%
+    left_join(cc, by='bene_id') %>%
+    left_join(n_op_days, by='bene_id') %>% replace_na(list(n_op_days=0)) %>%
+    left_join(n_claims, by='bene_id') %>% replace_na(list(n_claims=0)) %>%
+    left_join(dx_presence, by='bene_id') %>% replace_na(list(rc=FALSE, uti=FALSE))
+
+  list(bene=bene, pde=pde, dx=dx)
+}
+
+years = 2011:2014
+n_years = length(years)
+dat = lapply(years, load_data)
+
+bene = lapply(dat, function(df) df$bene) %>% bind_rows %>%
   group_by(bene_id) %>%
-  summarize(n_acute_rc=length(unique(date)))
+  mutate(n_years=n(),
+         start_age=min(age),
+         in_cohort=n_years==4) %>%
+  ungroup()
 
-total_pde = pde %>% count(bene_id) %>% rename(n_claims=n)
+pde = lapply(dat, function(df) df$pde) %>% bind_rows %>%
+  left_join(distinct(select(bene, bene_id, in_cohort)), by='bene_id')
 
-cc = read_feather(sprintf('../cc_%i.feather', year))
-
-bene = read_tsv(sprintf('../bene_%i.tsv', year)) %>%
-  mutate(is_female=sex=='female', is_white=race=='white') %>%
-  left_join(total_pde, by='bene_id') %>% replace_na(list(n_claims=0)) %>%
-  left_join(bene_dx, by='bene_id') %>% replace_na(list(acute_rc=FALSE, copd=FALSE, uti=FALSE)) %>%
-  left_join(select(cc, bene_id, COPD), by='bene_id') %>%
-  left_join(rc_dx, by='bene_id') %>% replace_na(list(n_acute_rc=0))
+dx = lapply(dat, function(df) df$dx) %>% bind_rows() %>%
+  left_join(distinct(select(bene, bene_id, in_cohort)), by='bene_id')
 ```
 
 ## Diagnostic codes and counts
 
-```{r}
-sex_icd %>%
-  left_join(dx_counts, by='code') %>%
+```{r dx_counts}
+dx %>%
+  filter(in_cohort) %>%
+  count(code) %>%
+  left_join(dx_codes, by='code') %>%
   arrange(diagnosis_type, desc(n)) %>%
   mutate(n=format(n, big.mark=',')) %>%
-  kable(align='lllr')
+  kable()
 ```
 
 # Results
@@ -99,22 +136,22 @@ Which drugs are the most used?
 top_abx = pde %>%
   count(antibiotic) %>%
   arrange(desc(n)) %>%
-  head(20)
-
-kable(top_abx)
+  head(10) %T>%
+  kable %$%
+  antibiotic
 ```
 
 ## Consumption of drugs by sex
 
-Looking at top drugs by sex.
-
 ```{r drugs_by_sex}
 usage_by_sex = function(drug) {
   bene %>%
+    filter(in_cohort) %>%
     left_join(pde %>% filter(antibiotic==drug) %>% count(bene_id), by='bene_id') %>%
     replace_na(list(n=0)) %>%
     group_by(sex) %>%
     summarize(n_bene=n(),
+              n_using=sum(n>0),
               n_claims=sum(n),
               mean_n_claims=mean(n),
               sd_n_claims=sd(n)) %>%
@@ -122,106 +159,45 @@ usage_by_sex = function(drug) {
            drug=drug)
 }
 
-ubs = lapply(top_abx$antibiotic, usage_by_sex) %>% bind_rows
+ubs = lapply(top_abx, usage_by_sex) %>% bind_rows
 ```
 
-```{r compute_ubs}
-denom = bene %>% count(sex) %>% rename(n_denom=n)
-ubs = pde %>%
-  select(bene_id, antibiotic) %>%
-  distinct() %>%
-  left_join(select(bene, bene_id, sex), by='bene_id') %>%
-  count(sex, antibiotic) %>%
+```{r healthcare_usage_by_sex}
+hc_by_sex = dx %>%
+  count(bene_id, diagnosis_type) %>%
   ungroup() %>%
-  rename(n_user=n) %>%
-  left_join(denom, by='sex') %>%
-  mutate(frac_using=n_user/n_denom) %>%
-  select(antibiotic, sex, frac_using) %>%
-  spread(sex, frac_using)
+  right_join(bene, by='bene_id') %>%
+  replace_na(list(n=0)) %>%
+  group_by(sex) %>%
+  summarize(total_n_days=sum(n),
+            mean_n_days=mean(n),
+            n_using=sum(n>0),
+            n_bene=n())
+
+hc_use_ratio = hc_by_sex %>% mutate(ratio=mean_n_days/min(mean_n_days)) %$% max(ratio)
 ```
+
+Looking at top drugs by sex. I compare total consumption and consumption normalized by healthcare usage. I measure healthcare usage as the number of days on which the beneficiary generated an outpatient (i.e., Carrier or Outpatient) claim. The ratio between the mean healthcare usage of the two sexes is `r hc_use_ratio`.
 
 ```{r drug_by_sex_plot}
 ubs %>%
-  mutate(highlight=antibiotic %in% c('azithromycin', 'ciprofloxacin', 'trimethoprim/sulfamethoxazole', 'fosfomycin', 'nitrofurantoin')) %>%
-  ggplot(aes(x=male, y=female, label=antibiotic, color=highlight)) +
+  select(drug, sex, mean_n_claims) %>%
+  mutate(mean_n_claims=mean_n_claims/n_years*1000) %>%
+  spread(sex, mean_n_claims) %>%
+  mutate(highlight=drug %in% c('azithromycin', 'ciprofloxacin', 'trimethoprim/sulfamethoxazole', 'fosfomycin', 'nitrofurantoin')) %>%
+  ggplot(aes(x=male, y=female, label=drug, color=highlight)) +
   scale_color_manual(values=c('black', 'red')) +
   geom_abline() +
-  #geom_abline(slope=c(1.06, 1.109, 1.366, 1.41, 2.202), col='gray') +
-  #geom_abline(slope=c(1.062406, 1.0976, 1+0.26*1.268177), col='blue') +
-  geom_abline(slope=exp(3)*(1.06)) +
-  # NAMCS: all adult usage 1.495, UTI: 2.164, ARC: 1.0976
-  # Medicare: nabxclaims 1.24, n OP days 1.062406, arc 1.108944, uti 2.268177, copd MALE! 1.123728
+  geom_abline(slope=hc_use_ratio, col='gray') +
   geom_text() +
   geom_point() +
-  xlab('claims per 1,000 male beneficiaries') +
-  ylab('claims per 1,000 female beneficiaries') +
+  xlab('male claims per 1,000 male beneficiaries per year') +
+  ylab('female claims per 1,000 female beneficiaries per year') +
   theme_minimal() +
   coord_fixed()
 ```
 
-```{r}
-dx %>%
-  count(bene_id, diagnosis_type) %>%
-  ungroup() %>%
-  right_join(bene, by='bene_id') %>%
-  group_by(sex) %>%
-  summarize(mn=mean(n), n_bene=n())
-```
-
-```{r drug_by_sex_plot2, eval=FALSE}
-total_plot_f = function(df, highlight=character(0)) {
-  df %>%
-    #mutate_at(vars(total, se), mpy) %>%
-    mutate(ci=se*1.96,
-           ci_low=total-ci,
-           ci_high=total+ci) %>%
-    select(drug, sex, total, ci_low, ci_high) %>%
-    gather('key', 'value', total, ci_low, ci_high) %>%
-    mutate(key=case_when(.$sex=='male' & .$key=='total' ~ 'x',
-                         .$sex=='male' & .$key=='ci_low' ~ 'xmin',
-                         .$sex=='male' & .$key=='ci_high' ~ 'xmax',
-                         .$sex=='female' & .$key=='total' ~ 'y',
-                         .$sex=='female' & .$key=='ci_low' ~ 'ymin',
-                         .$sex=='female' & .$key=='ci_high' ~ 'ymax')) %>%
-    select(-sex) %>%
-    spread(key, value) %>%
-    mutate(highlight=drug %in% highlight) %>%
-    ggplot(aes(x=x, xmin=xmin, xmax=xmax, y=y, ymin=ymin, ymax=ymax, label=drug, color=highlight)) +
-    geom_abline(col='gray') +
-    geom_point() + geom_errorbar() + geom_errorbarh() +
-    scale_color_manual(values=c('black', 'red')) +
-    geom_text() +
-    #geom_text(nudge_x=1, nudge_y=0.5) +
-    #scale_x_continuous(breaks=c(0, 5, 10), limits=c(0, 12)) +
-    #scale_y_continuous(breaks=c(0, 5, 10), limits=c(0, 14)) +
-    xlab('No. rx. for men (millions)') + ylab('No. rx. for women (millions)') +
-    coord_fixed() +
-    theme_minimal()
-}
-
-ubs %>%
-  gather('sex', 'total', female, male) %>%
-  left_join(bene %>% count(sex) %>% rename(n_bene=n), by='sex') %>%
-  mutate(se=total/sqrt(n_bene)) %>%
-  rename(drug=antibiotic) %>%
-  total_plot_f() +
-  geom_abline(slope=c(1.06, 1.306122), col='gray')
-```
-
-Alternatively, I look at the mean usage (across men and women), the residual (the difference between the fraction of female beneficiaries taking the drug and male beneficiaries), and the fractional residual (the residual over the mean). I keep only those drugs with mean fraction at least 1%, and I also keep fosfomycin.
-
-```{r}
-ubs %>%
-  mutate(mean_fraction=0.5*(male+female),
-         residual=female-male,
-         fractional_residual=residual/mean_fraction) %>%
-  filter(mean_fraction > 0.01 | antibiotic=='fosfomycin') %>%
-  ggplot(aes(x=mean_fraction, y=fractional_residual, label=antibiotic)) +
-  geom_point() +
-  geom_text()
-```
-
-This makes the same four look interesting; maybe levofloxacin and metronidazole would be next. Levo fits in with the ARTI story; metro does not.
+The $N$ is so big that the standard errors are so small that I don't even bother to put them on there.
 
 ## UTIs
 
@@ -229,70 +205,111 @@ Are the increased consumptions of cipro and TMP/SMX explained by UTIs? That is, 
 
 ### Cipro
 
-```{r}
-outcome_bene = pde %>% filter(antibiotic=='ciprofloxacin') %$% bene_id %>% unique
-epi = bene %>%
-  mutate(outcome=bene_id %in% outcome_bene) %>%
-  count(sex, uti, outcome) %>%
-  ungroup()
+```{r cipro}
+cipro_dat = pde %>%
+  filter(in_cohort, antibiotic=='ciprofloxacin') %>%
+  select(bene_id, year, cipro=n_claims) %>%
+  right_join(filter(bene, in_cohort), by=c('bene_id', 'year')) %>%
+  replace_na(list(cipro=0)) %>%
+  group_by(bene_id) %>%
+  summarize(is_female=any(is_female),
+            uti=any(uti),
+            cipro=sum(cipro))
+
+model_f = function(df, f) glm(f, data=df, family='poisson') %>% tidy
+
+cipro_results = bind_rows(model_f(cipro_dat, cipro ~ is_female) %>% mutate(model='base'),
+                          model_f(cipro_dat, cipro ~ is_female + uti) %>% mutate(model='expl'))
 ```
 
-```{r, eval=FALSE}
-# group_by_all_ = function(df, group_name) {
-#   bind_rows(df, mutate_(df, .dots=setNames(list(~'all'), group_name))) %>%
-#     group_by_(group_name)
-# }
-# 
-# epi %>%
-#   group_by_all_('sex') %>%
-#   summarize(n_cases=sum(n)) %>%
-  
+```{r cipro_results}
+# fraction of risk ratio explained
+frre = function(res, tm='is_femaleTRUE') {
+  rr0 = res %>% filter(model=='base', term==tm) %$% exp(estimate)
+  rr1 = res %>% filter(model=='expl', term==tm) %$% exp(estimate)
+  (rr0 - rr1) / (rr0 - 1)
+}
+
+pct_show = function(x) sprintf('%g%%', round(100*x, 2))
+
+cipro_results %>% kable
 ```
+
+I ran two models. In the first, I try to predict the number of ciprofloxacin claims that a beneficiary in the cohort will have over the entire study period using just their sex. Next, I use their sex and whether or not they had a diagnosis for a UTI at any point during the study period.
+
+Adding UTI to the model explained `r pct_show(frre(cipro_results))` of the increased mean ciprofloxacin consumption associated with being female.
+
+### Bactrim
+
+```{r bactrim}
+bactrim_dat = pde %>%
+  filter(in_cohort, antibiotic=='trimethoprim/sulfamethoxazole') %>%
+  select(bene_id, year, bactrim=n_claims) %>%
+  right_join(filter(bene, in_cohort), by=c('bene_id', 'year')) %>%
+  replace_na(list(bactrim=0)) %>%
+  group_by(bene_id) %>%
+  summarize(is_female=any(is_female),
+            uti=any(uti),
+            bactrim=sum(bactrim))
+
+bactrim_results = bind_rows(model_f(bactrim_dat, bactrim ~ is_female) %>% mutate(model='base'),
+                            model_f(bactrim_dat, bactrim ~ is_female + uti) %>% mutate(model='expl'))
+
+bactrim_results %>% kable
+```
+
+So, when adding in UTIs, the effect of sex appears to invert, meaning that UTIs explained *more* than all of the difference.
+
+### Nitro
+
+```{r nitro}
+nitro_dat = pde %>%
+  filter(in_cohort, antibiotic=='nitrofurantoin') %>%
+  select(bene_id, year, n=n_claims) %>%
+  right_join(filter(bene, in_cohort), by=c('bene_id', 'year')) %>%
+  replace_na(list(n=0)) %>%
+  group_by(bene_id) %>%
+  summarize(is_female=any(is_female),
+            uti=any(uti),
+            n=sum(n))
+
+nitro_results = bind_rows(model_f(nitro_dat, n ~ is_female) %>% mutate(model='base'),
+                          model_f(nitro_dat, n ~ is_female + uti) %>% mutate(model='expl'))
+
+nitro_results %>% kable
+```
+
+The nitrofurantoin model doesn't explain as much of the difference (`r pct_show(frre(nitro_results))`), which is maybe not surprising or troubling because nitrofurantoin is mainly prescribed to women. We're not confused about why this consumption is higher.
 
 ## Azithromycin
 
 Nitrofurantoin, ciprofloxacin, and TMP-SMX are all used as urinary anti-infectives, and UTIs more commonly affect women. This does not explain, however, the increased consumption of azithromycin.
 
 ```{r women_azithro_vs_uai, eval=FALSE}
-any_in = function(lst, elts) match(elts, lst) %>% { .[!is.na(.)] } %>% { length(.) > 0 }
+azithro_dat = pde %>%
+  filter(in_cohort, antibiotic=='azithromycin') %>%
+  select(bene_id, year, n=n_claims) %>%
+  right_join(filter(bene, in_cohort), by=c('bene_id', 'year')) %>%
+  replace_na(list(n=0)) %>%
+  group_by(bene_id) %>%
+  summarize(is_female=any(is_female),
+            rc=any(rc),
+            copd=any(COPD),
+            n=sum(n))
 
-usage %>%
-  filter(age >= 65, sex=='female') %>%
-  group_by(bene_id) %>%
-  mutate(used_azithro='azithromycin' %in% antibiotic,
-         used_uai=any_in(antibiotic, c('nitrofurantoin', 'trimethoprim/sulfamethoxazole', 'ciprofloxacin')),
-         used_both=used_azithro && used_uai,
-         is_white=race=='white') %>%
-  ungroup() %>%
-  mutate(user_type=case_when(.$used_both ~ 'both',
-                             .$used_azithro ~ 'azithro',
-                             .$used_uai ~ 'UAI',
-                             TRUE ~ 'none')) %>%
-  group_by(bene_id) %>%
-  summarize(age=age[1],
-            is_white=is_white[1],
-            chronic=chronic[1],
-            user_type=user_type[1],
-            n_claims=sum(n_claims)) %>%
-  group_by(user_type) %>%
-  summarize(n_beneficiaries=n(),
-            mean_age=mean(age),
-            percent_white=mean(is_white)*100,
-            mean_n_chronic_cond=mean(chronic),
-            mean_n_claims=mean(n_claims)) %>%
-  arrange(desc(n_beneficiaries)) %>%
-  kable
+azithro_results = bind_rows(model_f(azithro_dat, n ~ is_female) %>% mutate(model='base'),
+                            model_f(azithro_dat, n ~ is_female + rc + copd) %>% mutate(model='expl'))
+
+azithro_results %>% kable
 ```
+
+But we do a bad job: `r pct_show(frre(azithro_results))` gets explained by COPD and respiratory complaints.
 
 Does that mean that:
 
 - women are older and therefore use more azithromycin,
 - women have more chronic conditions (esp. COPD) and therefore use more, or
 - women have more encounters with doctors and therefore are prescribed more?
-
-### Chronic conditions
-
-Cf. the chronic conditions report.
 
 ### Encounters by sex
 

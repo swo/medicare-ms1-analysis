@@ -8,21 +8,22 @@ fraction_nonzero = function(x) length(nonzero(x)) / length(x)
 pad0 = function(x, to) c(x, rep(0, to - length(x)))
 
 hoover = function(x) 0.5 * sum(abs(x - mean(x))) / sum(x)
+hoover2 = function(x) 0.5 * sum(abs(x[x > 0] - mean(x))) / sum(x)
 
 inequalities = function(x) {
   nb_par = fitdistrplus::mledist(x, 'nbinom')$estimate
   nb_size = nb_par['size']
   nb_prob = nb_size / (nb_size + nb_par['mu'])
-  data_frame(total=sum(x),
+  data_frame(n=n(),
+             total=sum(x),
              mean=mean(x),
              fnz=fraction_nonzero(x),
              gini=ineq(x, type='Gini'),
              nzgini=ineq(nonzero(x), type='Gini'),
              nb_size=nb_size,
              nb_prob=nb_prob,
-             pietra=ineq(x, type='RS'),
-             nzpieta=ineq(nonzero(x), type='RS'),
              hoover=hoover(x),
+             hoover2=hoover2(x),
              nzhoover=hoover(nonzero(x))
              )
 }
