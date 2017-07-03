@@ -1,0 +1,207 @@
+---
+title: "Temporal trends (NAMCS)"
+author: "Scott Olesen"
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
+
+library(survey)
+```
+
+```{r load_data}
+# Caveat: I removed a stratum from the 2011 data that had only one PSU in it.
+# Also: I'm not sure that combining years like this is going to be kosher.
+
+years = 2011:2014
+n_years = length(years)
+mpy = function(x) x/(1e6 * n_years) # millions per year
+
+read_tsv_years = function(fn_template, ...) {
+  f = function(y) sprintf(fn_template, y) %>% read_tsv(..., guess_max=1e6) %>% mutate(year=y, visit_id=paste0(y, '_', visit_id))
+  lapply(years, f) %>% bind_rows
+}
+
+sex_codes = read_tsv('../sex-difference/namcs_sex_codes.tsv') %>%
+  rename(dx=code)
+
+dx = read_tsv_years('../../db/namcs/data/namcs_dx_%i.tsv') %>%
+  left_join(sex_codes, by='dx')
+
+dx_visit = dx %>%
+  group_by(visit_id) %>%
+  summarize(acute_rc='acute_rc' %in% diagnosis_type)
+
+top_abx = read_tsv('../../db/namcs/analysis/top_abx.tsv')
+abx_cat = read_tsv('../../db/namcs/data/parse/drug_codes/abx_codes.tsv')
+
+drugs = read_tsv_years('../../db/namcs/data/namcs_drugs_%i.tsv') %>%
+  mutate(is_abx=cat1 %in% abx_cat$category)
+
+n_abx = drugs %>%
+  filter(is_abx) %>%
+  group_by(visit_id) %>%
+  summarize(n_abx=n())
+
+abx_visit = left_join(top_abx, drugs, by='desc') %>%
+  count(visit_id, abx) %>% ungroup() %>%
+  spread(abx, n)
+
+visits = read_tsv_years('../../db/namcs/data/namcs_visits_%i.tsv') %>%
+  mutate(age_group=case_when(.$age <= 19 ~ 'child',
+                             .$age <= 64 ~ 'adult',
+                             .$age <= 92 ~ 'elderly')) %>%
+  left_join(dx_visit, by='visit_id') %>%
+  replace_na(list(acute_rc=FALSE)) %>%
+  left_join(n_abx, by='visit_id') %>% replace_na(list(n_abx=0)) %>%
+  left_join(abx_visit, by='visit_id') %>%
+  mutate_at(top_abx$abx, function(x) if_else(is.na(x), 0L, x))
+
+filter_strata = function(df) {
+  bad_strata = select(df, survey_id, stratum) %>% distinct() %>% count(stratum) %>% filter(n==1) %$% stratum
+  filter(df, !(stratum %in% bad_strata))
+}
+
+design_f = function(df) {
+  filter_strata(df) %>%
+    as.data.frame() %>%
+    svydesign(data=., ids=~survey_id, strata=~stratum, weights=~weight, nest=TRUE)
+}
+
+design = design_f(visits)
+adult_design = subset(design, age_group != 'child')
+```
+
+# Methods
+
+## Data & overall methods
+
+I used the 2011-2014 NAMCS data. All numbers of prescriptions will be presented in millions per year. I'll mostly consider only the adults.
+
+## Drugs
+
+I consider the same drugs as last time:
+
+```{r}
+kable(top_abx)
+```
+
+# Results
+
+## Summary of trends
+
+```{r drugs_time}
+f = function(design, y, d) {
+  subset(design, year==y) %>%
+    svytotal(as.formula(paste0('~', d)), design=.) %>%
+    data_frame(year=y, abx=d, total=., se=as.numeric(SE(.)))
+}
+
+g = function(design) {
+  crossing(year=2011:2014, desc=top_abx$abx) %>%
+    rowwise() %>% do(f(design, .$year, .$desc)) %>% ungroup()
+}
+
+abx_time = g(design)
+abx_time_adult = g(adult_design)
+```
+
+```{r drugs_time_plot}
+abx_time %>%
+  mutate(ci=1.96*se, ymin=total-ci, ymax=total+ci) %>%
+  ggplot(aes(x=year, y=total, ymin=ymin, ymax=ymax)) +
+  facet_wrap(~abx, ncol=3, scales='free_y') +
+  geom_point() + geom_line() + geom_linerange() +
+  theme_minimal()
+```
+
+It doesn't look by eye that any trends are particularly strong. I used Poisson regressions to see if anything was changing with time. Only levo:
+
+```{r drugs_time_model}
+qpglm = function(design, frmla) svyglm(frmla, design=design, family=quasipoisson(link='log'))
+
+f = function(design, d) {
+  qpglm(design, as.formula(paste0(d, '~ year'))) %>%
+    tidy %>%
+    mutate(abx=d) %>%
+    filter(term != '(Intercept)')
+}
+
+g = function(design) lapply(top_abx$abx, function(x) f(design, x)) %>% bind_rows()
+
+abx_time_model = g(design)
+abx_time_model_adult = g(adult_design)
+```
+
+```{r drugs_time_model_table}
+abx_time_model %>%
+  select(abx, estimate, p.value) %>%
+  mutate(adj.p.value=p.adjust(p.value, method='BH')) %>%
+  arrange(p.value) %>%
+  kable
+```
+
+```{r levo_plot}
+american_population = data_frame(year=2011:2014, n_ppl=c(312.92, 315.22, 317.47, 319.85) * 1e6)
+
+levo_time = abx_time %>%
+  filter(abx=='levo') %>%
+  left_join(american_population, by='year') %>%
+  mutate(total=total/n_ppl*1000, se=se/n_ppl*1000)
+  
+levo_time %>%
+  mutate(ci=1.96*se, ymin=total-ci, ymax=total+ci) %>%
+  ggplot(aes(x=year, y=total, ymin=ymin, ymax=ymax)) +
+  geom_point() + geom_line() + geom_linerange() +
+  ylim(5, 21) +
+  ylab('Levo claims per 1,000 Americans') +
+  theme_minimal()
+```
+
+```{r levo_ratio}
+t1 = levo_time %>% filter(year==2011) %$% total
+v1 = levo_time %>% filter(year==2011) %$% se
+t2 = levo_time %>% filter(year==2014) %$% total
+v2 = levo_time %>% filter(year==2014) %$% se
+
+tr = t2 / t1
+vr = v1 / t2^2 + t1^1 / t2^4 * v2
+sdr = sqrt(vr)
+
+show_tot = function(tot, v) sprintf('%g (±%g)', round(tot, 2), round(v, 2))
+show_pct = function(tot, v) sprintf('%g%% (±%g%%)', round((tot - 1)*100, digits=1), round(sqrt(v)*100, digits=1))
+```
+
+Levo consumption increased from `r show_tot(t1, v1)` prescriptions per 1,000 Americans per year to `r show_tot(t2, v2)`. That is an increase of `r show_pct(tr, vr)`, i.e., doubled.
+
+## Presence of this trend in different age groups
+
+I can confirm that levo is the only drug with a strong trend among adults (rather than everyone):
+
+```{r drugs_time_model_adult_table}
+abx_time_model_adult %>%
+  select(abx, estimate, p.value) %>%
+  mutate(adj.p.value=p.adjust(p.value, method='BH')) %>%
+  arrange(p.value) %>%
+  kable
+```
+
+And, in fact, this trend exists just among the elderly, although it's only marginally significant if you tested for everything.
+
+```{r levo_elderly}
+design %>% subset(age_group=='elderly') %>%
+  qpglm(levo~year) %>% tidy
+```
+
+Levo may be on the decline for children, however:
+
+```{r levo_children}
+design %>% subset(age_group=='child') %>%
+  qpglm(levo~year) %>% tidy
+```
+
+# Conclusions
+
+Levo is definitely going up.

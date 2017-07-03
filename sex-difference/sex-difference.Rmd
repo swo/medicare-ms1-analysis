@@ -36,7 +36,7 @@ I'll use the Medicare 2011 data. Or, use all years, pool that data, and include 
 Before a model, I should just stratify by sex and exposure. Do we already see the signal (or lack of it)? Then we can go onto including age and calendar year as covariates.
 
 ```{r load_data}
-year = 2011
+year = 2014
 
 pde = read_tsv(sprintf('../pde_%i.tsv', year))
 
@@ -125,7 +125,7 @@ usage_by_sex = function(drug) {
 ubs = lapply(top_abx$antibiotic, usage_by_sex) %>% bind_rows
 ```
 
-```{r}
+```{r compute_ubs}
 denom = bene %>% count(sex) %>% rename(n_denom=n)
 ubs = pde %>%
   select(bene_id, antibiotic) %>%
@@ -146,7 +146,11 @@ ubs %>%
   ggplot(aes(x=male, y=female, label=antibiotic, color=highlight)) +
   scale_color_manual(values=c('black', 'red')) +
   geom_abline() +
-  geom_abline(slope=1.28, col='gray') +
+  #geom_abline(slope=c(1.06, 1.109, 1.366, 1.41, 2.202), col='gray') +
+  #geom_abline(slope=c(1.062406, 1.0976, 1+0.26*1.268177), col='blue') +
+  geom_abline(slope=exp(3)*(1.06)) +
+  # NAMCS: all adult usage 1.495, UTI: 2.164, ARC: 1.0976
+  # Medicare: nabxclaims 1.24, n OP days 1.062406, arc 1.108944, uti 2.268177, copd MALE! 1.123728
   geom_text() +
   geom_point() +
   xlab('claims per 1,000 male beneficiaries') +
@@ -155,7 +159,16 @@ ubs %>%
   coord_fixed()
 ```
 
-```{r drug_by_sex_plot2}
+```{r}
+dx %>%
+  count(bene_id, diagnosis_type) %>%
+  ungroup() %>%
+  right_join(bene, by='bene_id') %>%
+  group_by(sex) %>%
+  summarize(mn=mean(n), n_bene=n())
+```
+
+```{r drug_by_sex_plot2, eval=FALSE}
 total_plot_f = function(df, highlight=character(0)) {
   df %>%
     #mutate_at(vars(total, se), mpy) %>%
@@ -187,8 +200,12 @@ total_plot_f = function(df, highlight=character(0)) {
 }
 
 ubs %>%
-  rename(total=mean_n_claims, se=se_n_claims) %>%
-  total_plot_f()
+  gather('sex', 'total', female, male) %>%
+  left_join(bene %>% count(sex) %>% rename(n_bene=n), by='sex') %>%
+  mutate(se=total/sqrt(n_bene)) %>%
+  rename(drug=antibiotic) %>%
+  total_plot_f() +
+  geom_abline(slope=c(1.06, 1.306122), col='gray')
 ```
 
 Alternatively, I look at the mean usage (across men and women), the residual (the difference between the fraction of female beneficiaries taking the drug and male beneficiaries), and the fractional residual (the residual over the mean). I keep only those drugs with mean fraction at least 1%, and I also keep fosfomycin.

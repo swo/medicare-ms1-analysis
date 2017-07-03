@@ -33,7 +33,8 @@ dx = read_tsv_years('../../db/namcs/data/namcs_dx_%i.tsv') %>%
 dx_visit = dx %>%
   group_by(visit_id) %>%
   summarize(uti='uti' %in% diagnosis_type,
-            acne='acne' %in% diagnosis_type)
+            acne='acne' %in% diagnosis_type,
+            arc='acute_rc' %in% diagnosis_type)
 
 top_abx = read_tsv('../../db/namcs/analysis/top_abx.tsv')
 abx_cat = read_tsv('../../db/namcs/data/parse/drug_codes/abx_codes.tsv')
@@ -55,7 +56,7 @@ visits = read_tsv_years('../../db/namcs/data/namcs_visits_%i.tsv') %>%
                              .$age <= 64 ~ 'adult',
                              .$age <= 92 ~ 'elderly')) %>%
   left_join(dx_visit, by='visit_id') %>%
-  replace_na(list(uti=FALSE, acne=FALSE)) %>%
+  replace_na(list(uti=FALSE, acne=FALSE, arc=FALSE)) %>%
   left_join(n_abx, by='visit_id') %>% replace_na(list(n_abx=0)) %>%
   left_join(abx_visit, by='visit_id') %>%
   mutate_at(top_abx$abx, function(x) if_else(is.na(x), 0L, x))
@@ -150,7 +151,7 @@ abx_counts %>%
   kable
 ```
 
-I kept the drugs from azithromycin through clarithromycin, accounting for 80% of all prescriptions.
+I kept the drugs from azithromycin through cefdinir, but excluding clindamycin, accounting for 80% of all prescriptions. I exclude clindamycin because NAMCS doesn't have any information about route of administration. In some cases, the old IDs can be used to distinguish different form, but other times there is no hope. For example, in the 2011 data, there are 118 visits that include clindamycin. In 84 cases, it is just "clindamycin"; in 18, it is "Cleocin" (which can be oral, injected, or vaginal); in 9 cases, it is "clindamycin phosphate", which is normally topical, etc.
 
 ## Overall healthcare usage by sex
 
@@ -170,9 +171,33 @@ x %>%
   kable
 ```
 
-Overall, more of the visits were made by women. Women make `r round(female_visit_odds[2], 3)*100`% more visits than men. I'll therefore evaluate consumption by two standards: first, do women consume more antibiotics overall; second, do women consume more antibiotics *per visit*.
+Overall, more of the visits were made by women. Women make `r round(female_visit_odds[2]-1, 3)*100`% more visits than men.
+
+What fraction of these visits are due to UTIs? We can see what fraction of visits are made for UTIs:
+
+```{r}
+svytable(~sex+uti, adult_design) %>%
+  as_data_frame() %>%
+  mutate(n=mpy(n)) %>%
+  kable
+```
+
+So of the ~150 million extra visits per year made by women, a difference of ~5 million visits (or 3%) can be attributed to UTIs.
+
+Of the top 3 diagnoses (hypertension, gynecological exam, and observation of pregnancy), two are woman-specific. Those account for 25 million visits per year, or about one-sixth of the total. So the difference is diffuse across diagnoses. Very few antibiotics are prescribed during those visits, less than 1 million per year.
+
+Acute respiration complaints explain another ~5 million:
+
+```{r}
+svytable(~sex+arc, adult_design) %>%
+  as_data_frame() %>%
+  mutate(n=mpy(n)) %>%
+  kable
+```
 
 ## Consumption by drug
+
+I'll therefore evaluate consumption by two standards: first, do women consume more antibiotics overall; second, do women consume more antibiotics *per visit*.
 
 ```{r models}
 abx_diff_f = function(abx) {
@@ -285,16 +310,6 @@ abx_pois %>%
 ## Nitrofurantoin
 
 Nitrofurantoin prescriptions among women are associated with a number of diagnoses, but only two of them---UTI (`5990-`) and dysuria (`7881-`)---meet the basic requirement for data validity (at least 30 counts). Among men, UTI is the leading diagnosis, but it doesn't meet the data validity requirement (there are only 10 records for nitro prescriptions to a male with a UTI diagnosis in the 4 years of data).
-
-## Clindamycin
-
-```{r clinda}
-m1 = svyglm(clinda~sex, design=adult_design, family='poisson')
-m2 = svyglm(clinda~sex+acne, design=adult_design, family='poisson')
-clinda_f_expl = 1 - exp(-m2$coefficients['sexmale']+m1$coefficients['sexmale'])
-```
-
-The only clindamycin-associated diagnosis that meets (maybe) the data validity criterion is acne (`7061-`). However, acne explains only a small fraction (`r 100*round(clinda_f_expl, digits=3)`%) of the difference between the sexes.
 
 ## Just among the elderly
 
