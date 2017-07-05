@@ -1,32 +1,3 @@
----
-title: "Drivers of sex differences in consumption"
-author: "Scott Olesen"
-date: "2/24/2017"
-output: html_document
----
-
-```{r global_options, include=FALSE}
-knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
-                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
-```
-
-# Background
-
-Why do females account for 25% more antibiotic claims per capita than males? I have two easy explanations:
-
-- More females are alive at later ages, and older people consume more antibiotics.
-- Females consume more of the same antibiotics.
-- Females consume different antibiotics.
-
-# Methods
-
-*Data*: Medicare 2011-2014 in the cohort.
-
-*Outcome*: Antibiotic claims overall and for the top 10 or so individual drugs.
-
-*Exposure*: A diagnosis with a UTI, COPD, or an acute RTI.
-
-```{r load_data, cache=FALSE}
 sum_over = function(target_columns) {
   dummy_vars = sapply(1:length(target_columns), function(i) sprintf('x%i', i))
   dummy_vars_string = paste0(dummy_vars, collapse=',')
@@ -51,22 +22,22 @@ load_data = function(year) {
     summarize(n_claims=n(), days_supply=sum(days_supply)) %>%
     ungroup() %>%
     mutate(year=year)
-  
+
   # diagnosis claims
   dx_car_fn = sprintf('../../data/dx_car_claims_%i.tsv', year)
   dx_op_fn = sprintf('../../data/dx_op_claims_%i.tsv', year)
-  
+
   dx = bind_rows(read_tsv(dx_car_fn),
                  read_tsv(dx_op_fn)) %>%
     mutate(date=dmy(from_date)) %>%
     rename(bene_id=BENE_ID, code=diagnosis) %>%
     left_join(dx_codes, by='code')
-  
+
   dx_presence = dx %>%
     group_by(bene_id) %>%
     summarize(rc='acute_rc' %in% diagnosis_type,
               uti='uti' %in% diagnosis_type)
-  
+
   count_car_fn = sprintf('../../data/count_car_claims_%i.tsv', year)
   count_op_fn = sprintf('../../data/count_op_claims_%i.tsv', year)
   n_op_days = bind_rows(read_tsv(count_car_fn), read_tsv(count_op_fn)) %>%
@@ -105,45 +76,29 @@ bene = lapply(dat, function(df) df$bene) %>% bind_rows %>%
   mutate(n_years=n(),
          start_age=min(age),
          in_cohort=n_years==4) %>%
-  ungroup()
+  ungroup() %T>%
+  write_tsv('data/bene.tsv')
 
 pde = lapply(dat, function(df) df$pde) %>% bind_rows %>%
-  left_join(distinct(select(bene, bene_id, in_cohort)), by='bene_id')
+  left_join(distinct(select(bene, bene_id, in_cohort)), by='bene_id') %T>%
+  write_tsv('data/pde.tsv')
 
 dx = lapply(dat, function(df) df$dx) %>% bind_rows() %>%
-  left_join(distinct(select(bene, bene_id, in_cohort)), by='bene_id')
-```
+  left_join(distinct(select(bene, bene_id, in_cohort)), by='bene_id') %T>%
+  write_tsv('data/dx.tsv')
 
-## Diagnostic codes and counts
-
-```{r dx_counts}
+# save diagnostic counts
 dx %>%
   filter(in_cohort) %>%
   count(code) %>%
-  left_join(dx_codes, by='code') %>%
-  arrange(diagnosis_type, desc(n)) %>%
-  mutate(n=format(n, big.mark=',')) %>%
-  kable()
-```
+  write_tsv('data/tbl_dx_counts.tsv')
 
-# Results
-
-## Top drugs
-
-Which drugs are the most used?
-
-```{r top_drugs}
-top_abx = pde %>%
+# save top antibiotics
+pde %>%
   count(antibiotic) %>%
-  arrange(desc(n)) %>%
-  head(10) %T>%
-  kable %$%
-  antibiotic
-```
+  write_tsv('data/tbl_top_abx.tsv')
 
-## Consumption of drugs by sex
-
-```{r drugs_by_sex}
+# consumption of drugs by sex
 usage_by_sex = function(drug) {
   bene %>%
     filter(in_cohort) %>%
@@ -160,9 +115,9 @@ usage_by_sex = function(drug) {
 }
 
 ubs = lapply(top_abx, usage_by_sex) %>% bind_rows
-```
+write_tsv('data/tbl_usage_by_sex.tsv')
 
-```{r healthcare_usage_by_sex}
+# healthcare_usage_by_sex
 hc_by_sex = dx %>%
   count(bene_id, diagnosis_type) %>%
   ungroup() %>%
@@ -173,39 +128,8 @@ hc_by_sex = dx %>%
             mean_n_days=mean(n),
             n_using=sum(n>0),
             n_bene=n())
+write_tsv('data/tbl_hc_by_sex.tsv')
 
-hc_use_ratio = hc_by_sex %>% mutate(ratio=mean_n_days/min(mean_n_days)) %$% max(ratio)
-```
-
-Looking at top drugs by sex. I compare total consumption and consumption normalized by healthcare usage. I measure healthcare usage as the number of days on which the beneficiary generated an outpatient (i.e., Carrier or Outpatient) claim. The ratio between the mean healthcare usage of the two sexes is `r hc_use_ratio`.
-
-```{r drug_by_sex_plot}
-ubs %>%
-  select(drug, sex, mean_n_claims) %>%
-  mutate(mean_n_claims=mean_n_claims/n_years*1000) %>%
-  spread(sex, mean_n_claims) %>%
-  mutate(highlight=drug %in% c('azithromycin', 'ciprofloxacin', 'trimethoprim/sulfamethoxazole', 'fosfomycin', 'nitrofurantoin')) %>%
-  ggplot(aes(x=male, y=female, label=drug, color=highlight)) +
-  scale_color_manual(values=c('black', 'red')) +
-  geom_abline() +
-  geom_abline(slope=hc_use_ratio, col='gray') +
-  geom_text() +
-  geom_point() +
-  xlab('male claims per 1,000 male beneficiaries per year') +
-  ylab('female claims per 1,000 female beneficiaries per year') +
-  theme_minimal() +
-  coord_fixed()
-```
-
-The $N$ is so big that the standard errors are so small that I don't even bother to put them on there.
-
-## UTIs
-
-Are the increased consumptions of cipro and TMP/SMX explained by UTIs? That is, do men and women who have UTIs get cipro and TMP/SMX at similar rates, and it's just that women get more UTIs than men?
-
-### Cipro
-
-```{r cipro}
 cipro_dat = pde %>%
   filter(in_cohort, antibiotic=='ciprofloxacin') %>%
   select(bene_id, year, cipro=n_claims) %>%
@@ -220,28 +144,8 @@ model_f = function(df, f) glm(f, data=df, family='poisson') %>% tidy
 
 cipro_results = bind_rows(model_f(cipro_dat, cipro ~ is_female) %>% mutate(model='base'),
                           model_f(cipro_dat, cipro ~ is_female + uti) %>% mutate(model='expl'))
-```
+write_tsv(cipro_results, 'data/tbl_model_cipro.tsv')
 
-```{r cipro_results}
-# fraction of risk ratio explained
-frre = function(res, tm='is_femaleTRUE') {
-  rr0 = res %>% filter(model=='base', term==tm) %$% exp(estimate)
-  rr1 = res %>% filter(model=='expl', term==tm) %$% exp(estimate)
-  (rr0 - rr1) / (rr0 - 1)
-}
-
-pct_show = function(x) sprintf('%g%%', round(100*x, 2))
-
-cipro_results %>% kable
-```
-
-I ran two models. In the first, I try to predict the number of ciprofloxacin claims that a beneficiary in the cohort will have over the entire study period using just their sex. Next, I use their sex and whether or not they had a diagnosis for a UTI at any point during the study period.
-
-Adding UTI to the model explained `r pct_show(frre(cipro_results))` of the increased mean ciprofloxacin consumption associated with being female.
-
-### Bactrim
-
-```{r bactrim}
 bactrim_dat = pde %>%
   filter(in_cohort, antibiotic=='trimethoprim/sulfamethoxazole') %>%
   select(bene_id, year, bactrim=n_claims) %>%
@@ -254,15 +158,8 @@ bactrim_dat = pde %>%
 
 bactrim_results = bind_rows(model_f(bactrim_dat, bactrim ~ is_female) %>% mutate(model='base'),
                             model_f(bactrim_dat, bactrim ~ is_female + uti) %>% mutate(model='expl'))
+write_tsv(bactrim_results, 'data/tbl_model_tmpsmx.tsv')
 
-bactrim_results %>% kable
-```
-
-So, when adding in UTIs, the effect of sex appears to invert, meaning that UTIs explained *more* than all of the difference.
-
-### Nitro
-
-```{r nitro}
 nitro_dat = pde %>%
   filter(in_cohort, antibiotic=='nitrofurantoin') %>%
   select(bene_id, year, n=n_claims) %>%
@@ -275,17 +172,8 @@ nitro_dat = pde %>%
 
 nitro_results = bind_rows(model_f(nitro_dat, n ~ is_female) %>% mutate(model='base'),
                           model_f(nitro_dat, n ~ is_female + uti) %>% mutate(model='expl'))
+write_tsv(nitro_results, 'data/tbl_model_nitro.tsv')
 
-nitro_results %>% kable
-```
-
-The nitrofurantoin model doesn't explain as much of the difference (`r pct_show(frre(nitro_results))`), which is maybe not surprising or troubling because nitrofurantoin is mainly prescribed to women. We're not confused about why this consumption is higher.
-
-## Azithromycin
-
-Nitrofurantoin, ciprofloxacin, and TMP-SMX are all used as urinary anti-infectives, and UTIs more commonly affect women. This does not explain, however, the increased consumption of azithromycin.
-
-```{r women_azithro_vs_uai, eval=FALSE}
 azithro_dat = pde %>%
   filter(in_cohort, antibiotic=='azithromycin') %>%
   select(bene_id, year, n=n_claims) %>%
@@ -300,43 +188,23 @@ azithro_dat = pde %>%
 azithro_results = bind_rows(model_f(azithro_dat, n ~ is_female) %>% mutate(model='base'),
                             model_f(azithro_dat, n ~ is_female + rc + copd) %>% mutate(model='expl'))
 
-azithro_results %>% kable
-```
+write_tsv(azithro_results, 'data/tbl_model_azithro.tsv')
 
-But we do a bad job: `r pct_show(frre(azithro_results))` gets explained by COPD and respiratory complaints.
-
-# Supplement
-
-## Consumption by age and sex
-
-At every age, women consume more antibiotics than men.
-
-```{r consumption_by_age_and_sex}
+# Consumption by age and sex
 bene %>%
   filter(in_cohort) %>%
   group_by(bene_id) %>%
   summarize(is_female=any(is_female),
             n=sum(n_claims),
             age=min(age)) %>%
-  ggplot(aes(x=age, y=n, group=is_female)) +
-  geom_boxplot()
-```
+  write_tsv('data/tbl_consumption_age_sex.tsv')
 
-### Sex by age
-
-The older people are more female.
-
-```{r sex_by_age}
+# Sex by age
 bene %>% filter(in_cohort) %>%
-  ggplot(aes(x=age, fill=sex)) +
-  geom_bar(position='dodge')
-```
+  count(age, sex) %>%
+  write_tsv('data/tbl_sex_by_age.tsv')
 
-## Margins of azithromycin consumption
-
-Maybe women take more azithromycin because usage is more concentrated in women than in men. Then we could explain the increased consumption by a small number of people taking more drug. (Yonatan points to Lady Windmere syndrome.) In fact, consumption is more even among women; this is driven by the extensive fraction: a greater fraction of women (than men) took at least one dose.
-
-```{r azithro_even}
+# Margins of azithromycin consumption
 pde %>%
   filter(antibiotic=='azithromycin') %>%
   group_by(bene_id) %>% summarize(azi=sum(n_claims)) %>%
@@ -346,8 +214,4 @@ pde %>%
   group_by(sex) %>%
   mutate(f_ppl=n/sum(n), cum_f_ppl=cumsum(f_ppl),
          cum_cons=cumsum(azi*n), cum_f_cons=cum_cons/max(cum_cons)) %>%
-  ggplot(aes(x=cum_f_ppl, y=cum_f_cons, color=sex)) +
-  geom_point() +
-  geom_line() +
-  xlab('Fraction of consumers') + ylab("Fraction of that sex's azithromycin consumed")
-```
+  write_tsv('data/tbl_azithro_evenness.tsv')
