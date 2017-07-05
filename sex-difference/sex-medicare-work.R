@@ -196,9 +196,15 @@ write_tsv(azithro_results, 'data/tbl_model_azithro.tsv')
 bene %>%
   filter(in_cohort) %>%
   group_by(bene_id) %>%
-  summarize(is_female=any(is_female),
+  summarize(sex=if_else(any(is_female), 'female', 'male'),
             n=sum(n_claims),
             age=min(age)) %>%
+  group_by(age, sex) %>%
+  summarize(n_bene=n(),
+            total_n_claims=sum(n),
+            mean_n_claims=mean(n),
+            sd_n_claims=sd(n),
+            sem_n_claims=sd_n_claims/sqrt(n_bene)) %>%
   write_tsv('data/tbl_consumption_age_sex.tsv')
 
 # Sex by age

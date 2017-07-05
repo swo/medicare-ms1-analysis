@@ -152,8 +152,9 @@ At every age, women consume more antibiotics than men.
 
 ```{r consumption_by_age_and_sex}
 read_tsv('data/tbl_consumption_age_sex.tsv') %>%
-  ggplot(aes(x=factor(age), y=n, color=is_female)) +
-  geom_boxplot()
+  mutate(y=total_n_claims, ci=1.96*sem_n_claims, ymin=y-ci, ymax=y+ci) %>%
+  ggplot(aes(x=age, y=total_n_claims, ymin=ymin, ymax=ymax, color=sex)) +
+  geom_point() + geom_linerange()
 ```
 
 ### Sex by age
