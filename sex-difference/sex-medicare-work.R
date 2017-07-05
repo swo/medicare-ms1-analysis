@@ -94,9 +94,11 @@ dx %>%
   write_tsv('data/tbl_dx_counts.tsv')
 
 # save top antibiotics
-pde %>%
-  count(antibiotic) %>%
+all_abx = pde %>%
+  count(antibiotic) %T>%
   write_tsv('data/tbl_top_abx.tsv')
+
+top_abx = all_abx %>% arrange(desc(n)) %$% head(antibiotic, 10)
 
 # consumption of drugs by sex
 usage_by_sex = function(drug) {
@@ -114,11 +116,11 @@ usage_by_sex = function(drug) {
            drug=drug)
 }
 
-ubs = lapply(top_abx, usage_by_sex) %>% bind_rows
-write_tsv('data/tbl_usage_by_sex.tsv')
+lapply(top_abx, usage_by_sex) %>% bind_rows %>%
+  write_tsv('data/tbl_usage_by_sex.tsv')
 
 # healthcare_usage_by_sex
-hc_by_sex = dx %>%
+dx %>%
   count(bene_id, diagnosis_type) %>%
   ungroup() %>%
   right_join(bene, by='bene_id') %>%
@@ -127,8 +129,8 @@ hc_by_sex = dx %>%
   summarize(total_n_days=sum(n),
             mean_n_days=mean(n),
             n_using=sum(n>0),
-            n_bene=n())
-write_tsv('data/tbl_hc_by_sex.tsv')
+            n_bene=n()) %>%
+  write_tsv('data/tbl_hc_by_sex.tsv')
 
 cipro_dat = pde %>%
   filter(in_cohort, antibiotic=='ciprofloxacin') %>%

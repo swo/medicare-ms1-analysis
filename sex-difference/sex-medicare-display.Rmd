@@ -7,7 +7,7 @@ output: html_document
 
 ```{r global_options, include=FALSE}
 knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
-                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
+                      echo=FALSE, warning=FALSE, message=FALSE, cache=FALSE)
 ```
 
 # Background
@@ -64,7 +64,7 @@ top_abx = read_tsv('data/tbl_top_abx.tsv') %>%
 ubs = read_tsv('data/tbl_usage_by_sex.tsv')
 
 # healthcare usage by sex
-hc_by_sex = read_tsv('tbl_hc_by_sex.tsv')
+hc_by_sex = read_tsv('data/tbl_hc_by_sex.tsv')
 hc_use_ratio = hc_by_sex %>% mutate(ratio=mean_n_days/min(mean_n_days)) %$% max(ratio)
 ```
 
@@ -99,11 +99,11 @@ Are the increased consumptions of cipro and TMP/SMX explained by UTIs? That is, 
 ```{r cipro}
 cipro_results = read_tsv('data/tbl_model_cipro.tsv')
 
-# fraction of risk ratio explained
-frre = function(res, tm='is_femaleTRUE') {
-  rr0 = res %>% filter(model=='base', term==tm) %$% exp(estimate)
-  rr1 = res %>% filter(model=='expl', term==tm) %$% exp(estimate)
-  (rr0 - rr1) / (rr0 - 1)
+# fraction of coefficient explained
+fce = function(res, tm='is_femaleTRUE') {
+  den = res %>% filter(model=='base', term==tm) %$% estimate
+  num = res %>% filter(model=='expl', term==tm) %$% estimate
+  1 - num/den
 }
 
 pct_show = function(x) sprintf('%g%%', round(100*x, 2))
@@ -113,7 +113,7 @@ cipro_results %>% kable
 
 I ran two models. In the first, I try to predict the number of ciprofloxacin claims that a beneficiary in the cohort will have over the entire study period using just their sex. Next, I use their sex and whether or not they had a diagnosis for a UTI at any point during the study period.
 
-Adding UTI to the model explained `r pct_show(frre(cipro_results))` of the increased mean ciprofloxacin consumption associated with being female.
+Adding UTI to the model explained `r pct_show(fce(cipro_results))` of the increased mean ciprofloxacin consumption associated with being female.
 
 ### Bactrim
 
@@ -131,7 +131,7 @@ nitro_results = read_tsv('data/tbl_model_nitro.tsv')
 nitro_results %>% kable
 ```
 
-The nitrofurantoin model doesn't explain as much of the difference (`r pct_show(frre(nitro_results))`), which is maybe not surprising or troubling because nitrofurantoin is mainly prescribed to women. We're not confused about why this consumption is higher.
+The nitrofurantoin model doesn't explain as much of the difference (`r pct_show(fce(nitro_results))`), which is maybe not surprising or troubling because nitrofurantoin is mainly prescribed to women. We're not confused about why this consumption is higher.
 
 ## Azithromycin
 
@@ -142,7 +142,7 @@ azithro_results = read_tsv('data/tbl_model_azithro.tsv')
 azithro_results %>% kable
 ```
 
-But we do a bad job: `r pct_show(frre(azithro_results))` gets explained by COPD and respiratory complaints.
+But we do a bad job: `r pct_show(fce(azithro_results))` gets explained by COPD and respiratory complaints.
 
 # Supplement
 
@@ -152,7 +152,7 @@ At every age, women consume more antibiotics than men.
 
 ```{r consumption_by_age_and_sex}
 read_tsv('data/tbl_consumption_age_sex.tsv') %>%
-  ggplot(aes(x=age, y=n, group=is_female)) +
+  ggplot(aes(x=factor(age), y=n, color=is_female)) +
   geom_boxplot()
 ```
 
