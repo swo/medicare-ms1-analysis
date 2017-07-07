@@ -30,11 +30,11 @@ load_data = function(year) {
     summarize(n_claims=n(), days_supply=sum(days_supply)) %>%
     ungroup() %>%
     mutate(year=year)
-  
+
   # diagnosis claims
   dx_car_fn = sprintf('../../data/dx_car_claims_%i.tsv', year)
   dx_op_fn = sprintf('../../data/dx_op_claims_%i.tsv', year)
-  
+
   dx = bind_rows(read_tsv(dx_car_fn),
                  read_tsv(dx_op_fn)) %>%
     mutate(date=dmy(from_date)) %>%
@@ -99,7 +99,7 @@ summarize_totals = function(df) {
             n_region_northeast=sum(region=='Northeast'),
             n_region_midwest=sum(region=='Midwest'))
 }
-  
+
 # summary characteristics
 totals = bene %>%
   group_by(year) %>%
@@ -186,7 +186,7 @@ model_f(lm_cohort_bene, n_claims ~ year + age*n_cc + is_female + is_dual + is_wh
 subtract_min = function(x) x - min(x)
 single_abx_model = function(bene, abx, frmla, y_name='n_claims') {
   pde %>%
-    rename_(y=y_name) %>% 
+    rename_(y=y_name) %>%
     filter(antibiotic==abx) %>%
     right_join(bene, by=c('year', 'bene_id')) %>%
     replace_na(list(y=0)) %>%
@@ -219,3 +219,14 @@ single_abx_model(lm_cohort_bene, 'azithromycin', azithro_f, y_name='days_supply'
   output_table('cohort_model_azithro_days')
 single_abx_model(lm_cohort_bene, 'levofloxacin', levo_f) %>%
   output_table('cohort_model_levo_days')
+
+# special cipro, bactrim, nitro models
+uti_f = function(abx, short) {
+  frmla = y ~ year + age + is_female + is_dual + is_white + region + uti + uti:year
+  single_abx_model(lm_cohort_bene, abx, frmla) %>%
+    output_table(paste0('cohort_model_', short))
+}
+uti_f('ciprofloxacin', 'cipro')
+uti_f('trimethoprim/sulfamethoxazole', 'tmpsmx')
+uti_f('nitrofurantoin', 'nitro')
+
