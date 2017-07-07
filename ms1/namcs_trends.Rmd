@@ -24,6 +24,8 @@ read_tsv_years = function(fn_template, ...) {
   lapply(years, f) %>% bind_rows
 }
 
+census = read_tsv('../../../../db/census/census_totals.tsv')
+
 sex_codes = read_tsv('../sex-difference/namcs_sex_codes.tsv') %>%
   rename(dx=code)
 
@@ -90,18 +92,75 @@ kable(top_abx)
 
 # Results
 
+## Trends in numbers of visits and number of Americans
+
+The number of visits went down during this period:
+
+```{r visits_census}
+design %>%
+  update(x=1) %>%
+  svyby(~x, ~year, design=., svytotal) %>%
+  as_data_frame() %>%
+  rename(n_visits=x) %>%
+  kable
+```
+
+But the number of Americans went up (but the number of children went down):
+
+```{r}
+census %>% kable
+```
+
 ## Summary of trends
 
+### Overall trends
+
+It looks by eye like the total number of antibiotic prescriptions per capita is going down:
+
+```{r overall}
+overall_trend = svyby(~n_abx, ~year, design=design, svytotal) %>%
+  as_data_frame() %>%
+  left_join(census, by='year') %>%
+  mutate(abx_per_capita=n_abx/n_total, se_per_capita=se/n_total)
+
+overall_trend %>%
+  mutate(ci=1.96*se_per_capita, ymin=abx_per_capita-ci, ymax=abx_per_capita+ci) %>%
+  ggplot(aes(x=year, y=abx_per_capita, ymin=ymin, ymax=ymax)) +
+  geom_point() + geom_line() + geom_linerange() +
+  theme_minimal()
+```
+
+There is no support for a trend per visit:
+
+```{r overall_model1}
+svyglm(n_abx ~ year, design=design, family=quasipoisson(link='identity')) %>%
+  tidy %>% kable
+```
+
+Nor for a trend per capita:
+
+```{r overall_model2}
+overall_trend %>%
+  mutate(year=year-min(year)) %>%
+  lm(abx_per_capita ~ year, weights=1.0/se_per_capita^2, data=.) %>%
+  tidy %>% kable
+```
+
+### Trends by drug
+
 ```{r drugs_time}
-f = function(design, y, d) {
-  subset(design, year==y) %>%
-    svytotal(as.formula(paste0('~', d)), design=.) %>%
-    data_frame(year=y, abx=d, total=., se=as.numeric(SE(.)))
+# apc = antibiotic per capita
+f = function(design, d) {
+  svyby(as.formula(paste0('~', d)), ~year, design=design, svytotal) %>%
+    as_data_frame() %>%
+    rename_(.dots=setNames(d, 'n_abx')) %>%
+    mutate(abx=d)
 }
 
 g = function(design) {
-  crossing(year=2011:2014, desc=top_abx$abx) %>%
-    rowwise() %>% do(f(design, .$year, .$desc)) %>% ungroup()
+  lapply(top_abx$abx, function(x) f(design, x)) %>% bind_rows() %>%
+    left_join(census, by='year') %>%
+    mutate(apc=n_abx/n_total, se=se/n_total)
 }
 
 abx_time = g(design)
@@ -110,17 +169,55 @@ abx_time_adult = g(adult_design)
 
 ```{r drugs_time_plot}
 abx_time %>%
-  mutate(ci=1.96*se, ymin=total-ci, ymax=total+ci) %>%
-  ggplot(aes(x=year, y=total, ymin=ymin, ymax=ymax)) +
+  mutate(ci=1.96*se, ymin=apc-ci, ymax=apc+ci) %>%
+  ggplot(aes(x=year, y=apc, ymin=ymin, ymax=ymax)) +
   facet_wrap(~abx, ncol=3, scales='free_y') +
   geom_point() + geom_line() + geom_linerange() +
   theme_minimal()
 ```
 
-It doesn't look by eye that any trends are particularly strong. I used Poisson regressions to see if anything was changing with time. Only levo:
+And the same plot again, but with fixed scales:
+
+```{r drugs_time_plot_fixed}
+abx_time %>%
+  mutate(ci=1.96*se, ymin=apc-ci, ymax=apc+ci) %>%
+  ggplot(aes(x=year, y=apc, ymin=ymin, ymax=ymax)) +
+  facet_wrap(~abx, ncol=3) +
+  geom_point() + geom_line() + geom_linerange() +
+  theme_minimal()
+```
+
+It doesn't look by eye that any trends are particularly strong.
+
+I used weighted linear regression to look for trends in totals:
+
+```{r drugs_time_totals_model}
+abx_total_models = abx_time %>%
+  group_by(abx) %>%
+  do(tidy(lm(apc ~ year, weight=1.0/se^2, data=.))) %>%
+  ungroup()
+
+abx_total_models %>%
+  filter(term=='year') %>% select(-term) %>%
+  arrange(estimate) %>%
+  kable
+
+abx_total_models %>%
+  filter(term=='year') %>% select(-term) %>%
+  mutate(ci=1.96*std.error, ymin=estimate-ci, ymax=estimate+ci) %>%
+  mutate(abx=forcats::fct_reorder(abx, estimate)) %>%
+  ggplot(aes(x=abx, y=estimate, ymin=ymin, ymax=ymax)) +
+  geom_point() + geom_linerange() +
+  coord_flip() +
+  theme_minimal()
+```
+
+I used Poisson regressions to see if anything was changing *per visit* with time. Only levo:
 
 ```{r drugs_time_model}
-qpglm = function(design, frmla) svyglm(frmla, design=design, family=quasipoisson(link='log'))
+qpglm = function(design, frmla) {
+  svyglm(frmla, design=design, family=quasipoisson(link='identity'))
+}
 
 f = function(design, d) {
   qpglm(design, as.formula(paste0(d, '~ year'))) %>%
@@ -143,64 +240,27 @@ abx_time_model %>%
   kable
 ```
 
-```{r levo_plot}
-american_population = data_frame(year=2011:2014, n_ppl=c(312.92, 315.22, 317.47, 319.85) * 1e6)
-
-levo_time = abx_time %>%
-  filter(abx=='levo') %>%
-  left_join(american_population, by='year') %>%
-  mutate(total=total/n_ppl*1000, se=se/n_ppl*1000)
-  
-levo_time %>%
-  mutate(ci=1.96*se, ymin=total-ci, ymax=total+ci) %>%
-  ggplot(aes(x=year, y=total, ymin=ymin, ymax=ymax)) +
-  geom_point() + geom_line() + geom_linerange() +
-  ylim(5, 21) +
-  ylab('Levo claims per 1,000 Americans') +
-  theme_minimal()
-```
+### Levo trend
 
 ```{r levo_ratio}
-t1 = levo_time %>% filter(year==2011) %$% total
+levo_time = abx_time %>%
+  filter(abx=='levo') %>%
+  arrange(year)
+
+t1 = levo_time %>% filter(year==2011) %$% apc
 v1 = levo_time %>% filter(year==2011) %$% se
-t2 = levo_time %>% filter(year==2014) %$% total
+t2 = levo_time %>% filter(year==2014) %$% apc
 v2 = levo_time %>% filter(year==2014) %$% se
 
 tr = t2 / t1
 vr = v1 / t2^2 + t1^1 / t2^4 * v2
 sdr = sqrt(vr)
 
-show_tot = function(tot, v) sprintf('%g (±%g)', round(tot, 2), round(v, 2))
+show_tot = function(tot, v) sprintf('%g (±%g)', round(tot, 4), round(v, 4))
 show_pct = function(tot, v) sprintf('%g%% (±%g%%)', round((tot - 1)*100, digits=1), round(sqrt(v)*100, digits=1))
 ```
 
-Levo consumption increased from `r show_tot(t1, v1)` prescriptions per 1,000 Americans per year to `r show_tot(t2, v2)`. That is an increase of `r show_pct(tr, vr)`, i.e., doubled.
-
-## Presence of this trend in different age groups
-
-I can confirm that levo is the only drug with a strong trend among adults (rather than everyone):
-
-```{r drugs_time_model_adult_table}
-abx_time_model_adult %>%
-  select(abx, estimate, p.value) %>%
-  mutate(adj.p.value=p.adjust(p.value, method='BH')) %>%
-  arrange(p.value) %>%
-  kable
-```
-
-And, in fact, this trend exists just among the elderly, although it's only marginally significant if you tested for everything.
-
-```{r levo_elderly}
-design %>% subset(age_group=='elderly') %>%
-  qpglm(levo~year) %>% tidy
-```
-
-Levo may be on the decline for children, however:
-
-```{r levo_children}
-design %>% subset(age_group=='child') %>%
-  qpglm(levo~year) %>% tidy
-```
+Levo increased from `r show_tot(t1, v1)` to `r show_tot(t2, v2)` per capita, an increase of `r show_pct(tr, vr)`.
 
 # Conclusions
 
