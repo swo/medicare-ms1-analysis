@@ -195,6 +195,14 @@ svytable(~sex+arc, adult_design) %>%
   kable
 ```
 
+## Overall consumption
+
+How many antibiotic prescriptions total were made by each sex? 
+
+```{r overall_abx}
+svyby(~n_abx, ~sex, svytotal, design=adult_design)
+```
+
 ## Consumption by drug
 
 I'll therefore evaluate consumption by two standards: first, do women consume more antibiotics overall; second, do women consume more antibiotics *per visit*.
