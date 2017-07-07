@@ -157,14 +157,15 @@ f = function(design, d) {
     mutate(abx=d)
 }
 
-g = function(design) {
+g = function(design, denom) {
   lapply(top_abx$abx, function(x) f(design, x)) %>% bind_rows() %>%
     left_join(census, by='year') %>%
-    mutate(apc=n_abx/n_total, se=se/n_total)
+    rename_(.dots=setNames(denom, 'denom')) %>%
+    mutate(apc=n_abx/denom, se=se/denom)
 }
 
-abx_time = g(design)
-abx_time_adult = g(adult_design)
+abx_time = g(design, 'n_total')
+abx_time_adult = g(adult_design, 'n_adult')
 ```
 
 ```{r drugs_time_plot}
@@ -240,10 +241,31 @@ abx_time_model %>%
   kable
 ```
 
-### Levo trend
+## Trends among the adults
+
+I do the same analysis, but just among adults. Weirdly, the results look a lot
+different. The confidence intervals get a lot bigger.
+
+```{r adult_trends}
+adult_models = abx_time_adult %>%
+  group_by(abx) %>%
+  do(tidy(lm(apc ~ year, weight=1.0/se^2, data=.))) %>%
+  ungroup()
+
+adult_models %>%
+  filter(term=='year') %>% select(-term) %>%
+  mutate(ci=1.96*std.error, ymin=estimate-ci, ymax=estimate+ci) %>%
+  mutate(abx=forcats::fct_reorder(abx, estimate)) %>%
+  ggplot(aes(x=abx, y=estimate, ymin=ymin, ymax=ymax)) +
+  geom_point() + geom_linerange() +
+  coord_flip() +
+  theme_minimal()
+```
+
+### Just levo
 
 ```{r levo_ratio}
-levo_time = abx_time %>%
+levo_time = abx_time_adult %>%
   filter(abx=='levo') %>%
   arrange(year)
 
@@ -260,7 +282,14 @@ show_tot = function(tot, v) sprintf('%g (±%g)', round(tot, 4), round(v, 4))
 show_pct = function(tot, v) sprintf('%g%% (±%g%%)', round((tot - 1)*100, digits=1), round(sqrt(v)*100, digits=1))
 ```
 
+```{r}
+levo_time %>%
+  select(year, abx_per_capita=apc, se) %>%
+  kable
+```
+
 Levo increased from `r show_tot(t1, v1)` to `r show_tot(t2, v2)` per capita, an increase of `r show_pct(tr, vr)`.
+
 
 # Conclusions
 
