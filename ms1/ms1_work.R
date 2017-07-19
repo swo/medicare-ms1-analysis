@@ -19,8 +19,10 @@ regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
 condition_names = read_tsv('../chronic-conditions/names.tsv') %>% filter(condition_code != 'ALZH')
 names_1yr_ccs = condition_names %>% filter(condition_ref_years==1) %$% condition_code
 
-dx_codes = read_tsv('../sex-difference/sex_codes.tsv') %>%
+dx_codes = read_tsv('../../data/fd_codes.tsv') %>%
   select(code, diagnosis_type)
+
+dx_types = unique(dx_codes$diagnosis_type)
 
 load_data = function(year) {
   # pde data
@@ -32,18 +34,16 @@ load_data = function(year) {
     mutate(year=year)
 
   # diagnosis claims
-  dx_car_fn = sprintf('../../data/dx_car_claims_%i.tsv', year)
-  dx_op_fn = sprintf('../../data/dx_op_claims_%i.tsv', year)
-
-  dx = bind_rows(read_tsv(dx_car_fn),
-                 read_tsv(dx_op_fn)) %>%
-    mutate(date=dmy(from_date)) %>%
-    rename(bene_id=BENE_ID, code=diagnosis) %>%
+  dx_fn = sprintf('../dx_%i.tsv', year)
+  
+  dx = read_tsv(dx_fn) %>%
+    rename(code=diagnosis) %>%
+    filter(n_dx_date > 0) %>%
     left_join(dx_codes, by='code') %>%
-    filter(diagnosis_type=='acute_rc') %>%
-    select(bene_id, date) %>%
-    group_by(bene_id) %>%
-    summarize(n_acute_rc_dx=length(unique(date)))
+    select(bene_id, diagnosis_type) %>%
+    distinct() %>%
+    mutate(dummy=TRUE) %>%
+    spread(diagnosis_type, dummy)
 
   # total numbers of PDEs
   n_claims = pde %>% group_by(bene_id) %>% summarize(n_claims=sum(n_claims))
@@ -61,7 +61,7 @@ load_data = function(year) {
     mutate(year=year) %>%
     left_join(cc, by='bene_id') %>%
     left_join(n_claims, by='bene_id') %>% replace_na(list(n_claims=0)) %>%
-    left_join(dx, by='bene_id') %>% replace_na(list(n_acute_rc_dx=0))
+    left_join(dx, by='bene_id') %>% replace_na(setNames(as.list(rep(FALSE, length(dx_types))), dx_types))
 
   list(bene=bene, pde=pde)
 }
@@ -177,7 +177,13 @@ model_f(bene, n_claims ~ year, 'model1')
 model_f(bene, n_claims ~ year + age*n_cc + is_female + is_dual + is_white + region, 'model2')
 
 # models using just the cohort
-lm_cohort_bene = bene %>% filter(in_cohort)
+# levofloxacin as appropriate for lung/kidney/heart CC, cancer, frequent abx
+lm_cohort_bene = bene %>% filter(in_cohort) %>%
+  mutate(lv_appr=AMI | ATRIALFB | CHRNKIDN | COPD | CHF | DIABETES | ISCHMCHT | CNCRBRST | CNCRCLRC | CNCRPRST | CNCRLUNG | CNCRENDM | ASTHMA | n_claims > 5)
+lm_cohort_bene %>%
+  select(bene_id) %>%
+  distinct() %>%
+  write_tsv('lm_cohort_ids.tsv')
 
 model_f(lm_cohort_bene, n_claims ~ year, 'cohort_model1')
 model_f(lm_cohort_bene, n_claims ~ year + age*n_cc + is_female + is_dual + is_white + region, 'cohort_model2')
@@ -206,19 +212,17 @@ lapply(top_abx, f) %>%
   bind_rows() %T>%
   output_table('cohort_model_abx')
 
+# azithro models
+
+# levo models
+
 # special levo & azithro models
-azithro_f = y ~ year + age + is_female + is_dual + is_white + region + COPD + COPD:year + COPD:age + n_acute_rc_dx + n_acute_rc_dx:year + n_acute_rc_dx:age
+azithro_f = y ~ year + age + is_dual + region + COPD + COPD:year + COPD:age + uri + uri:year + uri:age + pneumonia + pneumonia:year + pneumonia:age
 single_abx_model(lm_cohort_bene, 'azithromycin', azithro_f) %>%
   output_table('cohort_model_azithro')
-levo_f = y ~ year + age + is_female + is_dual + is_white + region + n_acute_rc_dx + n_acute_rc_dx:year + n_acute_rc_dx:age
+levo_f = y ~ year + age + is_dual + region + n_acute_rc_dx + uri + uri:year
 single_abx_model(lm_cohort_bene, 'levofloxacin', levo_f) %>%
   output_table('cohort_model_levo')
-
-# repeated those models with days supply
-single_abx_model(lm_cohort_bene, 'azithromycin', azithro_f, y_name='days_supply') %>%
-  output_table('cohort_model_azithro_days')
-single_abx_model(lm_cohort_bene, 'levofloxacin', levo_f) %>%
-  output_table('cohort_model_levo_days')
 
 # special cipro, bactrim, nitro models
 uti_f = function(abx, short) {
