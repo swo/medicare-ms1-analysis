@@ -24,17 +24,13 @@ read_tsv_years = function(fn_template, ...) {
   lapply(years, f) %>% bind_rows
 }
 
-sex_codes = read_tsv('namcs_sex_codes.tsv') %>%
-  rename(dx=code)
+dx_codes = read_tsv('../../data/fd_codes.tsv') %>%
+  rename(dx=code, desc=dx_desc)
+
+diagnosis_types = unique(dx_codes$diagnosis_type)
 
 dx = read_tsv_years('../../db/namcs/data/namcs_dx_%i.tsv') %>%
-  left_join(sex_codes, by='dx')
-
-dx_visit = dx %>%
-  group_by(visit_id) %>%
-  summarize(uti='uti' %in% diagnosis_type,
-            acne='acne' %in% diagnosis_type,
-            arc='acute_rc' %in% diagnosis_type)
+  left_join(dx_codes, by='dx')
 
 top_abx = read_tsv('../../db/namcs/analysis/top_abx.tsv')
 abx_cat = read_tsv('../../db/namcs/data/parse/drug_codes/abx_codes.tsv')
@@ -55,8 +51,6 @@ visits = read_tsv_years('../../db/namcs/data/namcs_visits_%i.tsv') %>%
   mutate(age_group=case_when(.$age <= 19 ~ 'child',
                              .$age <= 64 ~ 'adult',
                              .$age <= 92 ~ 'elderly')) %>%
-  left_join(dx_visit, by='visit_id') %>%
-  replace_na(list(uti=FALSE, acne=FALSE, arc=FALSE)) %>%
   left_join(n_abx, by='visit_id') %>% replace_na(list(n_abx=0)) %>%
   left_join(abx_visit, by='visit_id') %>%
   mutate_at(top_abx$abx, function(x) if_else(is.na(x), 0L, x))
@@ -89,6 +83,78 @@ I used the 2014 NAMCS data. Because this is a survey, you can't just look at the
 All numbers of prescriptions will be presented in millions per year.
 
 # Results
+
+## Diagnoses across the sexes
+
+What's the difference in primary diagnoses across the sexes? I look in not-children.
+
+```{r diagnoses}
+unique_primary_dx = dx %>%
+  filter(dx_number==1) %>%
+  left_join(visits, by=c('visit_id', 'year')) %>%
+  filter(age_group != 'child') %>%
+  count(dx, sort=TRUE) %>%
+  head(20) %$%
+  dx
+
+unique_primary_dx
+```
+
+```{r}
+f = function(code) {
+  filter(dx, dx_number==1, dx==code) %>%
+    mutate(n_dx=1) %>%
+    left_join(visits, by=c('visit_id', 'year')) %>%
+    replace_na(list(n_dx=0)) %>%
+    design_f() %>%
+    subset(age_group != 'child') %>%
+    svyby(~n_dx, ~sex, design=., svytotal) %>%
+    as_data_frame() %>%
+    mutate(code=code)
+}
+
+dx_by_sex = lapply(unique_primary_dx, f) %>% bind_rows()
+dx_by_sex
+```
+
+```{r}
+dx_by_sex %>%
+  rename(n=n_dx) %>%
+  mutate(ci=1.96*se, ci_low=n-ci, ci_high=n+ci) %>%
+  select(code, sex, n, ci_low, ci_high) %>%
+  gather('key', 'value', n:ci_high) %>%
+  mutate(key=case_when(.$sex=='male' & .$key=='n' ~ 'x',
+                       .$sex=='male' & .$key=='ci_low' ~ 'xmin',
+                       .$sex=='male' & .$key=='ci_high' ~ 'xmax',
+                       .$sex=='female' & .$key=='n' ~ 'y',
+                       .$sex=='female' & .$key=='ci_low' ~ 'ymin',
+                       .$sex=='female' & .$key=='ci_high' ~ 'ymax')) %>%
+  select(-sex) %>%
+  spread(key, value) %>%
+  ggplot(aes(x=x, xmin=xmin, xmax=xmax, y=y, ymin=ymin, ymax=ymax, label=code)) +
+  geom_abline(col='gray') +
+  geom_point() + geom_errorbar() + geom_errorbarh() + geom_text() +
+  coord_fixed() +
+  theme_minimal()
+```
+
+```{r}
+g = function(diagnosis_type) {
+  filter(dx, dx_number==1, diagnosis_type==diagnosis_type) %>%
+    mutate(n_dx=1) %>%
+    left_join(visits, by=c('visit_id', 'year')) %>%
+    replace_na(list(n_dx=0)) %>%
+    design_f() %>%
+    subset(age_group != 'child') %>%
+    svyby(~n_dx, ~sex, design=., svytotal) %>%
+    as_data_frame() %>%
+    mutate(diagnosis_type=diagnosis_type)
+}
+
+#dt_by_sex = lapply(diagnosis_types, f) %>% bind_rows()
+#dt_by_sex
+g('pneumonia')
+```
 
 ## In children, overall consumption is similar between the sexes
 
@@ -175,7 +241,7 @@ Overall, more of the visits were made by women. Women make `r round(female_visit
 
 What fraction of these visits are due to UTIs? We can see what fraction of visits are made for UTIs:
 
-```{r}
+```{r, eval=FALSE}
 svytable(~sex+uti, adult_design) %>%
   as_data_frame() %>%
   mutate(n=mpy(n)) %>%
@@ -188,7 +254,7 @@ Of the top 3 diagnoses (hypertension, gynecological exam, and observation of pre
 
 Acute respiration complaints explain another ~5 million:
 
-```{r}
+```{r, eval=FALSE}
 svytable(~sex+arc, adult_design) %>%
   as_data_frame() %>%
   mutate(n=mpy(n)) %>%
@@ -197,7 +263,7 @@ svytable(~sex+arc, adult_design) %>%
 
 ## Overall consumption
 
-How many antibiotic prescriptions total were made by each sex? 
+How many antibiotic prescriptions total were made by each sex?
 
 ```{r overall_abx}
 svyby(~n_abx, ~sex, svytotal, design=adult_design)
@@ -238,7 +304,7 @@ abx_totals = lapply(top_abx$abx, abx_total_f) %>% bind_rows()
 abx_pois = lapply(top_abx$abx, poisson_f) %>% bind_rows()
 ```
 
-For each drug, I asked how many visits were made, stratified by sex. I show two lines on the graph. The lower line is exactly $y=x$ and shows the line of equal consumption. The upper line has a slope equal to the odds of a visit belong to a female; this is the line of equal consumption per visit. 
+For each drug, I asked how many visits were made, stratified by sex. I show two lines on the graph. The lower line is exactly $y=x$ and shows the line of equal consumption. The upper line has a slope equal to the odds of a visit belong to a female; this is the line of equal consumption per visit.
 
 ```{r total_plot}
 total_plot_f = function(df, highlight=character(0)) {
@@ -270,7 +336,7 @@ total_plot_f = function(df, highlight=character(0)) {
     coord_fixed() +
     theme_minimal()
 }
-  
+
 total_plot_f(abx_totals, highlight=c('nitro', 'clinda')) +
   geom_abline(slope=female_visit_odds[2], col='gray') +
   geom_abline(slope=female_visit_odds[-2], col='gray', linetype='dotted')

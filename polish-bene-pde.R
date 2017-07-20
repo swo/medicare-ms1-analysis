@@ -1,6 +1,7 @@
 #!/usr/bin/env Rscript
 
 abx_class = read_tsv('abx_class.tsv')
+dx_class = read_tsv('../data/fd_codes.tsv') %>% select(diagnosis=code, diagnosis_type)
 
 polish_bene = function(df) {
   rename(df, bene_id=BENE_ID, age=AGE, buyin_months=BUYIN_MO)
@@ -11,6 +12,15 @@ polish_pde = function(df) {
     mutate(service_date=dmy(service_date)) %>%
     left_join(abx_class, by='generic_name') %>%
     select(-generic_name)
+}
+
+polish_dx = function(df) {
+  rename(df, bene_id=BENE_ID) %>%
+    mutate(from_date=dmy(from_date)) %>%
+    left_join(dx_class, by='diagnosis')
+    group_by(bene_id, diagnosis) %>%
+    summarize(n_dx_date=length(unique(from_date))) %>%
+    ungroup()
 }
 
 polish_year = function(y) {
@@ -27,6 +37,14 @@ polish_year = function(y) {
   read_tsv(bene_in_fn, col_types=cols(zipcode='c')) %>%
     polish_bene() %>%
     write_tsv(bene_out_fn)
+
+  car_in_fn = sprintf('../data/fd_dx_car_claims_%i.tsv', y)
+  op_in_fn = sprintf('../data/fd_dx_op_claims_%i.tsv', y)
+  dx_out_fn = sprintf('dx_%i.tsv', y)
+
+  bind_rows(read_tsv(car_in_fn), read_tsv(op_in_fn)) %>%
+    polish_dx() %>%
+    write_tsv(dx_out_fn)
 }
 
 for (year in 2011:2014) polish_year(year)
