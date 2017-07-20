@@ -12,101 +12,90 @@ dx = bind_rows(
 ) %>% rename(bene_id=BENE_ID) %>%
   filter(bene_id %in% cohort_ids) %>%
   mutate(from_date=dmy(from_date)) %>%
-  left_join(dx_class, by='diagnosis')
+  left_join(dx_class, by='diagnosis') %>%
+  left_join(select(bene, time, bene_id, age), by=c('time', 'bene_id')) %>%
+  select(time, bene_id, age, from_date, diagnosis, diagnosis_type)
 
-baseline = count(dx, time, diagnosis_type) %>% ungroup() %>%
-  arrange(time) %>% group_by(diagnosis_type) %>%
-  summarize(dx_ratio=n[2]/n[1])
+baseline = dx %>%
+  count(time, age, diagnosis_type) %>% ungroup() %>%
+  spread(time, n) %>%
+  mutate(dx_ratio=`1`/`0`)
+# filter age between 69, 92
+  #arrange(time) %>% group_by(diagnosis_type) %>%
+  #summarize(dx_ratio=n[2]/n[1])
 
 pde = bind_rows(
   read_tsv('../pde_2011.tsv') %>% mutate(time=0),
   read_tsv('../pde_2014.tsv') %>% mutate(time=1)
 ) %>% filter(bene_id %in% cohort_ids) %>%
   select(-days_supply) %>%
-  mutate(pde_id=1:nrow(.))
+  mutate(pde_id=1:nrow(.)) %>%
+  left_join(select(bene, time, bene_id, age), by=c('time', 'bene_id'))
 
-# levofloxacin
-window = 3
+# work with just levofloxacin for now
+window = 7
 
 # age structure
 p_age = bene %>% count(time, age) %>%
   group_by(time) %>% mutate(p_age=n/sum(n)) %>% ungroup() %>%
-  select(time, age, p_age)
+  mutate(key=sprintf('p_age_t%i', time)) %>%
+  select(age, key, p_age) %>%
+  spread(key, p_age)
 
-# unique days on which levo was dispensed to each bene
-levo_days = pde %>% filter(antibiotic=='levofloxacin') %>%
-  select(time, bene_id, service_date) %>%
-  distinct() %>%
-  mutate(day_id=1:nrow(.))
+# a "narrow" age structure
+# it excludes the old and young ages that don't appear in both
+# the 2011 and 2014 data, so we can adjust for age structure
+p_age_narrow = p_age %>%
+  select(age, p_age=p_age_t0) %>%
+  filter(between(age, 69, 92)) %>%
+  mutate(p_age=p_age/sum(p_age))
+
+n_dxage = dx %>%
+  count(time, age, diagnosis_type) %>% ungroup()
 
 # same as above, but supplemented with a matching diagnosis
-levo_days_dx = levo_days %>%
+pde_dx = pde %>%
+  select(pde_id, time, bene_id, age, service_date, antibiotic) %>%
   left_join(dx, by=c('time', 'bene_id')) %>%
   filter(between(service_date - from_date, 0, window)) %>%
-  group_by(day_id) %>% filter(from_date==max(from_date)) %>% ungroup() %>%
-  select(day_id, diagnosis_type) %>%
-  right_join(levo_days, by='day_id') %>%
+  group_by(pde_id) %>% filter(from_date==max(from_date)) %>% ungroup() %>%
+  select(pde_id, diagnosis_type) %>%
+  right_join(pde, by='pde_id') %>%
   replace_na(list(diagnosis_type='none'))
-
-# probability of a diagnosis (in a stretch of W days)
-p_dxage = dx %>%
-  select(time, bene_id, diagnosis_type, from_date) %>%
-  group_by(time, bene_id, diagnosis_type) %>%
-  summarize(n_dx_days=length(unique(from_date))) %>% ungroup() %>%
-  mutate(p_dx=n_dx_days*window/365) %>%
-  right_join(bene, by=c('time', 'bene_id')) %>%
-  replace_na(list(p_dx=0)) %>%
-  group_by(time, age, diagnosis_type) %>% summarize(p_dxage=mean(p_dx)) %>% ungroup()
-
-p_rx = levo_days %>%
-  count(time, bene_id) %>% ungroup() %>%
-  right_join(bene, by=c('time', 'bene_id')) %>%
-  replace_na(list(n=0)) %>%
-  group_by(time, age) %>% summarize(p_rx=mean(n)/365) %>%
-  ungroup()
-
-matched_levo_days = dx %>% filter(diagnosis_type=='pneumonia') %>%
-  left_join(levo_days, by=c('time', 'bene_id')) %>%
-  filter(between(service_date - from_date, 0, window))
-
-p_rxdxage = levo_days_dx %>%
-  count(time, bene_id, diagnosis_type) %>% ungroup() %>%
-  left_join(select(bene, time, bene_id, age), by=c('time', 'bene_id')) %>%
-  group_by(time, age, diagnosis_type) %>%
-  summarize(
-
-p_rxdxage = levo_days %>% mutate(matched=day_id %in% matched_levo_days$day_id) %>%
-  left_join(select(bene, time, bene_id, age), by=c('time', 'bene_id')) %>%
-  count(time, age, matched) %>%
-  group_by(time, age) %>% mutate(p_rxdxage=n/sum(n)) %>% ungroup() %>%
-  filter(matched) %>%
-  select(time, age, p_rxdxage)
-
-p2 = p_rxdxage %>%
-  left_join(p_dxage, by=c('time', 'age')) %>%
-  left_join(p_age, by=c('time', 'age')) %>%
-  select(time, age, p_rxdxage, p_dxage, p_age) %>%
-  mutate(p=p_rxdxage*p_dxage*p_age)
-
-levo_dx = levo_pde %>%
-  left_join(dx, by=c('time', 'bene_id')) %>%
-  filter(between(service_date - from_date, 0, window)) %>%
-  # take the last (most recent) dx
-  group_by(pde_id) %>% arrange(from_date) %>%
-  mutate(dx_id=1:length(from_date)) %>% filter(dx_id==max(dx_id)) %>%
-  select(-dx_id) %>% ungroup() %>%
-  select(pde_id, diagnosis_type)
   
-  
+n_rxdxage = pde_dx %>%
+  count(time, age, antibiotic, diagnosis_type) %>% ungroup()
+
 proportion_f = function(abx) {
-  pde %>% filter(antibiotic==abx) %>%
-    left_join(dx, by=c('bene_id', 'time')) %>%
-    filter(between(service_date - from_date, 0, 3)) %>%
-    count(time, diagnosis_type) %>% ungroup() %>%
-    arrange(time) %>% group_by(diagnosis_type) %>%
-    summarize(rx_ratio=n[2]/n[1]) %>%
-    left_join(baseline, by='diagnosis_type') %>%
-    mutate(p_ratio=rx_ratio/dx_ratio)
+  dx_counts = n_dxage %>%
+    mutate(key=sprintf('n_dx_t%i', time)) %>%
+    select(age, diagnosis_type, key, n) %>%
+    spread(key, n)
+  rx_counts = n_rxdxage %>%
+    filter(antibiotic==abx) %>%
+    mutate(key=sprintf('n_rx_t%i', time)) %>%
+    select(age, diagnosis_type, key, n) %>%
+    spread(key, n)
+  
+  overall_rx_counts = n_rxdxage %>%
+    filter(antibiotic==abx) %>%
+    group_by(time, age) %>% summarize(n=sum(n)) %>% ungroup() %>%
+    mutate(key=sprintf('n_rx_t%i', time)) %>%
+    select(age, key, n) %>%
+    spread(key, n) %>% mutate(r=n_rx_t1/n_rx_t0) %>%
+    left_join(p_age, by='age') %>%
+    mutate(r=(n_rx_t1/n_rx_t0)/(p_age_t1/p_age_t0)) %>%
+    select(age, r) %>%
+    mutate(diagnosis_type='overall')
+  
+  inner_join(dx_counts, rx_counts, by=c('age', 'diagnosis_type')) %>%
+    mutate(r=(n_rx_t1/n_rx_t0)/(n_dx_t1/n_dx_t0)) %>%
+    select(age, diagnosis_type, r) %>%
+    bind_rows(overall_rx_counts) %>%
+    filter(between(age, 69, 92)) %>%
+    left_join(p_age_narrow, by='age') %>%
+    group_by(diagnosis_type) %>%
+    summarize(r=sum(r*p_age))
 }
 
 top_abx = c('azithromycin', 'levofloxacin',
@@ -116,11 +105,28 @@ top_abx = c('azithromycin', 'levofloxacin',
 
 res = lapply(top_abx, function(x) {
     proportion_f(x) %>%
-      select(diagnosis_type, value=p_ratio) %>%
+      select(diagnosis_type, value=r) %>%
       mutate(abx=x)
   }) %>% bind_rows()
 
-res %>%
-  mutate(value=round(value, 2)) %>%
-  spread(diagnosis_type, value) %>%
-  kable
+f_rxdx = n_rxdxage %>%
+  group_by(antibiotic, diagnosis_type) %>%
+  summarize(n=sum(n)) %>%
+  group_by(antibiotic) %>%
+  mutate(f_rxdx=n/sum(n)) %>%
+  ungroup() %>%
+  select(abx=antibiotic, diagnosis_type, f_rxdx)
+
+res2 = res %>%
+  left_join(f_rxdx, by=c('abx', 'diagnosis_type')) %>%
+  mutate(f_rxdx=if_else(diagnosis_type=='overall', 1.0, f_rxdx)) %>%
+  filter(!is.na(value)) %>%
+  select(abx, diagnosis_type, p_rxdx_ratio=value, f_rxdx)
+
+res_f = function(x) {
+  res2 %>%
+    filter(abx==x) %>%
+    arrange(desc(f_rxdx)) %>%
+    mutate_if(is.numeric, function(x) round(x, 2)) %>%
+    kable
+}
