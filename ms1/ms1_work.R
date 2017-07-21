@@ -131,12 +131,11 @@ claims_by_abx = pde %>%
   output_table('cohort_claims_by_abx')
 
 # keep track of which are the top 10 abx
-top_abx = claims_by_abx %>%
+top_abx = pde %>%
   group_by(antibiotic) %>%
-  summarize(cpkp=mean(cpkp)) %>%
-  arrange(desc(cpkp)) %>%
-  head(10) %$%
-  antibiotic
+  summarize(n=sum(n_claims)) %>%
+  arrange(desc(n)) %$%
+  head(antibiotic, 10)
 
 # from here on, the denominators are taken from the beneficiary data grouped
 # in the same way as the consumption data, so we can use the summarize_by function
@@ -179,7 +178,8 @@ model_f(bene, n_claims ~ year + age*n_cc + is_female + is_dual + is_white + regi
 # models using just the cohort
 # levofloxacin as appropriate for lung/kidney/heart CC, cancer, frequent abx
 lm_cohort_bene = bene %>% filter(in_cohort) %>%
-  mutate(lv_appr=AMI | ATRIALFB | CHRNKIDN | COPD | CHF | DIABETES | ISCHMCHT | CNCRBRST | CNCRCLRC | CNCRPRST | CNCRLUNG | CNCRENDM | ASTHMA | n_claims > 5)
+  mutate(lv_appr=AMI | ATRIALFB | CHRNKIDN | COPD | CHF | DIABETES | ISCHMCHT | CNCRBRST | CNCRCLRC | CNCRPRST | CNCRLUNG | CNCRENDM | ASTHMA | n_claims > 5,
+         heart_disease=AMI | ATRIALFB | CHF | ISCHMCHT)
 lm_cohort_bene %>%
   select(bene_id) %>%
   distinct() %>%
@@ -202,12 +202,34 @@ single_abx_model = function(bene, abx, frmla, y_name='n_claims') {
     mutate(model=abx)
 }
 
-f = function(a) single_abx_model(bene, a, y ~ year + age*n_cc + is_female + is_dual + is_white + region)
-lapply(top_abx, f) %>%
+#f = function(a) single_abx_model(bene, a, y ~ year + age*n_cc + is_female + is_dual + is_white + region)
+f = function(a) single_abx_model(lm_cohort_bene, a, y ~ year + age + n_cc + is_dual + region)
+res = lapply(top_abx, f) %>%
   bind_rows() %T>%
   output_table('model_abx')
 
+res_overall = lm(n_claims ~ year + age + n_cc + is_dual + region, data=lm_cohort_bene) %>%
+  tidy %>%
+  mutate(model='overall')
+
+bind_rows(res, res_overall) %>%
+  filter(term=='year') %>%
+  mutate(model=case_when(.$model=='trimethoprim/sulfamethoxazole' ~ 'TMP/SMX',
+                         .$model=='amoxicillin/clavulanate' ~ 'amox/clav',
+                         TRUE ~ .$model)) %>%
+  mutate(model=forcats::fct_reorder(model, estimate),
+         cpkp=1000*estimate) %>%
+  ggplot(aes(x=model, y=cpkp)) +
+  geom_point() +
+  geom_linerange(aes(x=model, ymin=0, ymax=cpkp)) +
+  coord_flip() +
+  xlab('') + ylab('Adjusted yearly change in claims per 1k bene. per yr') +
+  scale_y_continuous(limits=c(-16, 17), breaks=c(-15, -10, -5, 0, 5, 10, 15)) +
+  theme_minimal()
+  
+
 f = function(a) single_abx_model(lm_cohort_bene, a, y ~ year + age*n_cc + is_female + is_dual + is_white + region)
+f2 = function(a) single_abx_model(lm_cohort_bene, a, y ~ year + age + is_dual + region)
 lapply(top_abx, f) %>%
   bind_rows() %T>%
   output_table('cohort_model_abx')

@@ -1,9 +1,11 @@
 # Proportions of diagnoses
 
+# Restrict analysis to beneficiaries in the cohort
 cohort_ids = read_tsv('lm_cohort_ids.tsv') %$% bene_id
 dx_class = read_tsv('../../data/fd_codes.tsv') %>%
   select(diagnosis=code, diagnosis_type)
 
+# Load diagnoses from years 2011 ("0") and 2014 ("1")
 dx = bind_rows(
   read_tsv('../../data/fd_dx_car_claims_2011.tsv') %>% mutate(time=0),
   read_tsv('../../data/fd_dx_op_claims_2011.tsv') %>% mutate(time=0),
@@ -16,14 +18,7 @@ dx = bind_rows(
   left_join(select(bene, time, bene_id, age), by=c('time', 'bene_id')) %>%
   select(time, bene_id, age, from_date, diagnosis, diagnosis_type)
 
-baseline = dx %>%
-  count(time, age, diagnosis_type) %>% ungroup() %>%
-  spread(time, n) %>%
-  mutate(dx_ratio=`1`/`0`)
-# filter age between 69, 92
-  #arrange(time) %>% group_by(diagnosis_type) %>%
-  #summarize(dx_ratio=n[2]/n[1])
-
+# load PDEs from those years
 pde = bind_rows(
   read_tsv('../pde_2011.tsv') %>% mutate(time=0),
   read_tsv('../pde_2014.tsv') %>% mutate(time=1)
@@ -32,7 +27,7 @@ pde = bind_rows(
   mutate(pde_id=1:nrow(.)) %>%
   left_join(select(bene, time, bene_id, age), by=c('time', 'bene_id'))
 
-# work with just levofloxacin for now
+# a window 
 window = 7
 
 # age structure
@@ -123,9 +118,11 @@ res2 = res %>%
   filter(!is.na(value)) %>%
   select(abx, diagnosis_type, p_rxdx_ratio=value, f_rxdx)
 
+write_tsv(res2, 'tables/tbl_rxdx_ratios.tsv')
+
 res_f = function(x) {
   res2 %>%
-    filter(abx==x) %>%
+    filter(abx==x) %>% select(-abx) %>%
     arrange(desc(f_rxdx)) %>%
     mutate_if(is.numeric, function(x) round(x, 2)) %>%
     kable
