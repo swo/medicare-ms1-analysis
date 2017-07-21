@@ -17,10 +17,10 @@ polish_pde = function(df) {
 polish_dx = function(df) {
   rename(df, bene_id=BENE_ID) %>%
     mutate(from_date=dmy(from_date)) %>%
+    group_by(bene_id, diagnosis, from_date) %>%
+    summarize(n_encounter_claim=n()) %>%
+    ungroup() %>%
     left_join(dx_class, by='diagnosis')
-    group_by(bene_id, diagnosis) %>%
-    summarize(n_dx_date=length(unique(from_date))) %>%
-    ungroup()
 }
 
 polish_year = function(y) {
