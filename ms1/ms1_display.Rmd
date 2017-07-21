@@ -37,7 +37,7 @@ model_ci = function(df) {
 
 model_ci_cpkp = function(df) {
   model_ci(df) %>%
-    mutate_at(vars(ci_range, ci_low, ci_high, estimate), function(x) x * 1000) %>%
+    mutate_at(vars(ci_range, ci_low, ci_high, estimate), function(x) x*1000) %>%
     rename(cpkp=estimate)
 }
 
@@ -271,6 +271,25 @@ read_tsv('tables/tbl_cohort_model_levo.tsv') %>%
 By contrast, levofloxacin prescribing increases with calendar year and with age, including for those who have and ARTI. The overall increase with time is about half the size of the increase with time for those who have an ARTI, meaning that levofloxacin, aside from being prescribed more overall, is being prescribed more especially for those with ARTIs.
 
 Interestingly, the effect of dual-enrollment is much higher for levofloxacin than azithromycin (about triple). Why would being poorer make you more likely to take levofloxacin?
+
+# Diagnoses
+
+```{r}
+read_tsv('tables/model_abx.tsv') %>%
+  filter(term=='year') %>%
+  mutate(model=case_when(.$model=='trimethoprim/sulfamethoxazole' ~ 'TMP/SMX',
+                         .$model=='amoxicillin/clavulanate' ~ 'amox/clav',
+                         TRUE ~ .$model)) %>%
+  mutate(model=forcats::fct_reorder(model, estimate),
+         cpkp=1000*estimate) %>%
+  ggplot(aes(x=model, y=cpkp)) +
+  geom_point() +
+  geom_linerange(aes(x=model, ymin=0, ymax=cpkp)) +
+  coord_flip() +
+  xlab('') + ylab('Adjusted yearly change in claims per 1k bene. per yr') +
+  scale_y_continuous(limits=c(-16, 17), breaks=c(-15, -10, -5, 0, 5, 10, 15)) +
+  theme_minimal()
+```
 
 # Supplemental results
 

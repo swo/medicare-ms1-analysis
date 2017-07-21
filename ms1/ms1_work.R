@@ -1,7 +1,5 @@
 # Do all the heavy-lifting analyses so that the Rmd can just show the results
 
-import::from(broom, tidy)
-
 sum_over = function(target_columns) {
   dummy_vars = sapply(1:length(target_columns), function(i) sprintf('x%i', i))
   dummy_vars_string = paste0(dummy_vars, collapse=',')
@@ -16,6 +14,8 @@ sum_over = function(target_columns) {
 regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
   select(state, region)
 
+# Keep chronic conditions that have a single reference year. Exclude Alzheimer's,
+# which is a subset of Alz. & dementia
 condition_names = read_tsv('../chronic-conditions/names.tsv') %>% filter(condition_code != 'ALZH')
 names_1yr_ccs = condition_names %>% filter(condition_ref_years==1) %$% condition_code
 
@@ -24,29 +24,31 @@ dx_codes = read_tsv('../../data/fd_codes.tsv') %>%
 
 dx_types = unique(dx_codes$diagnosis_type)
 
+# window of days that you can look ahead from an rx to a dx
+rxdx_window = 3
+
 load_data = function(year) {
   # pde data
   pde = read_tsv(sprintf('../pde_%i.tsv', year)) %>%
-    select(bene_id, antibiotic, days_supply) %>%
-    group_by(bene_id, antibiotic) %>%
-    summarize(n_claims=n(), days_supply=sum(days_supply)) %>%
-    ungroup() %>%
-    mutate(year=year)
+    select(bene_id, service_date, antibiotic) %>%
+    distinct() %>%
+    mutate(year=year, pde_id=1:n())
 
   # diagnosis claims
-  dx_fn = sprintf('../dx_%i.tsv', year)
+  dx = read_tsv(sprintf('../dx_%i.tsv', year)) %>%
+    mutate(year=year)
   
-  dx = read_tsv(dx_fn) %>%
-    rename(code=diagnosis) %>%
-    filter(n_dx_date > 0) %>%
-    left_join(dx_codes, by='code') %>%
-    select(bene_id, diagnosis_type) %>%
-    distinct() %>%
-    mutate(dummy=TRUE) %>%
-    spread(diagnosis_type, dummy)
+  # associated each PDE with a diagnosis, if possible
+  pde_dx = pde %>%
+    left_join(dx, by=c('year', 'bene_id')) %>%
+    filter(between(service_date - from_date, 0, rxdx_window)) %>%
+    group_by(pde_id) %>% filter(from_date==max(from_date)) %>% ungroup() %>%
+    select(pde_id, diagnosis_type) %>%
+    right_join(pde, by='pde_id') %>%
+    replace_na(list(diagnosis_type='none'))
 
   # total numbers of PDEs
-  n_claims = pde %>% group_by(bene_id) %>% summarize(n_claims=sum(n_claims))
+  n_claims = count(pde, bene_id) %>% rename(n_claims=n)
 
   # count chronic conditions. 'n_cc' means one-year cc's
   cc = read_feather(sprintf('../cc_%i.feather', year)) %>%
@@ -60,28 +62,30 @@ load_data = function(year) {
     left_join(regions, by='state') %>%
     mutate(year=year) %>%
     left_join(cc, by='bene_id') %>%
-    left_join(n_claims, by='bene_id') %>% replace_na(list(n_claims=0)) %>%
-    left_join(dx, by='bene_id') %>% replace_na(setNames(as.list(rep(FALSE, length(dx_types))), dx_types))
+    left_join(n_claims, by='bene_id') %>% replace_na(list(n_claims=0))
 
-  list(bene=bene, pde=pde)
+  # take the bene, pde (with diagnoses) and diagnoses (separately)
+  list(bene=bene, pde=pde_dx, dx=dx)
 }
 
 dat = lapply(2011:2014, load_data)
 
 bene = lapply(dat, function(df) df$bene) %>% bind_rows %>%
   group_by(bene_id) %>%
-  mutate(n_years=n(),
-         start_age=min(age),
-         in_cohort=n_years==4) %>%
-  ungroup()
+  mutate(n_years=n(), in_cohort=n_years==4) %>%
+  ungroup() %>%
+  filter(in_cohort) %>% select(-in_cohort)
+
+cohort_ids = unique(bene$bene_id)
 
 pde = lapply(dat, function(df) df$pde) %>% bind_rows %>%
-  left_join(distinct(select(bene, bene_id, in_cohort)), by='bene_id')
+  filter(bene_id %in% cohort_ids)
 
-#rm(dat)
+dx = lapply(dat, function(df) df$dx) %>% bind_rows() %>%
+  filter(bene_id %in% cohort_ids)
 
-output_table = function(x, base) write_tsv(x, sprintf('tables/tbl_%s.tsv', base))
-sem = function(x) sd(x) / length(x)
+output_table = function(x, base) write_tsv(x, sprintf('tables/%s.tsv', base))
+sem = function(x) sd(x) / sqrt(length(x))
 
 summarize_totals = function(df) {
   summarize(df, n_bene=n(),
@@ -106,34 +110,16 @@ totals = bene %>%
   summarize_totals() %T>%
   output_table('totals')
 
-cohort_totals = bene %>%
-  filter(in_cohort) %>%
-  group_by(year) %>%
-  summarize_totals() %T>%
-  output_table('cohort_totals')
-
 # the top few inidividual antibiotics
 claims_by_abx = pde %>%
-  group_by(antibiotic, year) %>%
-  summarize_at(vars(n_claims, days_supply), sum) %>%
-  ungroup() %>%
+  count(year, antibiotic) %>% ungroup() %>%
   left_join(select(totals, year, n_bene), by='year') %>%
-  mutate(cpkp=n_claims*1000/n_bene, did=days_supply*1000/(n_bene*365)) %T>%
+  mutate(cpkp=n*1000/n_bene) %T>%
   output_table('claims_by_abx')
-
-claims_by_abx = pde %>%
-  filter(in_cohort) %>%
-  group_by(antibiotic, year) %>%
-  summarize_at(vars(n_claims, days_supply), sum) %>%
-  ungroup() %>%
-  left_join(select(cohort_totals, year, n_bene), by='year') %>%
-  mutate(cpkp=n_claims*1000/n_bene, did=days_supply*1000/(n_bene*365)) %T>%
-  output_table('cohort_claims_by_abx')
 
 # keep track of which are the top 10 abx
 top_abx = pde %>%
-  group_by(antibiotic) %>%
-  summarize(n=sum(n_claims)) %>%
+  count(antibiotic) %>%
   arrange(desc(n)) %$%
   head(antibiotic, 10)
 
@@ -143,17 +129,13 @@ summarize_by = function(bene, by) {
   group_by_(bene, 'year', by) %>%
     summarize(n_bene=n(), n_claims=sum(n_claims)) %>%
     ungroup() %>%
-    mutate(cpkp=n_claims*1000/n_bene)
+    mutate(cpkp=n_claims*1000/n_bene) %>%
+    output_table(paste0('claims_by_', by))
 }
 
-summarize_by_with_cohort = function(bene, by, table_name) {
-  summarize_by(bene, by) %>% output_table(table_name)
-  bene %>% filter(in_cohort) %>% summarize_by(by) %>% output_table(paste0('cohort_', table_name))
-}
-
-summarize_by_with_cohort(bene, 'sex', 'claims_by_sex')
-summarize_by_with_cohort(bene, 'region', 'claims_by_region')
-summarize_by_with_cohort(bene, 'race', 'claims_by_race')
+summarize_by(bene, 'sex')
+summarize_by(bene, 'region')
+summarize_by(bene, 'race')
 
 # then by age
 # (the input to summarize_by is modified, since we want to group by age *group*,
@@ -163,96 +145,116 @@ bene %>%
     between(.$age, 66, 76) ~ '66-76',
     between(.$age, 77, 86) ~ '77-86',
     between(.$age, 87, 96) ~ '87-96')) %>%
-  summarize_by_with_cohort('age_group', 'claims_by_age')
+  summarize_by('age_group')
 
 # run a model, tidy, and save the output
-model_f = function(bene, frmla, table_name) {
-  lm(formula=frmla, data=bene) %>% tidy %>% output_table(table_name)
+subtract_min = function(x) x - min(x)
+model_f = function(df, frmla) {
+  df %>%
+    mutate_at(vars(year, age), subtract_min) %>%
+    lm(formula=frmla, data=.) %>% tidy
 }
 
 # models predicting consumption
 # models with all beneficiaries
-model_f(bene, n_claims ~ year, 'model1')
-model_f(bene, n_claims ~ year + age*n_cc + is_female + is_dual + is_white + region, 'model2')
-
-# models using just the cohort
-# levofloxacin as appropriate for lung/kidney/heart CC, cancer, frequent abx
-lm_cohort_bene = bene %>% filter(in_cohort) %>%
-  mutate(lv_appr=AMI | ATRIALFB | CHRNKIDN | COPD | CHF | DIABETES | ISCHMCHT | CNCRBRST | CNCRCLRC | CNCRPRST | CNCRLUNG | CNCRENDM | ASTHMA | n_claims > 5,
-         heart_disease=AMI | ATRIALFB | CHF | ISCHMCHT)
-lm_cohort_bene %>%
-  select(bene_id) %>%
-  distinct() %>%
-  write_tsv('lm_cohort_ids.tsv')
-
-model_f(lm_cohort_bene, n_claims ~ year, 'cohort_model1')
-model_f(lm_cohort_bene, n_claims ~ year + age*n_cc + is_female + is_dual + is_white + region, 'cohort_model2')
+model_f(bene, n_claims ~ year) %>% output_table('model_total_unadjusted')
+model_f(bene, n_claims ~ year + age + n_cc + is_dual + region) %>% output_table('model_total_adjusted')
 
 # models for each individual drug
-subtract_min = function(x) x - min(x)
-single_abx_model = function(bene, abx, frmla, y_name='n_claims') {
+single_abx_model = function(abx, frmla) {
   pde %>%
-    rename_(y=y_name) %>%
     filter(antibiotic==abx) %>%
+    count(year, bene_id) %>% ungroup() %>% rename(y=n) %>%
     right_join(bene, by=c('year', 'bene_id')) %>%
     replace_na(list(y=0)) %>%
-    mutate_at(vars(year, age), subtract_min) %>%
-    lm(formula=frmla, data=.) %>%
-    tidy %>%
+    model_f(frmla) %>%
     mutate(model=abx)
 }
 
-#f = function(a) single_abx_model(bene, a, y ~ year + age*n_cc + is_female + is_dual + is_white + region)
-f = function(a) single_abx_model(lm_cohort_bene, a, y ~ year + age + n_cc + is_dual + region)
-res = lapply(top_abx, f) %>%
-  bind_rows() %T>%
-  output_table('model_abx')
-
-res_overall = lm(n_claims ~ year + age + n_cc + is_dual + region, data=lm_cohort_bene) %>%
-  tidy %>%
+model_abx_overall = bene %>%
+  rename(y=n_claims) %>%
+  model_f(y ~ year + age + n_cc + is_dual + region) %>%
   mutate(model='overall')
 
-bind_rows(res, res_overall) %>%
-  filter(term=='year') %>%
-  mutate(model=case_when(.$model=='trimethoprim/sulfamethoxazole' ~ 'TMP/SMX',
-                         .$model=='amoxicillin/clavulanate' ~ 'amox/clav',
-                         TRUE ~ .$model)) %>%
-  mutate(model=forcats::fct_reorder(model, estimate),
-         cpkp=1000*estimate) %>%
-  ggplot(aes(x=model, y=cpkp)) +
-  geom_point() +
-  geom_linerange(aes(x=model, ymin=0, ymax=cpkp)) +
-  coord_flip() +
-  xlab('') + ylab('Adjusted yearly change in claims per 1k bene. per yr') +
-  scale_y_continuous(limits=c(-16, 17), breaks=c(-15, -10, -5, 0, 5, 10, 15)) +
-  theme_minimal()
+model_abx = lapply(top_abx, function(a) single_abx_model(a, y ~ year + age + n_cc + is_dual + region)) %>%
+  bind_rows() %>%
+  bind_rows(model_abx_overall) %T>%
+  output_table('model_abx')
+
+# diagnoses analysis
+times = data_frame(year=c(2011, 2014), time=c(0, 1))
+time_f = function(df) left_join(times, df, by='year')
+
+## age structure
+p_age = bene %>% time_f() %>%
+  count(time, age) %>%
+  group_by(time) %>% mutate(p_age=n/sum(n)) %>% ungroup() %>%
+  mutate(key=sprintf('p_age_t%i', time)) %>%
+  select(age, key, p_age) %>%
+  spread(key, p_age)
+
+## a "narrow" age structure
+# it excludes the old and young ages that don't appear in both
+# the 2011 and 2014 data, so we can adjust for age structure
+p_age_narrow = p_age %>%
+  select(age, p_age=p_age_t0) %>%
+  filter(between(age, 69, 92)) %>%
+  mutate(p_age=p_age/sum(p_age))
+
+n_dxage = dx %>%
+  left_join(select(bene, year, bene_id, age), by=c('year', 'bene_id')) %>%
+  time_f() %>%
+  count(time, age, diagnosis_type) %>% ungroup()
+
+n_rxdxage = pde %>% time_f() %>%
+  count(time, age, antibiotic, diagnosis_type) %>% ungroup()
+
+f_rxdx = n_rxdxage %>%
+  group_by(antibiotic, diagnosis_type) %>%
+  summarize(n=sum(n)) %>%
+  group_by(antibiotic) %>%
+  mutate(f_rxdx=n/sum(n)) %>%
+  ungroup() %>%
+  select(abx=antibiotic, diagnosis_type, f_rxdx)
+
+proportion_f = function(abx) {
+  dx_counts = n_dxage %>%
+    mutate(key=sprintf('n_dx_t%i', time)) %>%
+    select(age, diagnosis_type, key, n) %>%
+    spread(key, n)
+  rx_counts = n_rxdxage %>%
+    filter(antibiotic==abx) %>%
+    mutate(key=sprintf('n_rx_t%i', time)) %>%
+    select(age, diagnosis_type, key, n) %>%
+    spread(key, n)
   
-
-f = function(a) single_abx_model(lm_cohort_bene, a, y ~ year + age*n_cc + is_female + is_dual + is_white + region)
-f2 = function(a) single_abx_model(lm_cohort_bene, a, y ~ year + age + is_dual + region)
-lapply(top_abx, f) %>%
-  bind_rows() %T>%
-  output_table('cohort_model_abx')
-
-# azithro models
-
-# levo models
-
-# special levo & azithro models
-azithro_f = y ~ year + age + is_dual + region + COPD + COPD:year + COPD:age + uri + uri:year + uri:age + pneumonia + pneumonia:year + pneumonia:age
-single_abx_model(lm_cohort_bene, 'azithromycin', azithro_f) %>%
-  output_table('cohort_model_azithro')
-levo_f = y ~ year + age + is_dual + region + n_acute_rc_dx + uri + uri:year
-single_abx_model(lm_cohort_bene, 'levofloxacin', levo_f) %>%
-  output_table('cohort_model_levo')
-
-# special cipro, bactrim, nitro models
-uti_f = function(abx, short) {
-  frmla = y ~ year + age + is_female + is_dual + is_white + region + uti + uti:year
-  single_abx_model(lm_cohort_bene, abx, frmla) %>%
-    output_table(paste0('cohort_model_', short))
+  overall_rx_counts = n_rxdxage %>%
+    filter(antibiotic==abx) %>%
+    group_by(time, age) %>% summarize(n=sum(n)) %>% ungroup() %>%
+    mutate(key=sprintf('n_rx_t%i', time)) %>%
+    select(age, key, n) %>%
+    spread(key, n) %>% mutate(r=n_rx_t1/n_rx_t0) %>%
+    left_join(p_age, by='age') %>%
+    mutate(r=(n_rx_t1/n_rx_t0)/(p_age_t1/p_age_t0)) %>%
+    select(age, r) %>%
+    mutate(diagnosis_type='overall')
+  
+  inner_join(dx_counts, rx_counts, by=c('age', 'diagnosis_type')) %>%
+    mutate(r=(n_rx_t1/n_rx_t0)/(n_dx_t1/n_dx_t0)) %>%
+    select(age, diagnosis_type, r) %>%
+    bind_rows(overall_rx_counts) %>%
+    filter(between(age, 69, 92)) %>%
+    left_join(p_age_narrow, by='age') %>%
+    group_by(diagnosis_type) %>%
+    summarize(r=sum(r*p_age))
 }
-uti_f('ciprofloxacin', 'cipro')
-uti_f('trimethoprim/sulfamethoxazole', 'tmpsmx')
-uti_f('nitrofurantoin', 'nitro')
 
+rxdx_result = lapply(top_abx, function(x) {
+  proportion_f(x) %>%
+    select(diagnosis_type, value=r) %>%
+    mutate(abx=x)
+}) %>% bind_rows() %>%
+  left_join(f_rxdx, by=c('abx', 'diagnosis_type')) %>%
+  mutate(f_rxdx=if_else(diagnosis_type=='overall', 1.0, f_rxdx)) %>%
+  select(abx, diagnosis_type, p_rxdx_ratio=value, f_rxdx) %>%
+  output_table('rxdx')
