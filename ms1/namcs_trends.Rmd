@@ -101,6 +101,21 @@ top_abx %>%
   kable
 ```
 
+## Data validity
+
+The NAMCS methodology recommends that a value be considered sensible only if
+(*a*) there are 30 records to support it and (*b*) and standard error is no
+more than 30% of the estimate. There are at least 30 records per antibiotic per
+year:
+
+```{r data_validity}
+visits %>%
+  select(year, amox:tmpsmx) %>%
+  group_by(year) %>%
+  summarize_all(function(x) sum(x > 0)) %>%
+  kable
+```
+
 # Results
 
 ## Trends in numbers of visits and number of Americans
@@ -145,6 +160,9 @@ add_pct_change = function(df) {
 }
 ```
 
+Levofloxacin has the largest apparent increase per visit (i.e., the number of
+visits in which levofloxacin was prescribed increases the most).
+
 ```{r per_visit_model}
 # survey poisson model
 svy_pm = function(design, frmla) svyglm(frmla, design=design, family='poisson') %>% tidy
@@ -155,6 +173,10 @@ drug_pv = top_abx$abx %>%
   lapply(function(a) svy_pm(adult_design, as.formula(paste0(a, '~year'))) %>% mutate(abx=a)) %>%
   bind_rows()
 ```
+
+Levofloxacin and amox/clav have statistically significant results, as reported
+by the Poisson regressions. Only the levofloxacin result meets the standard
+error criterion for data validity.
 
 ```{r per_visit_display}
 x = bind_rows(overall_pv, drug_pv) %>%
@@ -174,8 +196,8 @@ ggplot(x, aes(x=abx, y=pct_change, ymin=ci_low, ymax=ci_high)) +
   theme_minimal()
 
 x %>%
-  select(abx, ci_low, pct_change, ci_high, p.value, adj.p.value) %>%
-  mutate(sig=if_else(adj.p.value < 0.05, '*', '')) %>%
+  mutate(valid=abs(std.error/estimate)<=0.3, sig=if_else(adj.p.value < 0.05, '*', '')) %>%
+  select(abx, ci_low, pct_change, ci_high, p.value, adj.p.value, valid, sig) %>%
   kable
 ```
 
@@ -240,10 +262,14 @@ per_capita = per_capita_counts %>%
   do(tidy(glm(apc ~ year, data=., family=gaussian(link='log'), weights=1.0/se^2)))
 ```
 
+The trends in consumption per capita are all consistent with those observed in
+Medicare, but none of them meet the standard error criterion for validity or
+are statistically significant.
+
 ```{r per_capita_models_display}
 x = per_capita %>%
   filter(term=='year') %>%
-  mutate(adj.p.value=p.adjust(p.value, method='BH')) %>%
+  mutate(valid=abs(std.error/estimate)<=0.3, adj.p.value=p.adjust(p.value, method='BH')) %>%
   add_pct_change()
 
 read_tsv('tables/model_abx.tsv') %>%
@@ -255,7 +281,8 @@ read_tsv('tables/model_abx.tsv') %>%
   add_pct_change() %>%
   mutate(abx=forcats::fct_reorder(abx, pct_change)) %>%
   ggplot(aes(x=abx, y=pct_change, ymin=ci_low, ymax=ci_high, color=data_source)) +
-  geom_linerange() +
+  #geom_linerange() +
+  geom_errorbar() +
   geom_point() +
   coord_flip() +
   xlab('') +
@@ -264,7 +291,7 @@ read_tsv('tables/model_abx.tsv') %>%
   theme_minimal()
 
 x %>%
-  select(abx, ci_low, pct_change, ci_high, p.value, adj.p.value) %>%
+  select(abx, ci_low, pct_change, ci_high, p.value, valid, adj.p.value) %>%
   arrange(desc(pct_change)) %>%
   kable
 ```
