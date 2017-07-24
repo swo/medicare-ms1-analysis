@@ -150,9 +150,17 @@ bene %>%
 # run a model, tidy, and save the output
 subtract_min = function(x) x - min(x)
 model_f = function(df, frmla) {
-  df %>%
-    mutate_at(vars(year, age), subtract_min) %>%
-    lm(formula=frmla, data=.) %>% tidy
+  dat = df %>% mutate_at(vars(year, age), subtract_min)
+  f = function(...) glm(formula=frmla, data=dat, ...)
+  model_lm = f()
+  model_poisson = f(family='poisson')
+  model_log = f(family=gaussian(link='log'), start=model_poisson$coefficients)
+  
+  bind_rows(
+    mutate(tidy(model_lm), model='lm'),
+    mutate(tidy(model_poisson), model='poisson'),
+    mutate(tidy(model_log), model='log')
+  )
 }
 
 # models predicting consumption
@@ -168,13 +176,13 @@ single_abx_model = function(abx, frmla) {
     right_join(bene, by=c('year', 'bene_id')) %>%
     replace_na(list(y=0)) %>%
     model_f(frmla) %>%
-    mutate(model=abx)
+    mutate(antibiotic=abx)
 }
 
 model_abx_overall = bene %>%
   rename(y=n_claims) %>%
   model_f(y ~ year + age + n_cc + is_dual + region) %>%
-  mutate(model='overall')
+  mutate(antibiotic='overall')
 
 model_abx = lapply(top_abx, function(a) single_abx_model(a, y ~ year + age + n_cc + is_dual + region)) %>%
   bind_rows() %>%
@@ -206,7 +214,9 @@ n_dxage = dx %>%
   time_f() %>%
   count(time, age, diagnosis_type) %>% ungroup()
 
-n_rxdxage = pde %>% time_f() %>%
+n_rxdxage = pde %>%
+  left_join(select(bene, year, bene_id, age), by=c('year', 'bene_id')) %>%
+  time_f() %>%
   count(time, age, antibiotic, diagnosis_type) %>% ungroup()
 
 f_rxdx = n_rxdxage %>%

@@ -36,7 +36,7 @@ dx_visit = dx %>%
   group_by(visit_id) %>%
   summarize(acute_rc='acute_rc' %in% diagnosis_type)
 
-top_abx = read_tsv('../../db/namcs/analysis/top_abx.tsv')
+top_abx = read_tsv('namcs_top_abx.tsv')
 abx_cat = read_tsv('../../db/namcs/data/parse/drug_codes/abx_codes.tsv')
 
 drugs = read_tsv_years('../../db/namcs/data/namcs_drugs_%i.tsv') %>%
@@ -47,7 +47,9 @@ n_abx = drugs %>%
   group_by(visit_id) %>%
   summarize(n_abx=n())
 
-abx_visit = left_join(top_abx, drugs, by='desc') %>%
+abx_visit = top_abx %>%
+  select(desc, abx) %>%
+  left_join(drugs, by='desc') %>%
   count(visit_id, abx) %>% ungroup() %>%
   spread(abx, n)
 
@@ -84,10 +86,14 @@ I used the 2011-2014 NAMCS data. All numbers of prescriptions will be presented 
 
 ## Drugs
 
-I consider the same drugs as last time:
+I consider the same drugs as in Medicare, except for clindamycin, which I drop,
+because NAMCS doesn't have enough information to distinguish between oral and
+topical formulations.
 
-```{r}
-kable(top_abx)
+```{r top_abx_table}
+top_abx %>%
+  select(medicare_abx, abx) %>%
+  kable
 ```
 
 # Results
@@ -105,7 +111,7 @@ design %>%
   kable
 ```
 
-But the number of Americans went up (but the number of children went down):
+However, the number of Americans went up (but the number of children went down):
 
 ```{r}
 census %>% kable
@@ -132,43 +138,52 @@ overall_trend %>%
 
 There is no support for a trend per visit:
 
-```{r overall_model1}
-svyglm(n_abx ~ year, design=design, family=quasipoisson(link='identity')) %>%
-  tidy %>% kable
+```{r lm_functions}
+# survey poisson model
+svy_pm = function(design, frmla) svyglm(frmla, design=design, family='poisson') %>% tidy
+
+# log glm
+log_glm = function(df, frmla, weights=NULL) glm(formula=as.formula(frmla), data=df, family=gaussian(link='log'), weights=weights) %>% tidy
+```
+
+```{r overall_per_visit}
+svy_pm(design, n_abx ~ year) %>% kable
 ```
 
 Nor for a trend per capita:
 
-```{r overall_model2}
+```{r overall_per_capita}
 overall_trend %>%
   mutate(year=year-min(year)) %>%
-  lm(abx_per_capita ~ year, weights=1.0/se_per_capita^2, data=.) %>%
-  tidy %>% kable
+  log_glm('abx_per_capita ~ year', weights=1.0/.$se_per_capita^2) %>%
+  kable
 ```
 
 ### Trends by drug
 
-```{r drugs_time}
-# apc = antibiotic per capita
-f = function(design, d) {
-  svyby(as.formula(paste0('~', d)), ~year, design=design, svytotal) %>%
+#### Per capita
+
+```{r drugs_per_capita_model}
+n_abx_f = function(design, a) {
+  svyby(as.formula(paste0('~', a)), ~year, design=design, svytotal) %>%
     as_data_frame() %>%
-    rename_(.dots=setNames(d, 'n_abx')) %>%
-    mutate(abx=d)
+    rename_(.dots=setNames(a, 'n_abx')) %>%
+    mutate(abx=a)
 }
 
-g = function(design, denom) {
-  lapply(top_abx$abx, function(x) f(design, x)) %>% bind_rows() %>%
+# apc = antibiotic per capita
+apc_f = function(design, denom) {
+  lapply(top_abx$abx, function(x) n_abx_f(design, x)) %>% bind_rows() %>%
     left_join(census, by='year') %>%
     rename_(.dots=setNames(denom, 'denom')) %>%
     mutate(apc=n_abx/denom, se=se/denom)
 }
 
-abx_time = g(design, 'n_total')
-abx_time_adult = g(adult_design, 'n_adult')
+abx_time = apc_f(design, 'n_total')
+abx_time_adult = apc_f(adult_design, 'n_adult')
 ```
 
-```{r drugs_time_plot}
+```{r drugs_per_capita_time}
 abx_time %>%
   mutate(ci=1.96*se, ymin=apc-ci, ymax=apc+ci) %>%
   ggplot(aes(x=year, y=apc, ymin=ymin, ymax=ymax)) +
@@ -188,109 +203,111 @@ abx_time %>%
   theme_minimal()
 ```
 
-It doesn't look by eye that any trends are particularly strong.
+It doesn't look by eye that any trends are particularly strong. I used weighted
+log regression to look for trends in totals:
 
-I used weighted linear regression to look for trends in totals:
-
-```{r drugs_time_totals_model}
+```{r drugs_per_capita_time_trends}
 abx_total_models = abx_time %>%
   group_by(abx) %>%
-  do(tidy(lm(apc ~ year, weight=1.0/se^2, data=.))) %>%
+  do(log_glm(., 'apc ~ year', weights=1.0/.$se^2)) %>%
   ungroup()
 
 abx_total_models %>%
   filter(term=='year') %>% select(-term) %>%
   arrange(estimate) %>%
   kable
+```
 
-abx_total_models %>%
-  filter(term=='year') %>% select(-term) %>%
-  mutate(ci=1.96*std.error, ymin=estimate-ci, ymax=estimate+ci) %>%
-  mutate(abx=forcats::fct_reorder(abx, estimate)) %>%
-  ggplot(aes(x=abx, y=estimate, ymin=ymin, ymax=ymax)) +
-  geom_point() + geom_linerange() +
+```{r drugs_per_capita_figure}
+bind_rows(
+  read_tsv('tables/model_abx.tsv') %>%
+    filter(term=='year', model=='poisson') %>%
+    left_join(top_abx, by=c('antibiotic'='medicare_abx')) %>%
+    mutate(abx=if_else(is.na(abx), antibiotic, abx)) %>%
+    select(abx, estimate, std.error) %>%
+    mutate(data_source='medicare'),
+  abx_total_models %>%
+    filter(term=='year') %>%
+    select(abx, estimate, std.error) %>%
+    mutate(data_source='namcs')
+) %>%
+  #mutate(abx=factor(abx, levels=top_abx$abx)) %>%
+#abx_total_models %>%
+#  filter(term=='year') %>%
+  mutate(ci=1.96*std.error, y=exp(estimate)-1, ymin=exp(estimate-ci)-1, ymax=exp(estimate+ci)-1) %>%
+  #select(abx, y, ymin, ymax) %>%
+  mutate_if(is.numeric, function(x) x*100) %>%
+  #arrange(y) %>% mutate(abx=forcats::fct_inorder(abx)) %>%
+  #ggplot(aes(x=abx, y=y, ymin=ymin, ymax=ymax)) +
+  ggplot(aes(x=abx, y=y, ymin=ymin, ymax=ymax, color=data_source)) +
+  geom_linerange() +
+  geom_point() +
   coord_flip() +
+  ylab('pct change in consumption per capita') +
   theme_minimal()
 ```
 
-I used Poisson regressions to see if anything was changing *per visit* with time. Only levo:
+#### Per visit
 
-```{r drugs_time_model}
-qpglm = function(design, frmla) {
-  svyglm(frmla, design=design, family=quasipoisson(link='identity'))
+I used Poisson regressions to see if anything was changing *per visit* with
+time: levo and amox/clav. (These results are only with adults.)
+
+```{r drugs_per_visit}
+f = function(design) {
+  lapply(top_abx$abx, function(a) {
+    svy_pm(design, as.formula(paste0(a, '~year'))) %>%
+      mutate(abx=a)
+  }) %>% bind_rows()
 }
 
-f = function(design, d) {
-  qpglm(design, as.formula(paste0(d, '~ year'))) %>%
-    tidy %>%
-    mutate(abx=d) %>%
-    filter(term != '(Intercept)')
-}
-
-g = function(design) lapply(top_abx$abx, function(x) f(design, x)) %>% bind_rows()
-
-abx_time_model = g(design)
-abx_time_model_adult = g(adult_design)
+abx_time_model = f(design)
+abx_time_model_adult = f(adult_design)
 ```
 
-```{r drugs_time_model_table}
-abx_time_model %>%
+```{r drugs_per_visit_table}
+abx_time_model_adult %>%
+  filter(term=='year') %>%
   select(abx, estimate, p.value) %>%
   mutate(adj.p.value=p.adjust(p.value, method='BH')) %>%
-  arrange(p.value) %>%
+  mutate(pct=100*(exp(estimate)-1)) %>%
+  arrange(desc(pct)) %>%
   kable
 ```
 
-## Trends among the adults
-
-I do the same analysis, but just among adults. Weirdly, the results look a lot
-different. The confidence intervals get a lot bigger.
-
-```{r adult_trends}
-adult_models = abx_time_adult %>%
-  group_by(abx) %>%
-  do(tidy(lm(apc ~ year, weight=1.0/se^2, data=.))) %>%
-  ungroup()
-
-adult_models %>%
-  filter(term=='year') %>% select(-term) %>%
-  mutate(ci=1.96*std.error, ymin=estimate-ci, ymax=estimate+ci) %>%
-  mutate(abx=forcats::fct_reorder(abx, estimate)) %>%
-  ggplot(aes(x=abx, y=estimate, ymin=ymin, ymax=ymax)) +
+```{r drugs_per_visit_figure}
+abx_time_model_adult %>%
+  filter(term=='year') %>%
+  mutate(ci=1.96*std.error, y=exp(estimate)-1, ymin=exp(estimate-ci)-1, ymax=exp(estimate+ci)-1) %>%
+  select(abx, y, ymin, ymax) %>%
+  mutate_if(is.numeric, function(x) x*100) %>%
+  arrange(y) %>% mutate(abx=forcats::fct_inorder(abx)) %>%
+  ggplot(aes(x=abx, y=y, ymin=ymin, ymax=ymax)) +
   geom_point() + geom_linerange() +
   coord_flip() +
+  ylab('pct change in consumption per visit') +
   theme_minimal()
 ```
 
-### Just levo
+```{r special_times}
+levo_t1 = abx_time_adult %>% filter(abx=='levo', year==2011)
+levo_t2 = abx_time_adult %>% filter(abx=='levo', year==2014)
+amoxclav_t1 = abx_time_adult %>% filter(abx=='amoxclav', year==2011)
+amoxclav_t2 = abx_time_adult %>% filter(abx=='amoxclav', year==2014)
 
-```{r levo_ratio}
-levo_time = abx_time_adult %>%
-  filter(abx=='levo') %>%
-  arrange(year)
-
-t1 = levo_time %>% filter(year==2011) %$% apc
-v1 = levo_time %>% filter(year==2011) %$% se
-t2 = levo_time %>% filter(year==2014) %$% apc
-v2 = levo_time %>% filter(year==2014) %$% se
-
-tr = t2 / t1
-vr = v1 / t2^2 + t1^1 / t2^4 * v2
-sdr = sqrt(vr)
-
-show_tot = function(tot, v) sprintf('%g (±%g)', round(tot, 4), round(v, 4))
-show_pct = function(tot, v) sprintf('%g%% (±%g%%)', round((tot - 1)*100, digits=1), round(sqrt(v)*100, digits=1))
+show_var = function(df) sprintf('%g (±%g)', round(df$apc*1000, 1), round(df$se*1000, 1))
 ```
 
-```{r}
-levo_time %>%
-  select(year, abx_per_capita=apc, se) %>%
+Levofloxacin consumption increased from `r show_var(levo_t1)` to `r show_var(levo_t2)` claims per 1,000 people per year.
+Amox/clav consumption increased from `r show_var(amoxclav_t1)` to `r show_var(amoxclav_t2)` claims per 1,000 people per year.
+
+#### Per visit, Among everyone
+
+I do the same analysis, but among everyone.
+
+```{r drugs_per_visit_everyone}
+abx_time_model %>%
+  filter(term=='year') %>%
+  select(-term) %>%
   kable
 ```
 
-Levo increased from `r show_tot(t1, v1)` to `r show_tot(t2, v2)` per capita, an increase of `r show_pct(tr, vr)`.
-
-
-# Conclusions
-
-Levo is definitely going up.
