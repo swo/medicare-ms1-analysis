@@ -186,6 +186,21 @@ model_abx = top_abx %>%
   bind_rows(model_abx_overall) %T>%
   output_table('model_abx')
 
+# special azithromycin model
+# did azithro consumption decrease faster in benes with heart disease?
+model_azithro = pde %>%
+  filter(antibiotic=='azithromycin') %>%
+  count(year, bene_id) %>% ungroup() %>% rename(y=n) %>%
+  right_join(bene, by=c('year', 'bene_id')) %>% replace_na(list(y=0)) %>%
+  mutate(heart_disease=AMI | ATRIALFB | CHF | ISCHMCHT) %>%
+  model_f(y ~ year*heart_disease + age + n_cc + is_dual + region) %T>%
+  output_table('model_azithro')
+
+bene %>%
+  mutate(heart_disease=AMI | ATRIALFB | CHF | ISCHMCHT) %>%
+  count(year, heart_disease) %>%
+  output_table('counts_heartdisease')
+
 # diagnoses analysis
 times = data_frame(year=c(2011, 2014), time=c(0, 1))
 time_f = function(df) left_join(times, df, by='year')
