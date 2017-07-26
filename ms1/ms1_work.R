@@ -147,7 +147,7 @@ bene %>%
     between(.$age, 87, 96) ~ '87-96')) %>%
   summarize_by('age_group')
 
-# run a model, tidy, and save the output
+# run a models and tidy
 subtract_min = function(x) x - min(x)
 model_f = function(df, frmla) {
   dat = df %>% mutate_at(vars(year, age), subtract_min)
@@ -163,10 +163,11 @@ model_f = function(df, frmla) {
   )
 }
 
-# models predicting consumption
-# models with all beneficiaries
-model_f(bene, n_claims ~ year) %>% output_table('model_total_unadjusted')
-model_f(bene, n_claims ~ year + age + n_cc + is_dual + region) %>% output_table('model_total_adjusted')
+# model for all drugs combined
+model_abx_overall = bene %>%
+  rename(y=n_claims) %>%
+  model_f(y ~ year + age + n_cc + is_dual + region) %>%
+  mutate(antibiotic='overall')
 
 # models for each individual drug
 single_abx_model = function(abx, frmla) {
@@ -179,12 +180,8 @@ single_abx_model = function(abx, frmla) {
     mutate(antibiotic=abx)
 }
 
-model_abx_overall = bene %>%
-  rename(y=n_claims) %>%
-  model_f(y ~ year + age + n_cc + is_dual + region) %>%
-  mutate(antibiotic='overall')
-
-model_abx = lapply(top_abx, function(a) single_abx_model(a, y ~ year + age + n_cc + is_dual + region)) %>%
+model_abx = top_abx %>%
+  lapply(function(a) single_abx_model(a, y ~ year + age + n_cc + is_dual + region)) %>%
   bind_rows() %>%
   bind_rows(model_abx_overall) %T>%
   output_table('model_abx')
