@@ -23,15 +23,21 @@ read_tsv_years = function(fn_template, ...) {
   lapply(years, f) %>% bind_rows
 }
 
-sex_codes = read_tsv('../sex-difference/namcs_sex_codes.tsv') %>%
-  rename(dx=code)
+dx_categories = read_tsv('../../data/fd_codes.tsv') %>%
+  mutate(dx=str_pad(code, 5, 'right', '-')) %>%
+  select(dx, diagnosis_type)
+unique_dx_categories = unique(dx_categories$diagnosis_type)
 
 dx = read_tsv_years('../../db/namcs/data/namcs_dx_%i.tsv') %>%
-  left_join(sex_codes, by='dx')
+  left_join(dx_categories, by='dx')
 
 dx_visit = dx %>%
-  group_by(visit_id) %>%
-  summarize(acute_rc='acute_rc' %in% diagnosis_type)
+  filter(!is.na(diagnosis_type)) %>%
+  mutate(dummy=TRUE) %>%
+  select(visit_id, diagnosis_type, dummy) %>%
+  distinct() %>%
+  spread(diagnosis_type, dummy) %>%
+  mutate_if(is.logical, function(x) if_else(is.na(x), FALSE, x))
 
 top_abx = read_tsv('namcs_top_abx.tsv')
 abx_cat = read_tsv('../../db/namcs/data/parse/drug_codes/abx_codes.tsv')
@@ -48,17 +54,20 @@ abx_visit = top_abx %>%
   select(desc, abx) %>%
   left_join(drugs, by='desc') %>%
   count(visit_id, abx) %>% ungroup() %>%
-  spread(abx, n)
+  #mutate(present=n>0) %>% select(-n) %>%
+  #spread(abx, present) %>%
+  #mutate_if(is.logical, function(x) if_else(is.na(x), FALSE, x))
+  spread(abx, n) %>%
+  mutate_at(vars(-visit_id), function(x) if_else(is.na(x), 0L, x))
 
 visits = read_tsv_years('../../db/namcs/data/namcs_visits_%i.tsv') %>%
   mutate(age_group=case_when(.$age <= 19 ~ 'child',
                              .$age <= 64 ~ 'adult',
                              .$age <= 92 ~ 'elderly')) %>%
   left_join(dx_visit, by='visit_id') %>%
-  replace_na(list(acute_rc=FALSE)) %>%
   left_join(n_abx, by='visit_id') %>% replace_na(list(n_abx=0)) %>%
-  left_join(abx_visit, by='visit_id') %>%
-  mutate_at(top_abx$abx, function(x) if_else(is.na(x), 0L, x))
+  left_join(abx_visit, by='visit_id') #%>%
+  #mutate_at(top_abx$abx, function(x) if_else(is.na(x), 0L, x))
 ```
 
 ```{r load_other_data}
@@ -310,3 +319,24 @@ show_var = function(df) sprintf('%g (±%g)', round(df$apc*1000, 1), round(df$se*
 Levofloxacin consumption increased from `r show_var(levo_t1)` to `r show_var(levo_t2)` claims per 1,000 people per year.
 Amox/clav consumption increased from `r show_var(amoxclav_t1)` to `r show_var(amoxclav_t2)` claims per 1,000 people per year.
 
+## Diagnoses
+
+### Levofloxacin
+
+The NAMCS data can actually confirm that, not only is levo going up per visit, it's going up faster in those with URIs (and not for pneumonia). (Here I'm looking at the entire population.)
+
+```{r levo_dx}
+svyglm(levo ~ year*uri + year*pneumonia, design=design, family='poisson') %>%
+  tidy %>%
+  kable
+```
+
+### Cephalexin
+
+We can also confirm that keflex is going up because of UTIs and now because of SSTIs (even though the use of keflex for UTIs is so much smaller than for SSTIs):
+
+```{r keflex_dx}
+svyglm(keflex ~ year*ssti + year*uti, design=design, family='poisson') %>%
+  tidy %>%
+  kable
+```
