@@ -71,8 +71,9 @@ load_data = function(year) {
 dat = lapply(2011:2014, load_data)
 
 bene = lapply(dat, function(df) df$bene) %>% bind_rows %>%
+  mutate(heart_disease=AMI | ATRIALFB | CHF | ISCHMCHT) %>%
   group_by(bene_id) %>%
-  mutate(n_years=n(), in_cohort=n_years==4) %>%
+  mutate(n_years=n(), in_cohort=n_years==4, heart_disease=cumany(heart_disease)) %>%
   ungroup() %>%
   filter(in_cohort) %>% select(-in_cohort)
 
@@ -149,12 +150,12 @@ bene %>%
 
 # run a models and tidy
 subtract_min = function(x) x - min(x)
+glm_f = function(df, frmla, ...) eval(substitute(function(df2) lm(frmla, data=df2, ...)))(df)
 model_f = function(df, frmla) {
   dat = df %>% mutate_at(vars(year, age), subtract_min)
-  f = function(...) glm(formula=frmla, data=dat, ...)
-  model_lm = f()
-  model_poisson = f(family='poisson')
-  model_log = f(family=gaussian(link='log'), start=model_poisson$coefficients)
+  model_lm = glm_f()
+  model_poisson = glm_f(family='poisson')
+  model_log = glm_f(family=gaussian(link='log'), start=model_poisson$coefficients)
   
   bind_rows(
     mutate(tidy(model_lm), model='lm'),
@@ -188,16 +189,31 @@ model_abx = top_abx %>%
 
 # special azithromycin model
 # did azithro consumption decrease faster in benes with heart disease?
+# (Once I did a cumulative thing, so that once a bene had heart disease, they kept
+# the flag. There were small changes in the regression.)
 model_azithro = pde %>%
   filter(antibiotic=='azithromycin') %>%
   count(year, bene_id) %>% ungroup() %>% rename(y=n) %>%
   right_join(bene, by=c('year', 'bene_id')) %>% replace_na(list(y=0)) %>%
-  mutate(heart_disease=AMI | ATRIALFB | CHF | ISCHMCHT) %>%
   model_f(y ~ year*heart_disease + age + n_cc + is_dual + region) %T>%
   output_table('model_azithro')
 
+model_levo = pde %>%
+  filter(antibiotic=='levofloxacin') %>%
+  count(year, bene_id) %>% ungroup() %>% rename(y=n) %>%
+  right_join(bene, by=c('year', 'bene_id')) %>% replace_na(list(y=0)) %>%
+  model_f(y ~ year*heart_disease + age + n_cc + is_dual + region) %T>%
+  output_table('model_levo')
+
+# special fluoroquinolone model
+model_fq = pde %>%
+  filter(str_detect(antibiotic, 'floxacin')) %>%
+  count(year, bene_id) %>% ungroup() %>% rename(y=n) %>%
+  right_join(bene, by=c('year', 'bene_id')) %>% replace_na(list(y=0)) %>%
+  model_f(y ~ year + age + n_cc + is_dual + region) %T>%
+  output_table('model_fq')
+
 bene %>%
-  mutate(heart_disease=AMI | ATRIALFB | CHF | ISCHMCHT) %>%
   count(year, heart_disease) %>%
   output_table('counts_heartdisease')
 
