@@ -36,8 +36,7 @@ dx_visit = dx %>%
   mutate(dummy=TRUE) %>%
   select(visit_id, diagnosis_type, dummy) %>%
   distinct() %>%
-  spread(diagnosis_type, dummy) %>%
-  mutate_if(is.logical, function(x) if_else(is.na(x), FALSE, x))
+  spread(diagnosis_type, dummy)
 
 top_abx = read_tsv('namcs_top_abx.tsv')
 abx_cat = read_tsv('../../db/namcs/data/parse/drug_codes/abx_codes.tsv')
@@ -57,8 +56,7 @@ abx_visit = top_abx %>%
   #mutate(present=n>0) %>% select(-n) %>%
   #spread(abx, present) %>%
   #mutate_if(is.logical, function(x) if_else(is.na(x), FALSE, x))
-  spread(abx, n) %>%
-  mutate_at(vars(-visit_id), function(x) if_else(is.na(x), 0L, x))
+  spread(abx, n)
 
 visits = read_tsv_years('../../db/namcs/data/namcs_visits_%i.tsv') %>%
   mutate(age_group=case_when(.$age <= 19 ~ 'child',
@@ -66,8 +64,13 @@ visits = read_tsv_years('../../db/namcs/data/namcs_visits_%i.tsv') %>%
                              .$age <= 92 ~ 'elderly')) %>%
   left_join(dx_visit, by='visit_id') %>%
   left_join(n_abx, by='visit_id') %>% replace_na(list(n_abx=0)) %>%
-  left_join(abx_visit, by='visit_id') #%>%
-  #mutate_at(top_abx$abx, function(x) if_else(is.na(x), 0L, x))
+  left_join(abx_visit, by='visit_id') %>%
+  mutate_at(top_abx$abx, function(x) {
+    case_when(is.na(x) ~ 0L,
+              x == 0 ~ 0L,
+              x > 0 ~ 1L)
+  }) %>%
+  mutate_at(unique_dx_categories, function(x) if_else(is.na(x), FALSE, x))
 ```
 
 ```{r load_other_data}
@@ -276,19 +279,26 @@ Medicare, but none of them meet the standard error criterion for validity or
 are statistically significant.
 
 ```{r per_capita_models_display}
-x = per_capita %>%
-  filter(term=='year') %>%
-  mutate(valid=abs(std.error/estimate)<=0.3, adj.p.value=p.adjust(p.value, method='BH')) %>%
-  add_pct_change()
-
-read_tsv('tables/model_abx.tsv') %>%
+x = read_tsv('tables/model_abx.tsv') %>%
   filter(term=='year', model=='poisson') %>%
   left_join(top_abx, by=c('antibiotic'='medicare_abx')) %>%
   mutate(abx=if_else(is.na(abx), antibiotic, abx)) %>%
-  mutate(data_source='medicare') %>%
-  bind_rows(per_capita %>% filter(term=='year') %>% mutate(data_source='namcs')) %>%
+  mutate(data_source='medicare')
+
+x %>% head %>% kable
+
+y = per_capita %>%
+  filter(term=='year') %>%
+  mutate(data_source='namcs')
+
+abx_levels = x %>%
+  arrange(estimate) %$%
+  abx
+
+bind_rows(x, y) %>%
   add_pct_change() %>%
-  mutate(abx=forcats::fct_reorder(abx, pct_change)) %>%
+  mutate(abx=factor(abx, levels=abx_levels),
+         abx=forcats::fct_relevel(abx, 'overall', after=Inf)) %>%
   ggplot(aes(x=abx, y=pct_change, ymin=ci_low, ymax=ci_high, color=data_source)) +
   #geom_linerange() +
   geom_errorbar() +
@@ -299,7 +309,11 @@ read_tsv('tables/model_abx.tsv') %>%
   ggtitle('Per capita') +
   theme_minimal()
 
-x %>%
+per_capita %>%
+  filter(term=='year') %>%
+  mutate(valid=abs(std.error/estimate)<=0.3,
+         adj.p.value=p.adjust(p.value, method='BH')) %>%
+  add_pct_change() %>%
   select(abx, ci_low, pct_change, ci_high, p.value, valid, adj.p.value) %>%
   arrange(desc(pct_change)) %>%
   kable

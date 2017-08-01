@@ -36,16 +36,26 @@ load_data = function(year) {
 
   # diagnosis claims
   dx = read_tsv(sprintf('../dx_%i.tsv', year)) %>%
-    mutate(year=year)
+    mutate(year=year) %>%
+    mutate(year=year, dx_id=1:n())
+  
+  # associate a PDE with each diagnosis, if possible
+  dx_pde = dx %>%
+    left_join(pde, by=c('year', 'bene_id')) %>%
+    filter(between(service_date - from_date, 0, rxdx_window)) %>%
+    group_by(dx_id) %>% filter(service_date==min(service_date)) %>% ungroup() %>%
+    select(dx_id, antibiotic) %>%
+    right_join(dx, by='dx_id') %>%
+    replace_na(list(antibiotic='none'))
   
   # associated each PDE with a diagnosis, if possible
-  pde_dx = pde %>%
-    left_join(dx, by=c('year', 'bene_id')) %>%
-    filter(between(service_date - from_date, 0, rxdx_window)) %>%
-    group_by(pde_id) %>% filter(from_date==max(from_date)) %>% ungroup() %>%
-    select(pde_id, diagnosis_type) %>%
-    right_join(pde, by='pde_id') %>%
-    replace_na(list(diagnosis_type='none'))
+  #pde_dx = pde %>%
+  #  left_join(dx, by=c('year', 'bene_id')) %>%
+  #  filter(between(service_date - from_date, 0, rxdx_window)) %>%
+  #  group_by(pde_id) %>% filter(from_date==max(from_date)) %>% ungroup() %>%
+  #  select(pde_id, diagnosis_type) %>%
+  #  right_join(pde, by='pde_id') %>%
+  #  replace_na(list(diagnosis_type='none'))
 
   # total numbers of PDEs
   n_claims = count(pde, bene_id) %>% rename(n_claims=n)
@@ -65,7 +75,7 @@ load_data = function(year) {
     left_join(n_claims, by='bene_id') %>% replace_na(list(n_claims=0))
 
   # take the bene, pde (with diagnoses) and diagnoses (separately)
-  list(bene=bene, pde=pde_dx, dx=dx)
+  list(bene=bene, pde=pde, dx=dx_pde)
 }
 
 dat = lapply(2011:2014, load_data)
@@ -83,7 +93,8 @@ pde = lapply(dat, function(df) df$pde) %>% bind_rows %>%
   filter(bene_id %in% cohort_ids)
 
 dx = lapply(dat, function(df) df$dx) %>% bind_rows() %>%
-  filter(bene_id %in% cohort_ids)
+  filter(bene_id %in% cohort_ids) %>%
+  left_join(bene %>% select(year, bene_id, age), by=c('year', 'bene_id'))
 
 output_table = function(x, base) write_tsv(x, sprintf('tables/%s.tsv', base))
 sem = function(x) sd(x) / sqrt(length(x))
@@ -216,6 +227,39 @@ model_fq = pde %>%
 bene %>%
   count(year, heart_disease) %>%
   output_table('counts_heartdisease')
+
+# diagnoses analysis
+## how much are are the drugs used for the diagnoses?
+dxrx_abx = c('azithromycin', 'levofloxacin', 'amoxicillin/clavulanate', 'cephalexin', 'ciprofloxacin')
+f_dxrx = dx %>%
+  count(year, diagnosis_type, antibiotic) %>%
+  filter(antibiotic %in% rxdx_abx)
+
+dxrx_f = function(dx, dxt, abx) {
+  if (dxt=='overall') {
+    dx %>%
+      mutate(year=year-min(year),
+             y=if_else(antibiotic==abx, 1L, 0L)) %>%
+      glm(y ~ year + age, data=., family='binomial') %>%
+      tidy %>%
+      mutate(diagnosis_type=dxt, antibiotic=abx)
+  } else {
+    dx %>%
+      mutate(year=year-min(year),
+             y=if_else(antibiotic==abx, 1L, 0L),
+             dx=diagnosis_type==dxt) %>%
+      glm(y ~ dx*year + age, data=., family='binomial') %>%
+      tidy %>%
+      mutate(diagnosis_type=dxt, antibiotic=abx)
+  }
+}
+
+dxrx_res = crossing(diagnosis_type=c('overall', unique_dx_categories),
+                    antibiotic=dxrx_abx) %>%
+  rowwise() %>%
+  do(dxrx_f(dx, .$diagnosis_type, .$antibiotic)) %>%
+  ungroup() %T>%
+  output_table('model_dxrx')
 
 # diagnoses analysis
 times = data_frame(year=c(2011, 2014), time=c(0, 1))
