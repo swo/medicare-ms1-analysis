@@ -161,8 +161,14 @@ claims_by_top_abx %>%
 ## Claims by age group
 
 ```{r claims_by_age}
-read_tsv('tables/claims_by_age_group.tsv') %>%
-  mutate(cpkp=round(cpkp)) %>%
+read_tsv('tables/claims_by_age.tsv') %>%
+  mutate(age_group=case_when(between(.$age, 65, 75) ~ '65-75',
+                             between(.$age, 76, 85) ~ '76-85',
+                             between(.$age, 86, 95) ~ '86-95')) %>%
+  group_by(year, age_group) %>%
+  summarize_at(vars(n_bene, n_claims), sum) %>%
+  ungroup() %>%
+  mutate(cpkp=round(1000*n_claims/n_bene)) %>%
   select(year, age_group, cpkp) %>%
   spread(year, cpkp) %>%
   kable
