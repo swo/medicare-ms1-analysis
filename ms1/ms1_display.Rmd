@@ -9,9 +9,8 @@ knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='fig/', dev=c('png', 
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE,
                       error=FALSE, autodep=TRUE)
 import::from(knitr, kable)
-import::from(stringr, str_replace, str_detect)
-library(forcats)
 import::from(tools, md5sum)
+library(forcats)
 ```
 
 # Abstract
@@ -39,7 +38,6 @@ n_million_pde = claims_by_abx %$% sum(n) %>% { round(. / 1e6, 1) }
 est2pct = function(x) (exp(x) - 1)*100
 model_ci = function(df) {
   df %>%
-    filter(model=='poisson') %>%
     mutate(pct_change=est2pct(estimate),
            ci=1.96*std.error,
            ci_low=est2pct(estimate - ci),
@@ -48,22 +46,23 @@ model_ci = function(df) {
 }
 
 model_abx = read_tsv('tables/model_abx.tsv') %>%
+  rename(antibiotic=name) %>%
   model_ci()
 
 total_adjusted_change_str = model_abx %>%
-  filter(term=='year', antibiotic=='overall') %$%
+  filter(term=='year0', antibiotic=='overall') %$%
   change_str
 
 azithro_adjusted_change_str = model_abx %>%
-  filter(term=='year', antibiotic=='azithromycin') %$%
+  filter(term=='year0', antibiotic=='azithromycin') %$%
   change_str
 
 levo_adjusted_change_str = model_abx %>%
-  filter(term=='year', antibiotic=='levofloxacin') %$%
+  filter(term=='year0', antibiotic=='levofloxacin') %$%
   change_str
 ```
 
-There are `r n_million_bene` million beneficiaries and `r n_million_pde` million PDEs. Adjusted total consumption changed by `r total_adjusted_change_str`. Azithromycin changed by `r azithro_adjusted_change_str`. Levofloxacin changed by `r levo_adjusted_change_str`.
+There are `r n_million_bene` million beneficiaries and `r n_million_pde` million PDEs. Adjusted total consumption changed by `r total_adjusted_change_str` per year. Azithromycin changed by `r azithro_adjusted_change_str` per year. Levofloxacin changed by `r levo_adjusted_change_str` per year.
 
 # Beneficiary characteristics
 
@@ -74,7 +73,7 @@ In the cohort, all the values remain fixed, except for:
 - to a lesser degree, dual enrollment
 - to a very small degree, geographical location
 
-A star indicates that the trend (*t*-test for mean difference between years equal to zero) is significant after multiple hypothesis correction.
+A star indicates that the trend (*t*-test for mean difference between years equal to zero) is significant after multiple hypothesis correction. A dot indicates significance ($p < 0.05$) before multiple hypothesis correction.
 
 ```{r bene_char_table}
 trend_p = function(x) tidy(t.test(diff(x)))$p.value
@@ -134,28 +133,31 @@ claims_by_top_abx = claims_by_abx %>%
                                 c('overall', top_abx, 'Other'))) %>%
   group_by(year, antibiotic) %>%
   summarize_at(vars(n, cpkp), sum) %>% ungroup()
+```
 
+```{r claims_by_top_abx_figs}
 claims_by_top_abx %>%
+  filter(antibiotic=='overall') %>%
   ggplot(aes(x=year, y=cpkp)) +
-  facet_wrap(~antibiotic, ncol=3, scales='free_y') +
   geom_point() + geom_line() +
   theme_minimal() +
-  ggtitle('Unadjusted consumption')
+  ggtitle('Unadjusted consumption, all abx')
 
 claims_by_top_abx %>%
-  filter(antibiotic != 'overall') %>%
+  filter(antibiotic %in% c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin', 'trimethoprim/sulfamethoxazole')) %>%
   ggplot(aes(x=year, y=cpkp)) +
-  facet_wrap(~antibiotic, ncol=3) +
+  facet_wrap(~antibiotic, ncol=5) +
   geom_point() + geom_line() +
   theme_minimal() +
-  ggtitle('Unadjusted consumption')
+  ggtitle('Unadjusted consumption, top 5')
 
 claims_by_top_abx %>%
-  select(year, antibiotic, cpkp) %>%
-  filter(year %in% c(2011, 2014)) %>%
-  spread(year, cpkp) %>%
-  mutate(pct_change=(`2014`-`2011`)/`2011`*100) %>%
-  kable
+  filter(antibiotic %in% c('levofloxacin', 'amoxicillin/clavulanate', 'doxycycline', 'nitrofurantoin', 'clindamycin')) %>%
+  ggplot(aes(x=year, y=cpkp)) +
+  facet_wrap(~antibiotic, ncol=5) +
+  geom_point() + geom_line() +
+  theme_minimal() +
+  ggtitle('Unadjusted consumption, next 5')
 ```
 
 ## Claims by age group
@@ -209,124 +211,122 @@ read_tsv('tables/claims_by_race.tsv') %>%
 
 # Adjusted consumption changes
 
-"Adjusted" means the `year` coefficient in `y ~ year + age + n_cc + is_dual + region`. Gender and race, though important covariates, are not confounded with time.
+Adjusted changes were computed using a Poisson regression predicting claims per capita. The unit of analysis were individual beneficiaries in each year. The covariates in the regression were age, number of chronic conditions, dual eligibility, sex, race (white or not), and region.
 
 ```{r adjusted_changes}
 x = model_abx %>%
-  filter(term=='year') %>%
+  filter(term=='year0') %>%
   select(antibiotic, pct_change, ci_low, ci_high) %>%
-  mutate(is_overall=antibiotic=='overall') %>%
-  arrange(is_overall, pct_change) %>%
-  mutate(antibiotic=fct_inorder(antibiotic)) %>%
-  select(-is_overall)
+  arrange(pct_change) %>%
+  mutate(antibiotic=fct_inorder(antibiotic),
+         antibiotic=fct_relevel(antibiotic, 'overall', after=Inf))
 
 x %>%
   ggplot(aes(x=antibiotic, y=pct_change, ymin=ci_low, ymax=ci_high)) +
-  geom_point() +
-  geom_linerange() +
+  geom_bar(stat='identity', fill=NA, color='black') +
+  geom_errorbar(width=0.5) +
   coord_flip() +
   ggtitle('Adjusted changes in consumption') +
   xlab('') +
   ylab('adjusted yearly change in claims per beneficiary per year') +
-  #scale_y_continuous(limits=c(-16, 17), breaks=c(-15, -10, -5, 0, 5, 10, 15)) +
+  scale_y_continuous(limits=c(-10, 10), breaks=c(-10, -5, 0, 5, 10)) +
   theme_minimal()
 ```
 
 ```{r adjusted_changes_table}
-x %>% arrange(-row_number()) %>% kable
+x %>% arrange(desc(antibiotic)) %>% kable
 ```
+
+## Fluoroquinolones
+
+**swo**: Overall, FQs haven't been changing
+
+## Heart disease
+
+**swo**: Trends for azithro & levo
 
 # Prescribing practice
 
 ## Methodology
 
-Let $R_0$ be the event where the drug of interest is prescribed on some specific day in the first study period; let $R_1$ represent the same thing in the second period. Let $D_0$ be the event where the diagnosis of interest was made within some window before the day of interest; similarly $D_1$. Thus we have $P(R_0 | D_0)$, which represents, say, the probability that levo will be prescribed following a pneumonia diagnosis in 2011. The fold change in the
-probability that a drug will be prescribed for a diagnosis is
-$$
-\frac{P(R_1 | D_1)}{P(R_0 | D_0)} = \frac{P(R_1 \cap D_1) / P(R_0 \cap D_0)}{P(D_1) / P(D_0)}.
-$$
+The unit of analysis are encounters recorded in the Carrier Line File whose HCPCS code indicated an office visit. We only examined encounters whose primary diagnosis fell into set of groups: skin and soft tissue infections (SSTIs), UTIs, probably viral URIs, pneumonia, bronchitis, pharyngitis, sinusitis.
 
-The ratio of the joint probabilities is the ratio in the number of times a qualifying prescription-diagnosis pair appears in each year. The ratio of the diagnosis-in-window probabilities is the ratio of the number of diagnoses of that type made in each year.
+## Trends in diagnoses
 
-(There's a way to do the age adjustment here too: just replace every appearance
-of $D_y$ with $D_y \cap A_{ya}$.)
+Trends per 1,000 beneficiaries in each year. The $p$-value indicates a linear trend.
 
-```{r rxdx}
-rxdx = read_tsv('tables/rxdx.tsv')
+```{r dx_counts}
+dx_counts = read_tsv('tables/dx_counts.tsv') %>%
+  left_join(totals, by='year') %>%
+  mutate(dx_pkb=round(n/n_bene*1000, 1)) %>%
+  select(diagnosis_type, year, dx_pkb)
 
-rxdx_f = function(a) {
-  rxdx %>%
-    filter(abx==a) %>%
-    select(-abx) %>%
-    arrange(desc(f_rxdx))
-}
-```
+dx_counts_trends = dx_counts %>%
+  group_by(diagnosis_type) %>%
+  arrange(year) %>%
+  summarize(p=round(trend_p(dx_pkb), 2))
 
-## Levo
-
-Levofloxacin prescribing increased across diagnoses. Of the respiratory diagnoses, pneumonia was the one associated with the smallest fractional increase in probability of prescription.
-
-```{r rxdx_levo}
-rxdx_f('levofloxacin') %>% filter(f_rxdx > 0.03) %>% kable
-```
-
-## Azithro
-
-Azithromycin use decreased across diagnoses. Pneumonia experienced a greater decline.
-
-```{r rxdx_azithro}
-rxdx_f('azithromycin') %>% filter(f_rxdx > 0.01) %>% kable
-```
-
-## Azithromycin & heart disease
-
-Azithromycin prescribing for people with heart disease decreased slightly more than the people without heart disease.
-
-```{r model_azithro}
-model_azithro = read_tsv('tables/model_azithro.tsv') %>%
-  filter(model=='poisson')
-
-nohd_est = model_azithro %>% filter(term=='year') %$% estimate
-nohd_se = model_azithro %>% filter(term=='year') %$% std.error
-offset_est = model_azithro %>% filter(term=='year:heart_diseaseTRUE') %$% estimate
-offset_se = model_azithro %>% filter(term=='year:heart_diseaseTRUE') %$% std.error
-
-hd_est = nohd_est + offset_est
-hd_se = sqrt(nohd_se^2 + offset_se^2)
-
-data_frame(heart_disease=c(FALSE, TRUE),
-           estimate=c(nohd_est, hd_est),
-           std.error=c(nohd_se, hd_se)) %>%
-  mutate(model='poisson') %>%
-  model_ci() %>%
+dx_counts %>%
+  spread(year, dx_pkb) %>%
+  left_join(dx_counts_trends, by='diagnosis_type') %>%
+  arrange(desc(`2011`)) %>%
   kable
 ```
 
-Compare these changes to the overall azithromycin change: `r azithro_adjusted_change_str`.
+## Delays between diagnosis and prescription
 
-A large fraction of beneficiaries have heart disease in each year:
+The table shows the number of diagnoses that were followed by that number of days' delay before the following antibiotic prescription. Most prescriptions were filled on the same day as the diagnosis.
 
-```{r heart_disease_table}
-read_tsv('tables/counts_heartdisease.tsv') %>%
-  group_by(year) %>%
+```{r dx_delay}
+dx_delay = read_tsv('tables/dx_delay.tsv')
+
+dx_delay %>%
+  filter(!is.na(delay)) %>%
   mutate(f=n/sum(n)) %>%
-  ungroup %>%
-  filter(heart_disease) %>%
+  kable
+
+f_dx_not_followed = dx_delay %>%
+  group_by(a=!is.na(delay)) %>%
+  summarize(n=sum(n)) %>%
+  spread(a, n) %>%
+  rename(yes=`TRUE`, no=`FALSE`) %$%
+  { yes / (yes + no) }
+```
+
+However, only `r f_dx_not_followed*100`% of these diagnoses were followed by an antibiotic prescription fill.
+
+## Unadjusted changes in prescribing practice
+
+For each diagnosis type, I computed what fraction of diagnoses were followed by treatment with each antibiotic. In the table, I only include dx/rx combinations where the antibiotic was filled after at least 5% of diagnoses.
+
+```{r dxrx_fraction}
+dxrx_frac = read_tsv('tables/dxrx_fractions.tsv') %>%
+  group_by(year, diagnosis_type) %>%
+  mutate(total=sum(n)) %>%
+  ungroup() %>%
+  mutate(f=round(100*n/total, 1)) %>%
+  filter(antibiotic %in% top_abx) %>%
+  select(diagnosis_type, antibiotic, year, f) %>%
+  spread(year, f) %>%
+  filter(`2011` >= 5) %>%
+  arrange(diagnosis_type, desc(`2011`))
+
+dxrx_frac %>%
   kable
 ```
 
-## Amox/clav
+## Adjusted changes in prescribing practice
 
-Amoxicillin increased for sinusitis, its major associated diagnosis, and also for other respiratory diagnoses, except pneumonia (for which it is associated with a very small fraction of prescritions). It seems like most of the increase is attributable to sinusitis.
+To correct for the changing population, I ran a logistic regression for each diagnosis/antibiotic combination. The units of analysis were encounters with a primary diagnosis in that diagnosis group, and the outcome was whether that antibiotic was filled after the encounter. The main predictor variable was the year, and adjusted covariates included the same as before (age, # chronic conditions, sex, white race, region, dual eligibility).
 
-```{r rxdx_amoxclav}
-rxdx_f('amoxicillin/clavulanate') %>% kable
-```
-
-## Keflex
-
-Increased prescribing of cephalexin seems t obe mostly for UTIs; prescribing probabilities for skin and soft tissue infections remained nearly steady.
-
-```{r rxdx_cephalexin}
-rxdx_f('cephalexin') %>% filter(f_rxdx > 0.017) %>% kable
+```{r dxrx_models}
+read_tsv('tables/model_dxrx.tsv') %>%
+  model_ci() %>%
+  filter(term=='year0') %>%
+  # swo: pick the right models to show
+  right_join(dxrx_frac, by=c('diagnosis_type', 'antibiotic')) %>%
+  filter(!is.na(pct_change)) %>%
+  select(antibiotic, diagnosis_type, pct_change, ci_low, ci_high, p.value) %>%
+  arrange(antibiotic, pct_change) %>%
+  kable
 ```
