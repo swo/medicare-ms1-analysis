@@ -53,6 +53,10 @@ totals = bene %>%
   summarize_totals() %T>%
   output_table('totals')
 
+n_unique_bene = bene$bene_id %>%
+  unique %>% length %T>%
+  write('tables/n_unique_bene.tsv')
+
 # the top few inidividual antibiotics
 claims_by_abx = pde %>%
   count(year, antibiotic) %>% ungroup() %>%

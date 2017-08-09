@@ -32,8 +32,9 @@ totals = read_tsv('tables/totals.tsv') %>%
 
 claims_by_abx = read_tsv('tables/claims_by_abx.tsv')
 
-n_million_bene = totals %$% unique(n_bene) %>% { round(. / 1e6, 1) }
-n_million_pde = claims_by_abx %$% sum(n) %>% { round(. / 1e6, 1) }
+n_unique_bene = scan('tables/n_unique_bene.tsv')
+n_million_unique_bene = round(scan('tables/n_unique_bene.tsv') / 1e6, 2)
+n_million_pde = claims_by_abx %$% sum(n) %>% { round(. / 1e6, 2) }
 
 est2pct = function(x) (exp(x) - 1)*100
 model_ci = function(df) {
@@ -62,18 +63,11 @@ levo_adjusted_change_str = model_abx %>%
   change_str
 ```
 
-There are `r n_million_bene` million beneficiaries and `r n_million_pde` million PDEs. Adjusted total consumption changed by `r total_adjusted_change_str` per year. Azithromycin changed by `r azithro_adjusted_change_str` per year. Levofloxacin changed by `r levo_adjusted_change_str` per year.
+There are `r n_million_unique_bene` million unique beneficiaries and `r n_million_pde` million PDEs across all study years. Adjusted total consumption changed by `r total_adjusted_change_str` per year. Azithromycin changed by `r azithro_adjusted_change_str` per year. Levofloxacin changed by `r levo_adjusted_change_str` per year.
 
 # Beneficiary characteristics
 
-In the cohort, all the values remain fixed, except for:
-
-- age
-- chronic conditions
-- to a lesser degree, dual enrollment
-- to a very small degree, geographical location
-
-A star indicates that the trend (*t*-test for mean difference between years equal to zero) is significant after multiple hypothesis correction. A dot indicates significance ($p < 0.05$) before multiple hypothesis correction.
+A star indicates that the trend (*t*-test for mean difference between years equal to zero) is significant after multiple hypothesis correction. A dot indicates significance ($p < 0.05$) before multiple hypothesis correction. Mean age decreased during the study.
 
 ```{r bene_char_table}
 trend_p = function(x) tidy(t.test(diff(x)))$p.value
@@ -140,22 +134,29 @@ claims_by_top_abx %>%
   filter(antibiotic=='overall') %>%
   ggplot(aes(x=year, y=cpkp)) +
   geom_point() + geom_line() +
+  #ylim(0, 1520) +
+  scale_y_continuous(limits=c(0, 1525), breaks=c(0, 250, 500, 1000, 1500)) +
   theme_minimal() +
   ggtitle('Unadjusted consumption, all abx')
 
 claims_by_top_abx %>%
-  filter(antibiotic %in% c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin', 'trimethoprim/sulfamethoxazole')) %>%
-  ggplot(aes(x=year, y=cpkp)) +
-  facet_wrap(~antibiotic, ncol=5) +
+  filter(antibiotic %in% c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin', 'trimethoprim/sulfamethoxazole', 'levofloxacin')) %>%
+  ggplot(aes(x=year, y=cpkp, color=antibiotic)) +
+  #ggplot(aes(x=year, y=cpkp)) +
+  #facet_wrap(~antibiotic, ncol=5) +
   geom_point() + geom_line() +
+  scale_y_continuous(limits=c(0, 250), breaks=c(0, 50, 100, 150, 200, 250)) +
   theme_minimal() +
   ggtitle('Unadjusted consumption, top 5')
 
 claims_by_top_abx %>%
-  filter(antibiotic %in% c('levofloxacin', 'amoxicillin/clavulanate', 'doxycycline', 'nitrofurantoin', 'clindamycin')) %>%
-  ggplot(aes(x=year, y=cpkp)) +
-  facet_wrap(~antibiotic, ncol=5) +
+  filter(antibiotic %in% c('amoxicillin/clavulanate', 'doxycycline', 'nitrofurantoin', 'clindamycin')) %>%
+  ggplot(aes(x=year, y=cpkp, color=antibiotic)) +
+  #ggplot(aes(x=year, y=cpkp)) +
+  #facet_wrap(~antibiotic, ncol=5) +
   geom_point() + geom_line() +
+  scale_y_continuous(limits=c(0, 100), breaks=c(0, 50, 100)) +
+  #ylim(0, 140) +
   theme_minimal() +
   ggtitle('Unadjusted consumption, next 5')
 ```
@@ -239,11 +240,35 @@ x %>% arrange(desc(antibiotic)) %>% kable
 
 ## Fluoroquinolones
 
-**swo**: Overall, FQs haven't been changing
+Consumption of ciprofloxacin is slightly decreasing, and consumption of levofloxacin is increasing. How does fluoroquinolone consumption overall change?
+
+```{r fq}
+read_tsv('tables/model_fq.tsv') %>%
+  model_ci() %>%
+  select(term, pct_change, ci_low, ci_high, p.value) %>%
+  kable
+```
+
+Overall, fluoroquinolones changed by about 0% per year during this period.
 
 ## Heart disease
 
-**swo**: Trends for azithro & levo
+We suspected that changes in azithromycin and levofloxacin consumption could be due to altered prescribing guidelines, including one that recommends that azithromycin not be used to treat people at risk for heart fibrillations. This includes all elderly, but we epxect the risk would be especially high for those people with heart disease (i.e., AMI | ATRIALFB | CHF | ISCHMCHT). I ran separate models for azithromycin and levofloxacin where I include an interaction between a heart disease flag and the year.
+
+```{r heart_model}
+bind_rows(
+  read_tsv('tables/model_azithro.tsv') %>% mutate(model='azithro'),
+  read_tsv('tables/model_levo.tsv') %>% mutate(model='levo')
+) %>%
+  model_ci() %>%
+  select(term, model, pct_change) %>%
+  spread(model, pct_change) %>%
+  kable
+```
+
+For azithromycin, there is a moderate interaction: azithromycin consumption decrease 6.6% per year amongst those without heart disease and 10.2% per year ($1.06588 \times 1.03344$) among those with heart disease. For levofloxacin, there is a small interaction that is the opposite of what we might expect: levo consumption increased 10.1% per year among those without heart disease and at a lower rate, 9.4% ($1.10149*(1-0.006782)$), among those with heart disease.
+
+The weakness to this analysis is that I use the CCW flag for heart disease during each year, which means that someone might be getting a lot of azithromycin before they have a heart attack, and afterward they get none. I'm also using the one-year chronic conditions, so if someone has a heart attack last year, I don't know about that for the next eyar. Nevertheless, as a rough slice, it seems like heart disease doesn't explain what's going on.
 
 # Prescribing practice
 
@@ -327,6 +352,6 @@ read_tsv('tables/model_dxrx.tsv') %>%
   right_join(dxrx_frac, by=c('diagnosis_type', 'antibiotic')) %>%
   filter(!is.na(pct_change)) %>%
   select(antibiotic, diagnosis_type, pct_change, ci_low, ci_high, p.value) %>%
-  arrange(antibiotic, pct_change) %>%
+  arrange(antibiotic, desc(pct_change)) %>%
   kable
 ```
