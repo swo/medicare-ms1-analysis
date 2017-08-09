@@ -1,6 +1,13 @@
 # Do all the heavy-lifting analyses so that the Rmd can just show the results
 library(forcats)
 
+# Load the census regions. Code them as factors so that Northeast is taken as
+# the baseline in the linear models.
+# NB: I put DC into the South
+regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
+  select(state, region) %>%
+  mutate(region=factor(region, levels=c('Northeast', 'West', 'Midwest', 'South')))
+
 dx_codes = read_tsv('../../data/fd_codes.tsv') %>%
   select(code, diagnosis_type)
 
@@ -12,7 +19,6 @@ bene = read_tsv('data/bene.tsv') %>%
   mutate(is_female=sex=='female', is_white=race=='white', is_dual=buyin_months>0) %>%
   mutate(age=age-1) %>%
   left_join(regions, by='state') %>%
-  mutate(region=factor(region, levels=c('Northeast', 'West', 'Midwest', 'South'))) %>%
   mutate(year0=subtract_min(year),
          age0=subtract_min(age))
 

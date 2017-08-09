@@ -1,12 +1,6 @@
 # Process the bene, pde, and dx data
 # so it's ready for analysis
 
-# Load the census regions. Code them as factors so that Northeast is taken as
-# the baseline in the linear models.
-# NB: I put DC into the South
-regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
-  select(state, region)
-
 # Keep chronic conditions that have a single reference year. Exclude Alzheimer's,
 # which is a subset of Alz. & dementia
 condition_names = read_tsv('../chronic-conditions/names.tsv') %>% filter(condition_code != 'ALZH')
