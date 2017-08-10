@@ -394,7 +394,7 @@ abg %>%
 
 Error bars show the s.e.m. across the four data years.
 
-```{r fnz_mean}
+```{r fnz_mean_old}
 all_ineq %>%
   mutate_at(vars(matches('fnz')), function(x) x*100) %>%
   ggplot(aes(x=mean_cpb, xmin=mean_cpb-sem_cpb, xmax=mean_cpb+sem_cpb,

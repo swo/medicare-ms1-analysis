@@ -1,26 +1,29 @@
 # Consumption data
+ineq = read_tsv('ineq.tsv')
 
-regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
-  select(state, state_abbreviation, region)
-
-zipcodes = read_tsv('../../db/zipcode/zipcode.tsv') %>%
-  select(zipcode=zip, state)
-
-read_years = function(base_fn, years) {
-  lapply(years, function(y) sprintf(base_fn, y) %>% read_tsv %>% mutate(year=y)) %>%
-    bind_rows
-}
-
-hrr = read_tsv('../../db/hrr/hrr.tsv') %>%
-  select(zipcode, hrr) %>%
-  left_join(zipcodes, by='zipcode') %>%
-  left_join(regions, by='state')
-
-years = 2011:2014
-all_ineq = read_years('data/state_ineq_all_%i.tsv', years) %>%
-  left_join(regions, by='state')
-state_ineq = read_years('data/state_ineq_%i.tsv', years)
-hrr_ineq = read_years('data/hrr_ineq_%i.tsv', years)
+# regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
+#   select(state, state_abbreviation, region)
+# 
+# zipcodes = read_tsv('../../db/zipcode/zipcode.tsv') %>%
+#   select(zipcode=zip, state)
+# 
+# read_years = function(base_fn, years) {
+#   lapply(years, function(y) {
+#       read_tsv(sprintf(base_fn, y)) %>% mutate(year=y)
+#     }) %>%
+#     bind_rows
+# }
+# 
+# hrr = read_tsv('../../db/hrr/hrr.tsv') %>%
+#   select(zipcode, hrr) %>%
+#   left_join(zipcodes, by='zipcode') %>%
+#   left_join(regions, by='state')
+# 
+# years = 2011:2014
+# all_ineq = read_years('data/state_ineq_all_%i.tsv', years) %>%
+#   left_join(regions, by='state')
+# state_ineq = read_years('data/state_ineq_%i.tsv', years)
+# hrr_ineq = read_years('data/hrr_ineq_%i.tsv', years)
 
 # Aggregate usage correlates with fraction of users
 p = ggplot(all_ineq, aes(x=mean, y=fnz, color=factor(year))) +
