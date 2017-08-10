@@ -1,22 +1,8 @@
 # Consumption data
 ineq = read_tsv('ineq.tsv') %>%
   group_by(drug_group, unit_type, unit) %>%
-  summarize_at(vars(mean, fnz, nzgini), mean) %>%
+  summarize_at(vars(mean, fnz, nzgini, gini), mean) %>%
   ungroup()
-
-# # Aggregate usage correlates with fraction of users
-# p = ggplot(all_ineq, aes(x=mean, y=fnz, color=factor(year))) +
-#   geom_point() +
-#   xlab('claims per beneficiary') +
-#   ylab('fraction of beneficiaries w/ >= 1 claim') +
-#   theme_minimal()
-
-# # Inequality among users does not correlate well
-# p = ggplot(all_ineq, aes(x=mean, y=nzgini, color=factor(year))) +
-#   geom_point() +
-#   xlab('claims per beneficiary') +
-#   ylab('Gini coefficient among benes. w/ >= 1 claim') +
-#   theme_minimal()
 
 # Resistance data
 resistance_groups = read_tsv('resistance_groups.tsv')
@@ -48,9 +34,9 @@ good_combos = raw_abg %>%
   semi_join(possible_bug_drug, by=c('bug', 'drug_group')) %>%
   group_by(bug, drug_group) %>%
   summarize_at(vars(state, hrr), function(x) length(unique(x))) %>%
-  ungroup() %>%
-  filter(state >= 35) %>%
-  select(bug, drug_group)
+  ungroup() #%>%
+  #filter(state >= 35) %>%
+  #select(bug, drug_group)
 
 abg = raw_abg %>%
   semi_join(good_combos, by=c('bug', 'drug_group')) %>%
@@ -75,8 +61,8 @@ summarize_abg = function(df, place_name) {
     ungroup()
 }
 
-state_abg = summarize_abg(abg, 'state')
-hrr_abg = summarize_abg(abg, 'hrr')
+state_abg = summarize_abg(abg, 'state') %T>% write_tsv('abg_state.tsv')
+hrr_abg = summarize_abg(abg, 'hrr') %T>% write_tsv('abg_hrr.tsv')
 
 linear_model = function(df, y, xs) {
   frmla = as.formula(str_interp("${y} ~ ${str_c(xs, collapse=' + ')}"))
@@ -121,7 +107,7 @@ hrr_results = ineq %>%
   mutate(hrr=as.integer(unit)) %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   group_by(bug, drug_group) %>%
-  do(models(., 'mean_percent_nonsusceptible', 'mean', c('fnz', 'nzgini'))) %>%
+  do(models(., 'mean_percent_nonsusceptible', 'mean', c('mean', 'nzgini'))) %>%
   ungroup()
   
 state_results = ineq %>%
