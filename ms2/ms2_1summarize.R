@@ -28,11 +28,12 @@ inequalities = function(pde, drug_group, unit_type, unit, n_bene) {
   nb_size = nb_par['size']
   nb_prob = nb_size / (nb_size + nb_par['mu'])
 
+  stopifnot(length(x) == n_bene)
+
   data_frame(drug_group=drug_group,
              unit_type=unit_type,
              unit=unit,
              n_bene=n_bene,
-             n=length(x),
              total=sum(x),
              mean=mean(x),
              fnz=fraction_nonzero(x),
