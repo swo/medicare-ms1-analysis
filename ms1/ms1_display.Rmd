@@ -34,7 +34,8 @@ claims_by_abx = read_tsv('tables/claims_by_abx.tsv')
 
 n_unique_bene = scan('tables/n_unique_bene.tsv')
 n_million_unique_bene = round(scan('tables/n_unique_bene.tsv') / 1e6, 2)
-n_million_pde = claims_by_abx %$% sum(n) %>% { round(. / 1e6, 2) }
+n_pde = sum(claims_by_abx$n)
+n_million_pde = round(n_pde / 1e6, 2)
 
 est2pct = function(x) (exp(x) - 1)*100
 model_ci = function(df) {
@@ -50,22 +51,25 @@ model_abx = read_tsv('tables/model_abx.tsv') %>%
   rename(antibiotic=name) %>%
   model_ci()
 
-total_adjusted_change_str = model_abx %>%
-  filter(term=='year0', antibiotic=='overall') %$%
-  change_str
+claims_overall = claims_by_abx %>%
+  select(-n_bene) %>%
+  group_by(year) %>%
+  summarize_at(vars(n, cpkp), sum) %>%
+  mutate(antibiotic='overall')
 
-azithro_adjusted_change_str = model_abx %>%
-  filter(term=='year0', antibiotic=='azithromycin') %$%
-  change_str
-
-levo_adjusted_change_str = model_abx %>%
-  filter(term=='year0', antibiotic=='levofloxacin') %$%
-  change_str
+bind_rows(claims_by_abx, claims_overall) %>%
+  filter(antibiotic %in% c('overall', 'azithromycin', 'levofloxacin'), year %in% c(2011, 2014)) %>%
+  select(antibiotic, year, cpkp) %>%
+  spread(year, cpkp) %>%
+  mutate(pct_change=round(100*(`2014`-`2011`)/`2011`, 2)) %>%
+  kable
 ```
 
-There are `r n_million_unique_bene` million unique beneficiaries and `r n_million_pde` million PDEs across all study years. Adjusted total consumption changed by `r total_adjusted_change_str` per year. Azithromycin changed by `r azithro_adjusted_change_str` per year. Levofloxacin changed by `r levo_adjusted_change_str` per year.
+There are `r n_million_unique_bene` million unique beneficiaries and `r n_million_pde` million PDEs across all study years.
 
 # Beneficiary characteristics
+
+There were `r prettyNum(n_unique_bene, big.mark=',')` unique beneficiaries and `r prettyNum(n_pde, big.mark=',')` PDEs.
 
 A star indicates that the trend (*t*-test for mean difference between years equal to zero) is significant after multiple hypothesis correction. A dot indicates significance ($p < 0.05$) before multiple hypothesis correction. Mean age decreased during the study.
 
@@ -111,15 +115,6 @@ top_abx = claims_by_abx %>%
 
 # this should be the same list as for the models
 stopifnot(all(top_abx %in% model_abx$antibiotic))
-
-# but "overall" should not be in the claims_by_abx list
-if('overall' %in% claims_by_abx$antibiotic) stop()
-
-claims_overall = claims_by_abx %>%
-  select(-n_bene) %>%
-  group_by(year) %>%
-  summarize_at(vars(n, cpkp), sum) %>%
-  mutate(antibiotic='overall')
 
 claims_by_top_abx = claims_by_abx %>%
   bind_rows(claims_overall) %>%
@@ -227,29 +222,51 @@ x %>%
   geom_bar(stat='identity', fill=NA, color='black') +
   geom_errorbar(width=0.5) +
   coord_flip() +
-  ggtitle('Adjusted changes in consumption') +
   xlab('') +
-  ylab('adjusted yearly change in claims per beneficiary per year') +
+  ylab('adjusted yearly change in consumption (%)') +
   scale_y_continuous(limits=c(-10, 10), breaks=c(-10, -5, 0, 5, 10)) +
-  theme_minimal()
+  theme_minimal() +
+  theme(axis.title.x = element_text(size=16),
+        axis.text = element_text(size=16))
 ```
 
 ```{r adjusted_changes_table}
 x %>% arrange(desc(antibiotic)) %>% kable
+
+adjusted_az_decrease = x %>%
+  filter(antibiotic=='azithromycin') %$%
+  { (1 + pct_change/100)^3 } %>%
+  { (1 - .) * 100 } %>%
+  round(2)
+
+adjusted_levo_increase = x %>%
+  filter(antibiotic=='levofloxacin') %$%
+  { (1 + pct_change/100)^3 } %>%
+  { (. - 1) * 100 } %>%
+  round(2)
 ```
+
+Consumption of azithromycin fell by `r adjusted_az_decrease`% over the entire study period. Levofloxacin consumption increased by `r adjusted_levo_increase`% over the entire study period.
 
 ## Fluoroquinolones
 
 Consumption of ciprofloxacin is slightly decreasing, and consumption of levofloxacin is increasing. How does fluoroquinolone consumption overall change?
 
 ```{r fq}
+fq_names = claims_by_abx %>%
+  filter(str_detect(antibiotic, 'floxacin')) %>%
+  group_by(antibiotic) %>%
+  summarize(n=sum(n)) %>%
+  arrange(desc(n)) %$%
+  antibiotic
+
 read_tsv('tables/model_fq.tsv') %>%
   model_ci() %>%
   select(term, pct_change, ci_low, ci_high, p.value) %>%
   kable
 ```
 
-Overall, fluoroquinolones changed by about 0% per year during this period.
+Overall, fluoroquinolones changed by about 0% per year during this period. This included `r fq_names`.
 
 ## Heart disease
 
@@ -283,18 +300,20 @@ Trends per 1,000 beneficiaries in each year. The $p$-value indicates a linear tr
 ```{r dx_counts}
 dx_counts = read_tsv('tables/dx_counts.tsv') %>%
   left_join(totals, by='year') %>%
-  mutate(dx_pkb=round(n/n_bene*1000, 1)) %>%
+  mutate(dx_pkb=n/n_bene*1000) %>%
   select(diagnosis_type, year, dx_pkb)
 
 dx_counts_trends = dx_counts %>%
   group_by(diagnosis_type) %>%
   arrange(year) %>%
-  summarize(p=round(trend_p(dx_pkb), 2))
+  summarize(p=trend_p(dx_pkb))
 
 dx_counts %>%
   spread(year, dx_pkb) %>%
+  mutate(pct_change_per_year=(`2014`-`2011`)/`2011`*100/3) %>%
   left_join(dx_counts_trends, by='diagnosis_type') %>%
   arrange(desc(`2011`)) %>%
+  mutate_at(vars(`2011`:p), function(x) round(x, 2)) %>%
   kable
 ```
 
@@ -333,7 +352,7 @@ dxrx_frac = read_tsv('tables/dxrx_fractions.tsv') %>%
   filter(antibiotic %in% top_abx) %>%
   select(diagnosis_type, antibiotic, year, f) %>%
   spread(year, f) %>%
-  filter(`2011` >= 5) %>%
+  filter(`2011` >= 3) %>%
   arrange(diagnosis_type, desc(`2011`))
 
 dxrx_frac %>%
