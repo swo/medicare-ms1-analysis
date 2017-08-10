@@ -9,15 +9,20 @@ filter_eq_ = function(df, col, val) filter_(df, str_interp("${col}=='${val}'"))
 
 inequalities = function(pde, drug_group, unit_type, unit, n_bene) {
   if (drug_group=='overall') {
-    filter_drug_f = function(df) df
+    filter_drug_f = function(df) group_by(df, bene_id) %>% summarize(n_claims=sum(n_claims))
   } else {
     filter_drug_f = function(df) filter_eq_(df, 'drug_group', drug_group)
   }
 
-  x = pde %>%
+  filtered_pde = pde %>%
     filter_eq_(unit_type, unit) %>%
-    filter_drug_f() %$%
-    pad0(n_claims, n_bene)
+    filter_drug_f()
+
+  if(n_bene < nrow(filtered_pde)) {
+    stop(str_interp("n_bene=${n_bene}, but got ${nrow(filtered_pde)} rows when doing ${drug_group}, ${unit_type}, ${unit}"))
+  }
+
+  x = pad0(filtered_pde$n_claims, n_bene)
 
   nb_par = fitdistrplus::mledist(x, 'nbinom')$estimate
   nb_size = nb_par['size']
