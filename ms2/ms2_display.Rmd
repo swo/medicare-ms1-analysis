@@ -227,6 +227,16 @@ show(state_cons_res_plot('S. pneumoniae', 'macrolide'))
 
 ## Correlations between the metrics
 
+I use a few metrics: the mean consumption $\mu$, the fraction nonzero $f_+$ (i.e., the fraction who are consumers), the Gini coefficient $G$, and the nonzero Gini $G_+$ (i.e., the Gini coefficient ignoring the nonconsumers). Here I explore the relationship between these.
+
+Some math shows that
+$$
+G = (1 - f_+) + f_+ G_+,
+$$
+i.e., the Gini coefficient is a mixture of a "subcoefficient" of 1 for the nonconsumers and $G_+$ for the consumers.
+
+In the plots below, I compare the correlations between these metrics across states and HRRs. Blessedly, the correlations are very similar across both sets of geographic units.
+
 ```{r metrics}
 f = function(df, x, y) {
   cor.test(df[[x]], df[[y]], method='spearman') %>%
@@ -255,22 +265,54 @@ comparison_plot_f = function(comp) {
     ggtitle(comp)
   p
 }
+```
 
+The mean and the fraction nonzero are highly correlated ($\rho \sim 1$) for all drug groups:
+
+```{r mean_fnz}
 comparison_plot_f('mean/fnz') %>% show
+```
+
+In contrast, the fraction nonzero is almost perfectly *anticorrelated* with the Gini coefficient, i.e., the more people consuming, the more even the consumption:
+
+```{r fnz_gini}
 comparison_plot_f('fnz/gini') %>% show
+```
+
+$\mu$ is very well correlated with $f_+$, and $f_+$ is very well anticorrelated with $G$, so, not surprisingly, the anticorrelation between $\mu$ and $G$ is also strong:
+
+```{r mean_gini}
 comparison_plot_f('mean/gini') %>% show
+```
+
+However, mean consumption $\mu$ and the nonzero Gini coefficient $G_+$ are not as well correlated with one another. For most drug groups, increased mean consumption is somewhat correlated with increased unevenness among consumers. For two drug groups, the relationship is near zero:
+
+```{r mean_nzgini}
 comparison_plot_f('mean/nzgini') %>% show
+```
+
+When replacing $\mu$ with $f_+$ (recall that the two are closely correlated), all correlations get more negative, i.e., the positive ones get less positive and the near-zero ones get negative:
+
+```{r fnz_nzgini}
 comparison_plot_f('fnz/nzgini') %>% show
 ```
 
 ## Comparing state and HRR Spearman models
 
+Each point shows the $\rho$ and $p$-value from a Spearman correlation test for a bug/drug combination in a geographic unit (state or HRR). Gray lines connect the two points representing the test for the same bug/drug combination; one point is for states, the other for HRRs.
+
+It seems like the states generally have more positive estimates. I wonder if that means that states are the "correct" geographical level at which to look at these effects, but there just aren't enough of them to be able to make a sufficiently small $p$-value.
+
+The dumbbells that cross the black, $p = 0.05$ line are the ones that are significant for one geographical unit but not the other.
+
 ```{r spearman_state_hrr_compare}
 results %>%
   filter(model=='spearman') %>%
-  mutate(group=interaction(bug, drug_group)) %>%
-  ggplot(aes(x=estimate, y=-log10(p.value), color=unit_type, group=group)) +
+  mutate(group=interaction(bug, drug_group),
+         adj.p.value=p.adjust(p.value, method='BH')) %>%
+  ggplot(aes(x=estimate, y=-log10(adj.p.value), color=unit_type, group=group)) +
+  geom_line(color='gray') +
+  geom_hline(yintercept=-log10(0.05)) +
   geom_point() +
-  geom_line() +
-  geom_hline(yintercept=-log10(0.05))
+  xlab("Spearman's rho")
 ```
