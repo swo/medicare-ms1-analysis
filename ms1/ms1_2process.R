@@ -164,6 +164,30 @@ dxrx = dx_raw %>%
   mutate(dummy=TRUE) %>% spread(antibiotic, dummy, fill=FALSE) %>%
   left_join(bene, by=c('year', 'bene_id'))
 
+dx_types = unique(dxrx$diagnosis_type)
+dx_replace = rep(FALSE, length(dx_types)) %>% as.list %>% setNames(dx_types)
+
+dxrx_binary = dxrx %>%
+  select(year, bene_id, diagnosis_type) %>%
+  distinct() %>%
+  mutate(dummy=TRUE) %>%
+  spread(diagnosis_type, dummy) %>%
+  right_join(bene, by=c('year', 'bene_id')) %>%
+  replace_na(dx_replace)
+
+# adjusted OR for diagnoses
+# i.e., logistic regression bene_had_dx_in_year? ~ year + covariates
+dx_adjust_f = function(dxrx, dx) {
+  frmla = as.formula(str_interp("${dx} ~ year0 + age0 + n_cc + is_white + is_dual + is_female + region"))
+  glm(frmla, data=dxrx, family='binomial') %>%
+    tidy %>%
+    mutate(diagnosis_type=dx)
+}
+
+dx_res = lapply(dx_types, function(x) dx_adjust_f(dxrx_binary, x)) %>%
+  bind_rows() %T>%
+  output_table('model_dx')
+
 # for a diagnosis type dx and an antibiotic, what is the trend in the probability
 # that that drug will be used for that diagnosis?
 # i.e., logistic regression drug_used? ~ dx_present?*year + covariates
@@ -175,7 +199,7 @@ dxrx_f = function(dxrx, dx, abx) {
     filter_f = function(df) filter(df, diagnosis_type==dx)
   }
   
-  frmla = as.formula(str_interp("`${abx}` ~ year0 + age0 + is_white + is_dual + is_female + region"))
+  frmla = as.formula(str_interp("`${abx}` ~ year0 + age0 + n_cc + is_white + is_dual + is_female + region"))
   
   dxrx %>%
     filter_f() %>%
@@ -184,7 +208,7 @@ dxrx_f = function(dxrx, dx, abx) {
     mutate(diagnosis_type=dx, antibiotic=abx)
 }
 
-dxrx_res = crossing(diagnosis_type=unique(dxrx$diagnosis_type),
+dxrx_res = crossing(diagnosis_type=dx_types,
                     antibiotic=c('azithromycin', 'levofloxacin', 'amoxicillin/clavulanate', 'cephalexin', 'ciprofloxacin')) %>%
   rowwise() %>%
   do(dxrx_f(dxrx, .$diagnosis_type, .$antibiotic)) %>%

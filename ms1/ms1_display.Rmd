@@ -317,6 +317,16 @@ dx_counts %>%
   kable
 ```
 
+I also performed a similar analysis using logistic regression. I predicted whether a beneficiary would have a diagnosis at any point in the year. The main predictor variable was year, and the covariates were as elsewhere.
+
+```{r adjusted_dx_or}
+read_tsv('tables/model_dx.tsv') %>%
+  filter(term=='year0') %>%
+  model_ci() %>%
+  select(diagnosis_type, change_str) %>%
+  kable
+```
+
 ## Delays between diagnosis and prescription
 
 The table shows the number of diagnoses that were followed by that number of days' delay before the following antibiotic prescription. Most prescriptions were filled on the same day as the diagnosis.
