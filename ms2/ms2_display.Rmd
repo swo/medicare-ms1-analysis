@@ -214,7 +214,7 @@ state_cons_res_plot = function(b, d) {
 show(state_cons_res_plot('E. coli', 'quinolone'))
 ```
 
-## Pneumococcus and macrolides
+### Pneumococcus and macrolides
 
 ```{r pneumo_macro_state}
 show(state_cons_res_plot('S. pneumoniae', 'macrolide'))

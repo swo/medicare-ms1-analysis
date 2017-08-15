@@ -1,10 +1,15 @@
 #!/usr/bin/env Rscript
 
 # utility functions function
-import::from(ineq, ineq)
+gini = function(x) ineq::ineq(x, type='Gini')
 nonzero = function(x) x[x > 0]
 fraction_nonzero = function(x) length(nonzero(x)) / length(x)
 pad0 = function(x, to) c(x, rep(0, to - length(x)))
+
+without_min = function(x) x[-which.min(x)]
+without_max = function(x) x[-which.max(x)]
+without_1 = function(x) x[-match(1, x)]
+
 filter_eq_ = function(df, col, val) filter_(df, str_interp("${col}=='${val}'"))
 
 inequalities = function(pde, drug_group, unit_type, unit, n_bene) {
@@ -23,6 +28,7 @@ inequalities = function(pde, drug_group, unit_type, unit, n_bene) {
   }
 
   x = pad0(filtered_pde$n_claims, n_bene)
+  nzx = nonzero(x)
 
   nb_par = fitdistrplus::mledist(x, 'nbinom')$estimate
   nb_size = nb_par['size']
@@ -36,9 +42,13 @@ inequalities = function(pde, drug_group, unit_type, unit, n_bene) {
              n_bene=n_bene,
              total=sum(x),
              mean=mean(x),
+             mean_without_1=mean(without_1(x)),
+             mean_without_max=mean(without_max(x)),
              fnz=fraction_nonzero(x),
-             gini=ineq(x, type='Gini'),
-             nzgini=ineq(nonzero(x), type='Gini'),
+             gini=gini(x),
+             nzgini=gini(nzx),
+             nzgini_wo_min=gini(without_min(nzx)),
+             nzgini_wo_max=gini(without_max(nzx)),
              nb_size=nb_size,
              nb_prob=nb_prob)
 }
@@ -94,6 +104,14 @@ summarize_inequality = function(y) {
     mutate(year=y)
 }
 
-lapply(2011:2014, summarize_inequality) %>%
+# prepare for parallel execution
+library(parallel)
+n_cores = detectCores() - 1
+cluster = makeCluster(n_cores, type='FORK')
+
+#lapply(2011:2014, summarize_inequality) %>%
+parLapply(cluster, 2011:2014, summarize_inequality) %>%
   bind_rows() %>%
   write_tsv('ineq.tsv')
+
+stopCluster(cluster)

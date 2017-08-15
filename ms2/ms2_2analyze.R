@@ -115,7 +115,7 @@ state_results = ineq %>%
   rename(state=unit) %>%
   right_join(state_abg, by=c('state', 'drug_group')) %>%
   group_by(bug, drug_group) %>%
-  do(models(., 'mean_percent_nonsusceptible', 'mean', c('fnz', 'nzgini'))) %>%
+  do(models(., 'mean_percent_nonsusceptible', 'mean', c('mean', 'nzgini'))) %>%
   ungroup()
 
 bind_rows(
