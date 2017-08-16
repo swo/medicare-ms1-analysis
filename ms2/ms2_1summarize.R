@@ -40,17 +40,14 @@ inequalities = function(pde, drug_group, unit_type, unit, n_bene) {
              unit_type=unit_type,
              unit=unit,
              n_bene=n_bene,
+             n_0=sum(x==0),
+             n_1=sum(x==1),
+             n_2p=sum(x>1),
              total=sum(x),
              mean=mean(x),
              mean_without_1=mean(without_1(x)),
              mean_without_max=mean(without_max(x)),
-             fnz=fraction_nonzero(x),
-             gini=gini(x),
-             nzgini=gini(nzx),
-             nzgini_wo_min=gini(without_min(nzx)),
-             nzgini_wo_max=gini(without_max(nzx)),
-             nb_size=nb_size,
-             nb_prob=nb_prob)
+             fnz=fraction_nonzero(x))
 }
 
 # auxiliary data

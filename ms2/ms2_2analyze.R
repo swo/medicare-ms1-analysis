@@ -1,7 +1,8 @@
 # Consumption data
 ineq = read_tsv('ineq.tsv') %>%
+  mutate(f0=n_0/n_bene, f1=n_1/n_bene, f2=n_2p/n_bene) %>%
   group_by(drug_group, unit_type, unit) %>%
-  summarize_at(vars(mean, fnz, nzgini, gini), mean) %>%
+  summarize_at(vars(mean, fnz, f0, f1, f2, mean), mean) %>%
   ungroup()
 
 # Resistance data
@@ -66,12 +67,20 @@ hrr_abg = summarize_abg(abg, 'hrr') %T>% write_tsv('abg_hrr.tsv')
 
 linear_model = function(df, y, xs) {
   frmla = as.formula(str_interp("${y} ~ ${str_c(xs, collapse=' + ')}"))
-  lm(formula=frmla, weights=place_weight, data=df) %>%
+  m = lm(formula=frmla, weights=place_weight, data=df)
+  
+  anova_res = anova(m) %>%
     tidy %>%
+    filter(term != 'Residuals') %>%
+    select(term, anova.p.value=p.value)
+  
+  coef_res = tidy(m) %>%
     mutate(ci=1.96*std.error,
            ci_low=estimate-ci,
            ci_high=estimate+ci) %>%
     select(term, estimate, ci_low, ci_high, p.value)
+  
+  left_join(coef_res, anova_res, by='term')
 }
 
 spearman_model = function(df, y_name, x_name) {
@@ -102,20 +111,49 @@ models = function(df, y, uni_x, multi_xs) {
     mutate(n_data=nrow(df))
 }
 
-hrr_results = ineq %>%
+hrr_out = hrr %>%
+  select(hrr, state, region) %>%
+  group_by(hrr) %>%
+  do(head(., 1))
+
+hrr_results2 = ineq %>%
   filter(unit_type=='hrr') %>%
   mutate(hrr=as.integer(unit)) %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
+  left_join(hrr_out, by='hrr') %>%
+  mutate(y=mean_percent_nonsusceptible/100) %>%
   group_by(bug, drug_group) %>%
-  do(models(., 'mean_percent_nonsusceptible', 'mean', c('mean', 'nzgini'))) %>%
+  do(models(., 'y', 'fnz', c('mean', 'fnz'))) %>%
   ungroup()
+
+add_pred = function(df, y, xs) {
+  m = lm(as.formula(str_interp("${y} ~ ${x}")), data=df)
+  mutate(df, pred=m$fitted.values)
+}
+
+r = ineq %>%
+  filter(unit_type=='hrr') %>%
+  mutate(hrr=as.integer(unit)) %>%
+  right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
+  left_join(hrr_out, by='hrr') %>%
+  mutate(y=mean_percent_nonsusceptible/100) %>%
+  group_by(bug, drug_group) %>%
+  do(linear_model(., 'y', c('f1', 'f2'))) %>%
+  ungroup()
+
+add_resid = function(df, y, x) {
+  m = lm(as.formula(str_interp("${y} ~ ${x}")), data=df)
+  r = resid(m)
+  mutate(df, r=r)
+}
   
-state_results = ineq %>%
+state_results2 = ineq %>%
   filter(unit_type=='state') %>%
   rename(state=unit) %>%
   right_join(state_abg, by=c('state', 'drug_group')) %>%
+  mutate(y=mean_percent_nonsusceptible/100) %>%
   group_by(bug, drug_group) %>%
-  do(models(., 'mean_percent_nonsusceptible', 'mean', c('mean', 'nzgini'))) %>%
+  do(models(., 'y', 'fnz', c('fnz', 'mean'))) %>%
   ungroup()
 
 bind_rows(
