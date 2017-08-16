@@ -3,7 +3,8 @@ ineq = read_tsv('ineq.tsv') %>%
   mutate(f0=n_0/n_bene, f1=n_1/n_bene, f2=n_2p/n_bene) %>%
   group_by(drug_group, unit_type, unit) %>%
   summarize_at(vars(mean, fnz, f0, f1, f2, mean), mean) %>%
-  ungroup()
+  ungroup() %>%
+  mutate(mup=mean/fnz)
 
 # Resistance data
 resistance_groups = read_tsv('resistance_groups.tsv')
@@ -110,12 +111,6 @@ models = function(df) {
   ) %>%
     mutate(n_data=nrow(df))
 }
-
-hrr_out = hrr %>%
-  count(hrr, region) %>%
-  filter(n==max(n)) %>%
-  ungroup() %>%
-  select(hrr, region)
 
 hrr_results = ineq %>%
   filter(unit_type=='hrr') %>%

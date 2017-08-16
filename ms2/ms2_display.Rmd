@@ -302,6 +302,22 @@ ineq %>%
   ggtitle('E. coli & beta-lactams across states')
 ```
 
+## Comparing the predictive power of mean consumption and fraction nonzero
+
+How do the regressions $R \sim f_>$ compare to $R \sim \mu$? Here I look at the correlation between the coefficients $\beta_\mu$ and $\beta_{f_>}$ across bug/drug combinations. The correlation is really high for HRRs and just regular high for states.
+
+```{r univariate_result_correlation}
+results %>%
+  filter(str_detect(model, '^uni'), term != '(Intercept)') %>%
+  select(unit_type, bug, drug_group, term, estimate) %>%
+  spread(term, estimate) %>%
+  group_by(unit_type) %>%
+  summarize(cor_between_betas=cor(fnz, mean)) %>%
+  kable
+```
+
+In other words, if you do the regression with $f_>$, you can predict with very high accuracy the coefficient from the univariate regression on $\mu$.
+
 ## Specific plots
 
 ### E. coli & quinolones
