@@ -15,7 +15,7 @@ library(forcats)
 ```{r load_data}
 ineq = read_tsv('ineq.tsv') %>%
   group_by(drug_group, unit_type, unit) %>%
-  summarize_at(vars(mean, fnz, nzgini, gini), mean) %>%
+  summarize_at(vars(mean, fnz), mean) %>%
   ungroup()
 
 results = read_tsv('results.tsv')
@@ -36,6 +36,15 @@ hrr = read_tsv('../../db/hrr/hrr.tsv') %>%
   select(zipcode, hrr) %>%
   left_join(zipcodes, by='zipcode') %>%
   left_join(regions, by='state')
+
+hrr_out = hrr %>%
+  count(hrr, region) %>%
+  filter(n==max(n)) %>%
+  ungroup() %>%
+  select(hrr, region)
+
+state_abg = read_tsv('abg_state.tsv')
+hrr_abg = read_tsv('abg_hrr.tsv')
 ```
 
 # Methods
@@ -68,8 +77,6 @@ I started by considering these `r nrow(possible_bug_drug)` bug/drug combinations
 
 `r kable(possible_bug_drug)`
 
-(In previous iterations, I filtered by the number of states/HRRs in which each bug/drug combination appeared. Weirdly, there is a relationship in the data, that better-represented bug/drug combinations are the ones with the stronger relationships [i.e., the higher $\rho$, not necessarily the lower $p$]. When using the HRR data, that kind of fancy footwork wasn't necessary, so I just didn't do it.)
-
 For each combination, I computed three models:
 
 - a Spearman correlation of mean claims per beneficiary against mean percent nonsusceptible
@@ -82,7 +89,7 @@ For each combination, I computed three models:
 
 ## Spearman
 
-Two stars after the bug/drug combination implies that the adjusted $p < 0.05$, and one star means the unadjusted $p < 0.05$. Intervals show 95% confidence intervals. 
+The plot shows the Spearman correlation coefficient $\rho$ between resistance $R$ and fraction $f_>$ of beneficiaries who are consumers. Two stars after the bug/drug combination implies that the adjusted $p < 0.05$, and one star means the unadjusted $p < 0.05$. Intervals show 95% confidence intervals. 
 
 ```{r hrr_spearman}
 interval_plot = function(df) {
@@ -119,42 +126,34 @@ This table has the significant and marginally significant results from the previ
 
 ## Linear models
 
+I run models $R \sim f_>$, that is $R^{(u)} = \beta_0 + \beta_{f_>} f_>^{(u)} + \varepsilon^{(u)}$, where the superscript $u$ indicates the geographical unit (HRR or state). The plots show $\beta_{f_>}$. This model is equivalent to one in which the population resistance $R^{(u)}$ in unit $u$ is the mean of the resistance $r_i^{(u)}$ in the individual people $i$ in unit $u$, where $r_i^{(u)}$ is $\beta_0$ if person $i$ took no drug and $\beta_0 + \beta_{f_>}$ if that person took at least one dose.
+
+The gray line shows $\beta_{f_>} = 1$.
+
 ```{r hrr_linear}
 results %>%
-  filter(model=='univariate', unit_type=='hrr', term=='mean') %>%
+  filter(model=='univariate', unit_type=='hrr', term=='fnz') %>%
   interval_plot() +
-  ylab("Linear coeff., mean cons.") +
+  geom_hline(yintercept=1, col='gray') +
+  ylab(expression(beta[f])) +
   ggtitle("Linear univariate, HRR")
 ```
 
 ```{r state_linear}
 results %>%
-  filter(model=='univariate', unit_type=='state', term=='mean') %>%
+  filter(model=='univariate', unit_type=='state', term=='fnz') %>%
   interval_plot() +
-  ylab("Linear coeff., mean cons.") +
+  ylab(expression(beta[f])) +
   ggtitle("Linear univariate, state")
 ```
 
 # Unevenness of consumption and antibiotic resistance
 
-## Drugs are consumed differently in different places
-
-```{r nzgini_cpb_drug}
-cbbPalette <- c("#000000", "#D55E00", "#CC79A7", "#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2")
-
-ineq %>%
-  filter(unit_type=='state', drug_group != 'overall') %>%
-  ggplot(aes(x=mean, y=nzgini, color=drug_group)) +
-  geom_point() +
-  ylab('Gini coefficient among users') + xlab('claims per beneficiary') +
-  ggtitle('Unevenness and mean consumption, states') +
-  theme_minimal() +
-  scale_color_manual(values=cbbPalette)
-```
-
 ## Unevenness is mostly related to the "extensive margin"
 
-```{r nzgini_fnz}
+```{r fnz_mean_drug}
+cbbPalette <- c("#000000", "#D55E00", "#CC79A7", "#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2")
+
 ineq %>%
   filter(unit_type=='state', drug_group != 'overall') %>%
   ggplot(aes(x=fnz, y=mean, color=drug_group)) +
@@ -165,22 +164,148 @@ ineq %>%
   scale_color_manual(values=cbbPalette)
 ```
 
+## The South has more consumers per capita
+
+However, among those people who do consume, consumption is smaller per capita (i.e., the slope is similar but the intercept is smaller). In this sense, consumption in the South is less concentrated than in the Midwest.
+
+```{r fnz_mean_region}
+ineq %>%
+  filter(unit_type=='state', drug_group == 'overall') %>%
+  rename(state=unit) %>%
+  filter(state != 'DC') %>%
+  left_join(regions, by='state') %>%
+  ggplot(aes(x=fnz, y=mean, color=region)) +
+  geom_smooth(aes(color=NULL), method='lm', se=F, color='gray') +
+  geom_point() +
+  xlab('Fraction nonzero') + ylab('claims per beneficiary') +
+  ggtitle('Fraction consuming and mean consumption, states') +
+  theme_minimal()
+```
+
 ## Effect of unevenness on antibiotic resistance
+
+We ask if mean consumption $\mu$ has any information beyond fraction nonzero $f_>$ for predicting resistance $R$. We might expect that the simple two-part model represented by the regressions $R \sim f_>$ doesn't capture the fact that taking two doses should have a greater effect than taking one, etc.
+
+These plots show the coefficient $\beta_\mu$ from the regression $R^{(u)} = \beta_0 + \beta_{f_>} f_>^{(u)} + \beta_{\mu} \mu^{(u)} + \varepsilon^{(u)}$.
 
 ```{r hrr_multi}
 results %>%
-  filter(model=='multivariate', unit_type=='hrr', term=='nzgini') %>%
+  filter(model=='multivariate', unit_type=='hrr', term=='mean') %>%
   interval_plot() +
-  ylab("Linear coeff., nonzero Gini") +
+  ylab(expression(beta[mu])) +
   ggtitle("Linear multivariate, HRR")
 ```
 
 ```{r state_multi}
 results %>%
-  filter(model=='multivariate', unit_type=='state', term=='nzgini') %>%
+  filter(model=='multivariate', unit_type=='state', term=='mean') %>%
   interval_plot() +
-  ylab("Linear coeff., nonzero Gini") +
+  ylab(expression(beta[mu])) +
   ggtitle("Linear multivariate, state")
+```
+
+There are a few significant results:
+
+- *E. faecium* and $\beta$-lactams have a postive relationship (implying higher mean consumption, given the same fraction of people consuming, goes with more resistance)
+- *E. coli* and Bactrim have a *negative* relationship (higher consumption goes with *less* resistance)
+- *S. pneumoniae* and tetracyclines have a negative relationship
+
+And some marginal results:
+
+- *E. coli* and $\beta$-lactams, negative relationship, HRR only
+- Non-MRSA *S. aureus* and first-generation cephalosporins, negative, HRR only
+- *E. faecium* and nitro, negative, both HRR and state
+- *S. aureus* and clinda, positive, state only
+- *S. aureus* and tetracyclines, positive, state only
+- *E. cloacae* and quinolones, positive, state only
+
+The positive relationships are not troubling: it means that it might be that increasing consumption among the consumers can increase resistance. The negative relationships are troubling: how could decreasing consumption among consumers increase resistance?
+
+### E. faecium and beta-lactams
+
+This one doesn't worry me. First, the univariate regression $R \sim f_>$ isn't significant. Second, the ANOVA gives different results depending on the order of the variables: if $\mu$ goes first, it is non-significant but $f_>$, going second, is; conversely, if $f_>$ goes first, then $\mu$ is significant. So I think this is a weird case about collinearity.
+
+```{r efaecium_betalactams}
+ineq %>%
+  filter(unit_type=='hrr') %>%
+  mutate(hrr=as.integer(unit)) %>% left_join(hrr_out, by='hrr') %>%
+  right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
+  filter(bug=='Ec. faecium', drug_group=='beta_lactam') %>%
+  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=region)) +
+  geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
+  geom_smooth(method='lm', se=F) +
+  geom_point() +
+  xlab('fraction who consumed beta-lactams') +
+  ylab('Beta-lactam resistance E. faecium') +
+  ggtitle('E. faecium & beta-lactams across HRRs')
+
+ineq %>%
+  filter(unit_type=='state') %>%
+  rename(state=unit) %>%
+  left_join(regions, by='state') %>%
+  right_join(state_abg, by=c('state', 'drug_group')) %>%
+  filter(bug=='Ec. faecium', drug_group=='beta_lactam') %>%
+  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=region)) +
+  geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
+  geom_smooth(method='lm', se=F) +
+  geom_point() +
+  xlab('fraction who consumed beta-lactams') +
+  ylab('Beta-lactam resistance E. faecium') +
+  ggtitle('E. faecium & beta-lactams across states')
+```
+
+### E. coli and Bactrim
+
+From the Spearman and univariate models, Bactrim resistance in *E. coli* is correlated with increased resistance (black line). When breaking that apart by region, however, there are different relationship (colored lines).
+
+```{r ecoli_bactrim}
+ineq %>%
+  filter(unit_type=='hrr') %>%
+  mutate(hrr=as.integer(unit)) %>% left_join(hrr_out, by='hrr') %>%
+  right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
+  filter(bug=='E. coli', drug_group=='tmp_smx') %>%
+  filter(mean_percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
+  ggplot(aes(x=fnz, y=mean_percent_nonsusceptible, color=region)) +
+  geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
+  geom_smooth(method='lm', se=F) +
+  geom_point() +
+  xlab('fraction who consumed Bactrim') +
+  ylab('Bactrim-resistance E. coli') +
+  ggtitle('E. coli & Bactrim across HRRs')
+
+ineq %>%
+  filter(unit_type=='state') %>%
+  rename(state=unit) %>%
+  left_join(regions, by='state') %>%
+  right_join(state_abg, by=c('state', 'drug_group')) %>%
+  filter(bug=='E. coli', drug_group=='tmp_smx') %>%
+  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=region)) +
+  geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
+  geom_smooth(method='lm', se=F) +
+  geom_point() +
+  xlab('fraction who consumed Bactrim') +
+  ylab('Bactrim resistance E. coli') +
+  ggtitle('E. coli & Bactrim across states')
+```
+
+### S. pneumonia and tetracyclines
+
+This one doesn't bother me either. Tetracycline resistance in pneumococcus not significantly related ot tetracycline consumption in the univariate models; the coefficient is almost exactly zero. If you run a regression $R \sim \mu$, you get a non-significant result. So you only get this relationship *after* you correct for an approximately flat relationship. Not promising.
+
+```{r pneumo_tetra}
+ineq %>%
+  filter(unit_type=='hrr') %>%
+  mutate(hrr=as.integer(unit)) %>% left_join(hrr_out, by='hrr') %>%
+  right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
+  filter(bug=='S. pneumoniae', drug_group=='tetracycline') %>%
+  filter(mean_percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
+  ggplot(aes(x=fnz, y=mean_percent_nonsusceptible, color=region)) +
+  geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
+  geom_smooth(method='lm', se=F) +
+  geom_point() +
+  xlab('fraction who consumed Bactrim') +
+  ylab('Bactrim-resistance E. coli') +
+  ggtitle('S. pneumonia & Bactrim across HRRs')
 ```
 
 ## Specific plots
@@ -188,8 +313,6 @@ results %>%
 ### E. coli & quinolones
 
 ```{r ecoli_quin_state}
-state_abg = read_tsv('abg_state.tsv')
-
 state_cons_res_plot = function(b, d) {
   p = inner_join(
     ineq %>%
@@ -201,6 +324,7 @@ state_cons_res_plot = function(b, d) {
     by='state') %>%
     left_join(regions, by='state') %>%
     ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state, color=region)) +
+    geom_smooth(method='lm', se=F) +
     geom_smooth(method='lm', se=F, col='gray') +
     geom_point() +
     geom_text() +
@@ -227,74 +351,22 @@ show(state_cons_res_plot('S. pneumoniae', 'macrolide'))
 
 ## Correlations between the metrics
 
-I use a few metrics: the mean consumption $\mu$, the fraction nonzero $f_+$ (i.e., the fraction who are consumers), the Gini coefficient $G$, and the nonzero Gini $G_+$ (i.e., the Gini coefficient ignoring the nonconsumers). Here I explore the relationship between these.
-
-Some math shows that
-$$
-G = (1 - f_+) + f_+ G_+,
-$$
-i.e., the Gini coefficient is a mixture of a "subcoefficient" of 1 for the nonconsumers and $G_+$ for the consumers.
-
-In the plots below, I compare the correlations between these metrics across states and HRRs. Blessedly, the correlations are very similar across both sets of geographic units.
+The mean and the fraction nonzero are highly correlated ($\rho \sim 1$) for all drug groups:
 
 ```{r metrics}
 f = function(df, x, y) {
-  cor.test(df[[x]], df[[y]], method='spearman') %>%
-    tidy %>%
-    mutate(comparison=str_interp("${x}/${y}"))
+  cor.test(df[[x]], df[[y]], method='spearman') %>% tidy
 }
 
-x = ineq %>%
+ineq %>%
   group_by(unit_type, drug_group) %>%
-  do(bind_rows(f(., 'mean', 'fnz'),
-               f(., 'fnz', 'gini'),
-               f(., 'mean', 'gini'),
-               f(., 'mean', 'nzgini'),
-               f(., 'fnz', 'nzgini'))) %>%
+  do(f(., 'fnz', 'mean')) %>%
   ungroup() %>%
-  select(comparison, unit_type, drug_group, estimate, p.value)
-
-comparison_plot_f = function(comp) {
-  p = x %>%
-    filter(comparison==comp) %>%
-    ggplot(aes(x=drug_group, y=estimate, color=unit_type)) +
-    geom_point() +
-    ylab('Spearman correlation between metrics') +
-    ylim(-1, 1) +
-    coord_flip() +
-    ggtitle(comp)
-  p
-}
-```
-
-The mean and the fraction nonzero are highly correlated ($\rho \sim 1$) for all drug groups:
-
-```{r mean_fnz}
-comparison_plot_f('mean/fnz') %>% show
-```
-
-In contrast, the fraction nonzero is almost perfectly *anticorrelated* with the Gini coefficient, i.e., the more people consuming, the more even the consumption:
-
-```{r fnz_gini}
-comparison_plot_f('fnz/gini') %>% show
-```
-
-$\mu$ is very well correlated with $f_+$, and $f_+$ is very well anticorrelated with $G$, so, not surprisingly, the anticorrelation between $\mu$ and $G$ is also strong:
-
-```{r mean_gini}
-comparison_plot_f('mean/gini') %>% show
-```
-
-However, mean consumption $\mu$ and the nonzero Gini coefficient $G_+$ are not as well correlated with one another. For most drug groups, increased mean consumption is somewhat correlated with increased unevenness among consumers. For two drug groups, the relationship is near zero:
-
-```{r mean_nzgini}
-comparison_plot_f('mean/nzgini') %>% show
-```
-
-When replacing $\mu$ with $f_+$ (recall that the two are closely correlated), all correlations get more negative, i.e., the positive ones get less positive and the near-zero ones get negative:
-
-```{r fnz_nzgini}
-comparison_plot_f('fnz/nzgini') %>% show
+  select(unit_type, drug_group, estimate, p.value) %>%
+  ggplot(aes(x=drug_group, y=estimate, color=unit_type)) +
+  geom_point() +
+  ylab('Spearman correlation between metrics') +
+  coord_flip()
 ```
 
 ## Comparing state and HRR Spearman models
