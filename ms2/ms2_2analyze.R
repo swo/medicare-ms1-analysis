@@ -56,9 +56,8 @@ if (any(is.na(abg$bug))) stop('missing bug names')
 
 summarize_abg = function(df, place_name) {
     group_by_(df, 'bug', 'drug_group', place_name) %>%
-    summarize(mean_percent_nonsusceptible=weighted.mean(percent_nonsusceptible, sqrt(n_isolates)),
+    summarize(mean_percent_nonsusceptible=weighted.mean(percent_nonsusceptible, n_isolates),
               n_place_antibiograms=n()) %>%
-    mutate(place_weight=sqrt(n_place_antibiograms)) %>%
     ungroup()
 }
 
@@ -67,7 +66,7 @@ hrr_abg = summarize_abg(abg, 'hrr') %T>% write_tsv('abg_hrr.tsv')
 
 linear_model = function(df, y, xs) {
   frmla = as.formula(str_interp("${y} ~ ${str_c(xs, collapse=' + ')}"))
-  m = lm(formula=frmla, weights=place_weight, data=df)
+  m = lm(formula=frmla, weights=n_place_antibiograms, data=df)
   
   anova_res = anova(m) %>%
     tidy %>%
@@ -116,40 +115,20 @@ hrr_out = hrr %>%
   group_by(hrr) %>%
   do(head(., 1))
 
-hrr_results2 = ineq %>%
+hrr_results = ineq %>%
   filter(unit_type=='hrr') %>%
   mutate(hrr=as.integer(unit)) %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   left_join(hrr_out, by='hrr') %>%
   mutate(y=mean_percent_nonsusceptible/100) %>%
   group_by(bug, drug_group) %>%
-  do(models(., 'y', 'fnz', c('mean', 'fnz'))) %>%
+  do(models(., 'y', 'fnz', c('fnz', 'mean'))) %>%
   ungroup()
 
-add_pred = function(df, y, xs) {
-  m = lm(as.formula(str_interp("${y} ~ ${x}")), data=df)
-  mutate(df, pred=m$fitted.values)
-}
-
-r = ineq %>%
-  filter(unit_type=='hrr') %>%
-  mutate(hrr=as.integer(unit)) %>%
-  right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
-  left_join(hrr_out, by='hrr') %>%
-  mutate(y=mean_percent_nonsusceptible/100) %>%
-  group_by(bug, drug_group) %>%
-  do(linear_model(., 'y', c('f1', 'f2'))) %>%
-  ungroup()
-
-add_resid = function(df, y, x) {
-  m = lm(as.formula(str_interp("${y} ~ ${x}")), data=df)
-  r = resid(m)
-  mutate(df, r=r)
-}
-  
-state_results2 = ineq %>%
+state_results = ineq %>%
   filter(unit_type=='state') %>%
   rename(state=unit) %>%
+  left_join(regions, by='state') %>%
   right_join(state_abg, by=c('state', 'drug_group')) %>%
   mutate(y=mean_percent_nonsusceptible/100) %>%
   group_by(bug, drug_group) %>%
