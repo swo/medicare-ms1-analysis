@@ -106,8 +106,9 @@ models = function(df) {
   bind_rows(
     linear_model(df, 'y', 'mean') %>% mutate(model='univariate_mean'),
     linear_model(df, 'y', 'fnz') %>% mutate(model='univariate_fnz'),
+    linear_model(df, 'y', 'mup') %>% mutate(model='univariate_mup'),
     spearman_model(df, 'y', 'fnz') %>% mutate(model='spearman'),
-    linear_model(df, 'y', c('fnz', 'mean')) %>% mutate(model='multivariate')
+    linear_model(df, 'y', c('fnz', 'mup')) %>% mutate(model='multivariate')
   ) %>%
     mutate(n_data=nrow(df))
 }
