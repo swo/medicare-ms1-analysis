@@ -56,7 +56,7 @@ if (any(is.na(abg$bug))) stop('missing bug names')
 
 summarize_abg = function(df, place_name) {
     group_by_(df, 'bug', 'drug_group', place_name) %>%
-    summarize(mean_percent_nonsusceptible=weighted.mean(percent_nonsusceptible, n_isolates),
+    summarize(mean_percent_nonsusceptible=weighted.mean(percent_nonsusceptible, sqrt(n_isolates)),
               n_place_antibiograms=n()) %>%
     ungroup()
 }
@@ -101,19 +101,21 @@ spearman_model = function(df, y_name, x_name) {
              p.value=m$p.value)
 }
 
-models = function(df, y, uni_x, multi_xs) {
+models = function(df) {
   bind_rows(
-    linear_model(df, y, uni_x) %>% mutate(model='univariate'),
-    spearman_model(df, y, uni_x) %>% mutate(model='spearman'),
-    linear_model(df, y, multi_xs) %>% mutate(model='multivariate')
+    linear_model(df, 'y', 'mean') %>% mutate(model='univariate_mean'),
+    linear_model(df, 'y', 'fnz') %>% mutate(model='univariate_fnz'),
+    spearman_model(df, 'y', 'fnz') %>% mutate(model='spearman'),
+    linear_model(df, 'y', c('fnz', 'mean')) %>% mutate(model='multivariate')
   ) %>%
     mutate(n_data=nrow(df))
 }
 
 hrr_out = hrr %>%
-  select(hrr, state, region) %>%
-  group_by(hrr) %>%
-  do(head(., 1))
+  count(hrr, region) %>%
+  filter(n==max(n)) %>%
+  ungroup() %>%
+  select(hrr, region)
 
 hrr_results = ineq %>%
   filter(unit_type=='hrr') %>%
@@ -122,7 +124,7 @@ hrr_results = ineq %>%
   left_join(hrr_out, by='hrr') %>%
   mutate(y=mean_percent_nonsusceptible/100) %>%
   group_by(bug, drug_group) %>%
-  do(models(., 'y', 'fnz', c('fnz', 'mean'))) %>%
+  do(models(.)) %>%
   ungroup()
 
 state_results = ineq %>%
@@ -132,7 +134,7 @@ state_results = ineq %>%
   right_join(state_abg, by=c('state', 'drug_group')) %>%
   mutate(y=mean_percent_nonsusceptible/100) %>%
   group_by(bug, drug_group) %>%
-  do(models(., 'y', 'fnz', c('fnz', 'mean'))) %>%
+  do(models(.)) %>%
   ungroup()
 
 bind_rows(

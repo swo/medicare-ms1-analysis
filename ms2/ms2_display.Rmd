@@ -12,7 +12,7 @@ import::from(tools, md5sum)
 library(forcats)
 ```
 
-```{r load_data}
+```{r load_data, cache.extra=c(md5sum('ineq.tsv'), md5sum('results.tsv'))}
 ineq = read_tsv('ineq.tsv') %>%
   group_by(drug_group, unit_type, unit) %>%
   summarize_at(vars(mean, fnz), mean) %>%
@@ -132,7 +132,16 @@ The gray line shows $\beta_{f_>} = 1$.
 
 ```{r hrr_linear}
 results %>%
-  filter(model=='univariate', unit_type=='hrr', term=='fnz') %>%
+  filter(model=='univariate_fnz', unit_type=='hrr', term=='fnz') %>%
+  interval_plot() +
+  geom_hline(yintercept=1, col='gray') +
+  ylab(expression(beta[f])) +
+  ggtitle("Linear univariate, HRR")
+```
+
+```{r}
+results %>%
+  filter(model=='univariate_mean', unit_type=='hrr', term=='mean') %>%
   interval_plot() +
   geom_hline(yintercept=1, col='gray') +
   ylab(expression(beta[f])) +
@@ -141,7 +150,7 @@ results %>%
 
 ```{r state_linear}
 results %>%
-  filter(model=='univariate', unit_type=='state', term=='fnz') %>%
+  filter(model=='univariate_fnz', unit_type=='state', term=='fnz') %>%
   interval_plot() +
   ylab(expression(beta[f])) +
   ggtitle("Linear univariate, state")
@@ -206,57 +215,28 @@ results %>%
 
 There are a few significant results:
 
-- *E. faecium* and $\beta$-lactams have a postive relationship (implying higher mean consumption, given the same fraction of people consuming, goes with more resistance)
 - *E. coli* and Bactrim have a *negative* relationship (higher consumption goes with *less* resistance)
+- *E. faecium* and $\beta$-lactams have a postive relationship (implying higher mean consumption, given the same fraction of people consuming, goes with more resistance)
 - *S. pneumoniae* and tetracyclines have a negative relationship
+
+The second two, *E. faecium* with $\beta$-lactams and pneumococcus with tetracyclines, are not problematic: in both cases, neither $R \sim f_>$ nor $R \sim \mu$ is significant. We're only interested in cases where $f_>$ gives information and $\mu$ gives information beyond that. There are cases where $f_>$ doesn't appear to give any information.
 
 And some marginal results:
 
-- *E. coli* and $\beta$-lactams, negative relationship, HRR only
-- Non-MRSA *S. aureus* and first-generation cephalosporins, negative, HRR only
-- *E. faecium* and nitro, negative, both HRR and state
-- *S. aureus* and clinda, positive, state only
-- *S. aureus* and tetracyclines, positive, state only
-- *E. cloacae* and quinolones, positive, state only
-
-The positive relationships are not troubling: it means that it might be that increasing consumption among the consumers can increase resistance. The negative relationships are troubling: how could decreasing consumption among consumers increase resistance?
-
-### E. faecium and beta-lactams
-
-This one doesn't worry me. First, the univariate regression $R \sim f_>$ isn't significant. Second, the ANOVA gives different results depending on the order of the variables: if $\mu$ goes first, it is non-significant but $f_>$, going second, is; conversely, if $f_>$ goes first, then $\mu$ is significant. So I think this is a weird case about collinearity.
-
-```{r efaecium_betalactams}
-ineq %>%
-  filter(unit_type=='hrr') %>%
-  mutate(hrr=as.integer(unit)) %>% left_join(hrr_out, by='hrr') %>%
-  right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
-  filter(bug=='Ec. faecium', drug_group=='beta_lactam') %>%
-  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=region)) +
-  geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
-  geom_smooth(method='lm', se=F) +
-  geom_point() +
-  xlab('fraction who consumed beta-lactams') +
-  ylab('Beta-lactam resistance E. faecium') +
-  ggtitle('E. faecium & beta-lactams across HRRs')
-
-ineq %>%
-  filter(unit_type=='state') %>%
-  rename(state=unit) %>%
-  left_join(regions, by='state') %>%
-  right_join(state_abg, by=c('state', 'drug_group')) %>%
-  filter(bug=='Ec. faecium', drug_group=='beta_lactam') %>%
-  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=region)) +
-  geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
-  geom_smooth(method='lm', se=F) +
-  geom_point() +
-  xlab('fraction who consumed beta-lactams') +
-  ylab('Beta-lactam resistance E. faecium') +
-  ggtitle('E. faecium & beta-lactams across states')
-```
+- *E. coli* and $\beta$-lactams, negative relationship, HRR only; significant in univariate regressions $R \sim f_>$
+- *E. cloacae* and quinolones, positive, state only; marginally significant in univariate
+- Non-MRSA *S. aureus* and first-generation cephalosporins, negative, HRR only; but not significant in univariate
+- *E. faecium* and nitro, negative, both HRR and state; not significant in univariate
+- *S. aureus* and clinda, positive, state only; not significant in univariate
+- *S. aureus* and tetracyclines, positive, state only; not significant in univariate
 
 ### E. coli and Bactrim
 
-From the Spearman and univariate models, Bactrim resistance in *E. coli* is correlated with increased resistance (black line). When breaking that apart by region, however, there are different relationship (colored lines).
+This negative relationship is the most tricky.
+
+First, the regression results are equivocal. Regressing $r ~ \mu$, where $r$ are the residuals from the regression $R ~ f_>$, gives a non-significant result. An ANOVA analysis shows that sequential application of $f_>$ and $\mu$ as predictors of $R$ both explain non-trivial variance; but if the order is reversed, and $\mu$ is used first, then it *doesn't* explain any variance. This makes me think that there is just some weird interaction between the two terms in the multiple regression.
+
+Second, from the Spearman and univariate models, Bactrim resistance in *E. coli* is correlated with increased resistance (black line). When breaking that apart by region, however, there are different relationship (colored lines). This makes it seem like there is something strange going on.
 
 ```{r ecoli_bactrim}
 ineq %>%
@@ -288,24 +268,38 @@ ineq %>%
   ggtitle('E. coli & Bactrim across states')
 ```
 
-### S. pneumonia and tetracyclines
+### E. coli and beta-lactams
 
-This one doesn't bother me either. Tetracycline resistance in pneumococcus not significantly related ot tetracycline consumption in the univariate models; the coefficient is almost exactly zero. If you run a regression $R \sim \mu$, you get a non-significant result. So you only get this relationship *after* you correct for an approximately flat relationship. Not promising.
+This negative relationship was significant only for HRRs, not states. Not surprisingly, there is something weird going on with the HRRs: the Southern HRRs are all above the $R \sim f_>$ line, suggesting that the relationship with the mean is just a predictor about region.
 
-```{r pneumo_tetra}
+```{r ecoli_betalactam}
 ineq %>%
   filter(unit_type=='hrr') %>%
   mutate(hrr=as.integer(unit)) %>% left_join(hrr_out, by='hrr') %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
-  filter(bug=='S. pneumoniae', drug_group=='tetracycline') %>%
+  filter(bug=='E. coli', drug_group=='beta_lactam') %>%
   filter(mean_percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
   ggplot(aes(x=fnz, y=mean_percent_nonsusceptible, color=region)) +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
   geom_point() +
-  xlab('fraction who consumed Bactrim') +
-  ylab('Bactrim-resistance E. coli') +
-  ggtitle('S. pneumonia & Bactrim across HRRs')
+  xlab('fraction who consumed beta-lactams') +
+  ylab('Beta-lactam resistance in E. coli') +
+  ggtitle('E. coli & beta-lactams across HRRs')
+
+ineq %>%
+  filter(unit_type=='state') %>%
+  rename(state=unit) %>%
+  left_join(regions, by='state') %>%
+  right_join(state_abg, by=c('state', 'drug_group')) %>%
+  filter(bug=='E. coli', drug_group=='beta_lactam') %>%
+  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=region)) +
+  geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
+  geom_smooth(method='lm', se=F) +
+  geom_point() +
+  xlab('fraction who consumed beta-lactams') +
+  ylab('Beta-lactam resistance E. coli') +
+  ggtitle('E. coli & beta-lactams across states')
 ```
 
 ## Specific plots
