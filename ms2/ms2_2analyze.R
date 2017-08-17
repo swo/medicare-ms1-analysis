@@ -1,8 +1,7 @@
 # Consumption data
 ineq = read_tsv('ineq.tsv') %>%
-  mutate(f0=n_0/n_bene, f1=n_1/n_bene, f2=n_2p/n_bene) %>%
   group_by(drug_group, unit_type, unit) %>%
-  summarize_at(vars(mean, fnz, f0, f1, f2, mean), mean) %>%
+  summarize_if(is.numeric, mean) %>%
   ungroup() %>%
   mutate(mup=mean/fnz)
 
@@ -107,8 +106,10 @@ models = function(df) {
     linear_model(df, 'y', 'mean') %>% mutate(model='univariate_mean'),
     linear_model(df, 'y', 'fnz') %>% mutate(model='univariate_fnz'),
     linear_model(df, 'y', 'mup') %>% mutate(model='univariate_mup'),
+    linear_model(df, 'y', 'nb_mu') %>% mutate(model='univariate_nb_mu'),
     spearman_model(df, 'y', 'fnz') %>% mutate(model='spearman'),
-    linear_model(df, 'y', c('fnz', 'mup')) %>% mutate(model='multivariate')
+    linear_model(df, 'y', c('fnz', 'mup')) %>% mutate(model='multivariate'),
+    linear_model(df, 'y', c('nb_mu', 'nb_size')) %>% mutate(model='nb')
   ) %>%
     mutate(n_data=nrow(df))
 }

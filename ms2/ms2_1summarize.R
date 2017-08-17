@@ -30,16 +30,16 @@ inequalities = function(pde, drug_group, unit_type, unit, n_bene) {
   x = pad0(filtered_pde$n_claims, n_bene)
   nzx = nonzero(x)
 
-  nb_par = fitdistrplus::mledist(x, 'nbinom')$estimate
+  nb_par = fitdistrplus::fitdist(x, 'nbinom')$estimate
   nb_size = nb_par['size']
-  nb_prob = nb_size / (nb_size + nb_par['mu'])
+  nb_mu = nb_par['mu']
 
   stopifnot(length(x) == n_bene)
 
-  data_frame(drug_group=drug_group,
-             unit_type=unit_type,
-             unit=unit,
-             n_bene=n_bene,
+  data_frame(drug_group,
+             unit_type,
+             unit,
+             n_bene,
              n_0=sum(x==0),
              n_1=sum(x==1),
              n_2p=sum(x>1),
@@ -47,7 +47,9 @@ inequalities = function(pde, drug_group, unit_type, unit, n_bene) {
              mean=mean(x),
              mean_without_1=mean(without_1(x)),
              mean_without_max=mean(without_max(x)),
-             fnz=fraction_nonzero(x))
+             fnz=fraction_nonzero(x),
+             nb_size,
+             nb_mu)
 }
 
 # auxiliary data

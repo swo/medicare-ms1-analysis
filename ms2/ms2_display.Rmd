@@ -15,7 +15,7 @@ library(forcats)
 ```{r load_data, cache.extra=c(md5sum('ineq.tsv'), md5sum('results.tsv'))}
 ineq = read_tsv('ineq.tsv') %>%
   group_by(drug_group, unit_type, unit) %>%
-  summarize_at(vars(mean, fnz), mean) %>%
+  summarize_if(is.numeric, mean) %>%
   ungroup() %>%
   mutate(mup=mean/fnz)
 
@@ -180,7 +180,30 @@ ineq %>%
   scale_color_manual(values=cbbPalette)
 ```
 
-The tetracyclines and Bactrim are the interesting exceptions: in these drugs, states where consumption is more widespread are the states where consumption per consumer is lower.
+The tetracyclines and Bactrim are the interesting exceptions: in these drugs, states where consumption is more widespread are the states where consumption per consumer is lower. (The trend in clindamycin is not significant.) For tetracyclines, there appear to be downward trends within regions (except the Northeast, where the trend is up). For Bactrim, there's a Simpson's paradox: the trend is down overall, and down for the South, but it's up for all the other regions.
+
+In both cases, it seems like the South is the mass with the most leverage, and it leverages downward.
+
+For $\beta$-lactams, cephalosporins, clindamycin, macrolides, and quinolones, the slopes seem to mostly agree with one another. This suggests that tetracycline and Bactrim prescribing are somehow quite variable between regions.
+
+```{r fnz_mup_tetra_bactrim}
+ineq %>%
+  #filter(unit_type=='hrr', drug_group %in% c('tetracycline', 'tmp_smx')) %>%
+  filter(unit_type=='hrr') %>%
+  filter(mup < 2.2) %>% # get rid of one outlier
+  mutate(hrr=as.integer(unit)) %>% left_join(hrr_out, by='hrr') %>%
+  ggplot(aes(x=fnz, y=mup, color=region)) +
+  facet_wrap(~drug_group, scales='free') +
+  geom_smooth(method='lm', se=F, aes(color=NULL), color='gray') +
+  geom_smooth(method='lm', se=F) +
+  geom_point(shape=1) +
+  xlab(expression(f['>'])) +
+  ylab(expression(mu['>'])) +
+  ggtitle('Mean nonzero consumption vs. fraction consuming, states') +
+  theme_minimal()
+```
+
+Tetracycline and Bactrim are interesting: the South has this long tail where $f_>$ is exceptionally high and $\mu_>$ is low. I imagined a model where the South was like the Midwest, but just with more people taking one does of, say, Bactrim. So it goes from $d$ doses into $c$ consumers to $d + \Delta c$ doses into $c + \Delta c$ consumers. This predicts that $\mu'_> = (\mu_> + \Delta f_>)/(1 + \Delta f_>)$. This prediction is too high: it's not *just* that more people in some parts of the South are getting these drugs; it's also that those getting the drug are getting less of it.
 
 ## The South has more consumers per capita
 
