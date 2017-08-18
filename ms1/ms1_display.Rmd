@@ -210,17 +210,27 @@ read_tsv('tables/claims_by_race.tsv') %>%
 Adjusted changes were computed using a Poisson regression predicting claims per capita. The unit of analysis were individual beneficiaries in each year. The covariates in the regression were age, number of chronic conditions, dual eligibility, sex, race (white or not), and region.
 
 ```{r adjusted_changes}
-x = model_abx %>%
+adjusted_changes = model_abx %>%
   filter(term=='year0') %>%
   select(antibiotic, pct_change, ci_low, ci_high) %>%
   arrange(pct_change) %>%
   mutate(antibiotic=fct_inorder(antibiotic),
          antibiotic=fct_relevel(antibiotic, 'overall', after=Inf))
 
-x %>%
+unadjusted_changes = bind_rows(claims_by_abx, claims_overall) %>%
+  filter(antibiotic %in% c('overall', top_abx), year %in% c(2011, 2014)) %>%
+  select(antibiotic, year, cpkp) %>%
+  spread(year, cpkp) %>%
+  mutate(change=(`2014`-`2011`)/3,
+         fold_change=change/`2011`,
+         pct_change=100*fold_change) %>%
+  select(antibiotic, pct_change)
+
+adjusted_changes %>%
   ggplot(aes(x=antibiotic, y=pct_change, ymin=ci_low, ymax=ci_high)) +
   geom_bar(stat='identity', fill=NA, color='black') +
   geom_errorbar(width=0.5) +
+  geom_point(dat=unadjusted_changes, aes(x=antibiotic, y=pct_change, ymin=NULL, ymax=NULL), color='red') +
   coord_flip() +
   xlab('') +
   ylab('adjusted yearly change in consumption (%)') +
