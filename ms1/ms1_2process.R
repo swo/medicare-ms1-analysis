@@ -100,6 +100,34 @@ overall_model = bene %>%
   rename(y=n_claims) %>%
   model_f(abx_frmla, 'overall')
 
+# model overall consumption, but look at individual populations
+covariates = c('age0', 'is_female', 'race', 'is_dual', 'region')
+reduced_model = function(df, missing_term, name) {
+  remaining_covariates = covariates[-which(covariates == missing_term)] %>% str_c(collapse=' + ')
+  frmla = str_interp("y ~ year0 + n_cc + ${remaining_covariates}") %>% as.formula
+  
+  df %>%
+    rename(y=n_claims) %>%
+    model_f(frmla, name)
+}
+
+bind_rows(
+  bene %>% filter(between(age, 65, 75)) %>% reduced_model('age0', 'age65_75'),
+  bene %>% filter(between(age, 76, 85)) %>% reduced_model('age0', 'age76_85'),
+  bene %>% filter(between(age, 86, 95)) %>% reduced_model('age0', 'age86_95'),
+  bene %>% filter(is_female) %>% reduced_model('is_female', 'female'),
+  bene %>% filter(!is_female) %>% reduced_model('is_female', 'male'),
+  bene %>% filter(race=='white') %>% reduced_model('race', 'white'),
+  bene %>% filter(race=='black') %>% reduced_model('race', 'black'),
+  bene %>% filter(race=='Hispanic') %>% reduced_model('race', 'Hispanic'),
+  bene %>% filter(race=='other') %>% reduced_model('race', 'other'),
+  bene %>% filter(region=='South') %>% reduced_model('region', 'South'),
+  bene %>% filter(region=='Midwest') %>% reduced_model('region', 'Midwest'),
+  bene %>% filter(region=='West') %>% reduced_model('region', 'West'),
+  bene %>% filter(region=='Northeast') %>% reduced_model('region', 'Northeast')
+) %>%
+  output_table('model_overall_demography')
+
 # get models for individual abx
 single_f = function(abx, frmla) {
   pde %>%
@@ -175,12 +203,22 @@ dxrx_binary = dxrx %>%
   right_join(bene, by=c('year', 'bene_id')) %>%
   replace_na(dx_replace)
 
+# risk ratio
+rr = function(or, p) or / (1 - p + (p * or))
+
 # adjusted OR for diagnoses
 # i.e., logistic regression bene_had_dx_in_year? ~ year + covariates
 dx_adjust_f = function(dxrx, dx) {
   frmla = as.formula(str_interp("${dx} ~ year0 + age0 + n_cc + is_white + is_dual + is_female + region"))
-  glm(frmla, data=dxrx, family='binomial') %>%
-    tidy %>%
+  m = glm(frmla, data=dxrx, family='binomial')
+  yearly_risks = dxrx %>%
+    mutate(risk=predict(m, type='response')) %>%
+    group_by(year0) %>%
+    summarize(risk=mean(risk)) %>%
+    mutate(term=str_interp("yearly_risk_year0=${year0}"), estimate=risk) %>%
+    select(term, estimate)
+  
+  bind_rows(tidy(m), yearly_risks) %>%
     mutate(diagnosis_type=dx)
 }
 

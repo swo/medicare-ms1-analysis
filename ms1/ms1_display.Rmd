@@ -159,55 +159,56 @@ claims_by_top_abx %>%
 ## Claims by age group
 
 ```{r claims_by_age}
-read_tsv('tables/claims_by_age.tsv') %>%
-  mutate(age_group=case_when(between(.$age, 65, 75) ~ '65-75',
-                             between(.$age, 76, 85) ~ '76-85',
-                             between(.$age, 86, 95) ~ '86-95')) %>%
-  group_by(year, age_group) %>%
+change_demog = read_tsv('tables/model_overall_demography.tsv') %>%
+  mutate(estimate=3*estimate,
+         std.error=sqrt(3)*std.error) %>%
+  model_ci() %>%
+  filter(term=='year0') %>%
+  select(name, adj_change=change_str)
+
+claims_by = function(x) {
+  read_tsv(str_interp("tables/claims_by_${x}.tsv")) %>%
+    rename_(.dots=list(name=x)) %>%
+    select(name, year, cpkp) %>%
+    filter(year %in% c(2011, 2014)) %>%
+    spread(year, cpkp) %>%
+    mutate(pct_change=round((`2014`-`2011`)/`2011`*100, 2)) %>%
+    mutate_at(vars(`2011`, `2014`), round) %>%
+    mutate(group=x)
+}
+
+# do claims by age group separate
+# this could be baked into the analysis step
+claims_by_age = read_tsv('tables/claims_by_age.tsv') %>%
+  filter(year %in% c(2011, 2014)) %>%
+  mutate(name=case_when(between(.$age, 65, 75) ~ 'age65_75',
+                        between(.$age, 76, 85) ~ 'age76_85',
+                        between(.$age, 86, 95) ~ 'age86_95')) %>%
+  group_by(year, name) %>%
   summarize_at(vars(n_bene, n_claims), sum) %>%
   ungroup() %>%
-  mutate(cpkp=round(1000*n_claims/n_bene)) %>%
-  select(year, age_group, cpkp) %>%
+  mutate(cpkp=1000*n_claims/n_bene) %>%
+  select(year, name, cpkp) %>%
   spread(year, cpkp) %>%
+  mutate(pct_change=round((`2014`-`2011`)/`2011`*100, 2)) %>%
+  mutate_at(vars(`2011`, `2014`), round) %>%
+  mutate(group='age')
+
+# use a common interface for all the others
+bind_rows(claims_by_age,
+          claims_by('sex'),
+          claims_by('race'),
+          claims_by('region')) %>%
+  left_join(change_demog, by='name') %>%
+  select(group, name, `2011`, `2014`, pct_change, adj_change) %>%
   kable
 ```
 
-## Consumption by sex
-
-```{r claims_by_sex}
-read_tsv('tables/claims_by_sex.tsv') %>%
-  select(sex, year, cpkp) %>%
-  spread(year, cpkp) %>%
-  arrange(desc(`2011`)) %>% 
-  mutate_at(vars(-sex), round) %>%
-  kable
-```
-
-## Consumption by region
-
-```{r claims_by_region}
-read_tsv('tables/claims_by_region.tsv') %>%
-  select(region, year, cpkp) %>%
-  spread(year, cpkp) %>%
-  arrange(desc(`2011`)) %>% 
-  mutate_at(vars(-region), round) %>%
-  kable
-```
-
-## Consumption by race
-
-```{r claims_by_race}
-read_tsv('tables/claims_by_race.tsv') %>%
-  select(race, year, cpkp) %>%
-  spread(year, cpkp) %>%
-  arrange(desc(`2011`)) %>% 
-  mutate_at(vars(-race), round) %>%
-  kable
-```
-
-# Adjusted consumption changes
+# Adjusted consumption changes by drug
 
 Adjusted changes were computed using a Poisson regression predicting claims per capita. The unit of analysis were individual beneficiaries in each year. The covariates in the regression were age, number of chronic conditions, dual eligibility, sex, race (white or not), and region.
+
+## By drug
 
 ```{r adjusted_changes}
 adjusted_changes = model_abx %>%
