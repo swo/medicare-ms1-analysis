@@ -72,6 +72,8 @@ The *S. aureus* antibiograms are listed as MSSA, MRSA, or plain old *S. aureus*.
 
 I included both inpatient and outpatient data, because although inpatient resistances were mostly higher than outpatient resistances, the overall trends by state appeared to be the same for both sets of data, and the difference between in- vs. outpatient were smaller than the differences between extreme ends of the states.
 
+I summarized the resistance data for each geographical unit with a weighted mean, where the weight was the square root of the number of isolates. (In the rare cases where the number of isolates was not reported, I put in the median number of isolates for that organism.)
+
 ## Bug/drug combinations
 
 I started by considering these `r nrow(possible_bug_drug)` bug/drug combinations on the basis of their clinical relevance and plausibility:
@@ -80,9 +82,11 @@ I started by considering these `r nrow(possible_bug_drug)` bug/drug combinations
 
 For each combination, I computed three models:
 
-- a Spearman correlation of mean claims per beneficiary against mean percent nonsusceptible
-- a linear model predicting mean resistance from mean consumption
-- a linear model predicting mean resistance from fraction nonzero and nonzero Gini
+- a Spearman correlation of mean claims per beneficiary $\mu$ against mean percent nonsusceptible $R$
+- a linear model predicting mean resistance from the fraction $f_>$ of people who are consumers
+- a linear model predicting mean resistance from $f_>$ and mean consumption among consumers $\mu_> = \mu/f_>$.
+
+When running regressions, I weight the data points by the number of antibiograms present in that unit. (The weights in a linear regression should be proportional to $1/\sigma^2$, and we generally expect that the standard error of estimators scales like $1/\sqrt{n}$.)
 
 # Results
 
@@ -90,7 +94,7 @@ For each combination, I computed three models:
 
 ## Spearman
 
-The plot shows the Spearman correlation coefficient $\rho$ between resistance $R$ and fraction $f_>$ of beneficiaries who are consumers. Two stars after the bug/drug combination implies that the adjusted $p < 0.05$, and one star means the unadjusted $p < 0.05$. Intervals show 95% confidence intervals. 
+The plot shows the Spearman correlation coefficient $\rho$ between resistance $R$ and mean consumption $\mu$. Two stars after the bug/drug combination implies that the adjusted $p < 0.05$, and one star means the unadjusted $p < 0.05$. Intervals show 95% confidence intervals. 
 
 ```{r hrr_spearman}
 interval_plot = function(df) {
@@ -110,7 +114,7 @@ results %>%
   filter(model=='spearman', unit_type=='hrr') %>%
   interval_plot() +
   ylab("Spearman's rho") +
-  ggtitle("Spearman, HRR")
+  ggtitle("Spearman, res. vs. mean consumption, HRR")
 ```
 
 ```{r state_spearman}
@@ -118,7 +122,7 @@ results %>%
   filter(model=='spearman', unit_type=='state') %>%
   interval_plot() +
   ylab("Spearman's rho") +
-  ggtitle("Spearman, state")
+  ggtitle("Spearman, res. vs. mean consumption, state")
 ```
 
 All the demonstrably-different-from-zero relationships are positive. This jibes with our general understanding that more consumption means more resistance.
@@ -126,6 +130,8 @@ All the demonstrably-different-from-zero relationships are positive. This jibes 
 This table has the significant and marginally significant results from the previous figure.
 
 ## Linear models
+
+We're interested in how it is that mean consumption drives resistance. Is it at the intensive or extensive margin? We separate that by writing $\mu = f_> \mu_>$.
 
 I run models $R \sim f_>$, that is $R^{(u)} = \beta_0 + \beta_{f_>} f_>^{(u)} + \varepsilon^{(u)}$, where the superscript $u$ indicates the geographical unit (HRR or state). The plots show $\beta_{f_>}$. This model is equivalent to one in which the population resistance $R^{(u)}$ in unit $u$ is the mean of the resistance $r_i^{(u)}$ in the individual people $i$ in unit $u$, where $r_i^{(u)}$ is $\beta_0$ if person $i$ took no drug and $\beta_0 + \beta_{f_>}$ if that person took at least one dose.
 
@@ -136,7 +142,7 @@ results %>%
   filter(model=='univariate_fnz', unit_type=='hrr', term=='fnz') %>%
   interval_plot() +
   geom_hline(yintercept=1, col='gray') +
-  ylab(expression(beta[f])) +
+  ylab(expression(beta[f['>']])) +
   ggtitle("Linear univariate, HRR")
 ```
 
@@ -144,9 +150,11 @@ results %>%
 results %>%
   filter(model=='univariate_fnz', unit_type=='state', term=='fnz') %>%
   interval_plot() +
-  ylab(expression(beta[f])) +
+  ylab(expression(beta[f['>']])) +
   ggtitle("Linear univariate, state")
 ```
+
+Why should the linear models do so much better than the Spearman? I think it's because, in the linear model, I can weight the geographical units that have more antibiograms. The Spearman model treats them all equally.
 
 # Unevenness of consumption and antibiotic resistance
 
@@ -186,9 +194,8 @@ In both cases, it seems like the South is the mass with the most leverage, and i
 
 For $\beta$-lactams, cephalosporins, clindamycin, macrolides, and quinolones, the slopes seem to mostly agree with one another. This suggests that tetracycline and Bactrim prescribing are somehow quite variable between regions.
 
-```{r fnz_mup_tetra_bactrim}
+```{r fnz_mup_by_drug}
 ineq %>%
-  #filter(unit_type=='hrr', drug_group %in% c('tetracycline', 'tmp_smx')) %>%
   filter(unit_type=='hrr') %>%
   filter(mup < 2.2) %>% # get rid of one outlier
   mutate(hrr=as.integer(unit)) %>% left_join(hrr_out, by='hrr') %>%
@@ -219,7 +226,7 @@ ineq %>%
   geom_smooth(aes(color=NULL), method='lm', se=F, color='gray') +
   geom_point() +
   xlab('Fraction nonzero') + ylab('claims per beneficiary') +
-  ggtitle('Fraction consuming and mean consumption, states') +
+  ggtitle('All antibiotics, f> and mean consumption, states') +
   theme_minimal()
 ```
 
@@ -301,6 +308,34 @@ ineq %>%
   ylab('Bactrim resistance E. coli') +
   ggtitle('E. coli & Bactrim across states')
 ```
+
+Only the West has a significantly non-zero slope.
+
+### E. coli & Bactrim, Part II
+
+Weirdly, within each region, Bactrim resistance goes does as $\mu_>$ increases.
+
+```{r}
+hrr_ir = ineq %>%
+  filter(unit_type=='hrr') %>%
+  mutate(hrr=as.integer(unit)) %>% left_join(hrr_out, by='hrr') %>%
+  right_join(hrr_abg, by=c('hrr', 'drug_group'))
+
+hrr_ir %>%
+  filter(bug=='E. coli', drug_group=='tmp_smx') %>%
+  filter(mean_percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
+  ggplot(aes(x=mup, y=mean_percent_nonsusceptible, color=region)) +
+  geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
+  geom_smooth(method='lm', se=F) +
+  geom_point() +
+  xlab('mean Bactrim cons. among Bactrim-eaters') +
+  ylab('Bactrim-resistance E. coli') +
+  ggtitle('E. coli & Bactrim, mu>, HRRs')
+```
+
+Here, the South and West have significantly non-zero slopes.
+
+At least this explains, in a sense, why this relationship looks negative: the South is perched up high, so overall the black line goes down.
 
 ### E. faecium and beta-lactams
 

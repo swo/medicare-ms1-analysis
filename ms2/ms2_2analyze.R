@@ -40,7 +40,9 @@ good_combos = raw_abg %>%
   #select(bug, drug_group)
 
 abg = raw_abg %>%
+  # filter for only the "good" combinations
   semi_join(good_combos, by=c('bug', 'drug_group')) %>%
+  # compute the median number of isolates for each bug/drug combo
   (function(df) {
     filter(df, !is.na(n_isolates)) %>%
       group_by(bug, drug_group) %>%
@@ -103,12 +105,13 @@ spearman_model = function(df, y_name, x_name) {
 
 models = function(df) {
   bind_rows(
+    spearman_model(df, 'y', 'mean') %>% mutate(model='spearman'),
     linear_model(df, 'y', 'mean') %>% mutate(model='univariate_mean'),
     linear_model(df, 'y', 'fnz') %>% mutate(model='univariate_fnz'),
     linear_model(df, 'y', 'mup') %>% mutate(model='univariate_mup'),
     linear_model(df, 'y', 'nb_mu') %>% mutate(model='univariate_nb_mu'),
-    spearman_model(df, 'y', 'fnz') %>% mutate(model='spearman'),
     linear_model(df, 'y', c('fnz', 'mup')) %>% mutate(model='multivariate'),
+    linear_model(df, 'y', c('mup', 'fnz')) %>% mutate(model='multivariate'),
     linear_model(df, 'y', c('nb_mu', 'nb_size')) %>% mutate(model='nb')
   ) %>%
     mutate(n_data=nrow(df))
