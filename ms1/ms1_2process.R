@@ -8,9 +8,6 @@ regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
   select(state, region) %>%
   mutate(region=factor(region, levels=c('Northeast', 'West', 'Midwest', 'South')))
 
-dx_codes = read_tsv('../../data/fd_codes.tsv') %>%
-  select(code, diagnosis_type)
-
 # load data
 subtract_min = function(x) x - min(x)
 
@@ -22,10 +19,10 @@ bene = read_tsv('data/bene.tsv') %>%
   mutate(year0=subtract_min(year),
          age0=subtract_min(age))
 
-pde = read_tsv('data/pde.tsv')
+pde = read_tsv('data/pde.tsv') %>%
+  left_join(bene, by=c('year', 'bene_id'))
 
-dx_raw = read_tsv('data/dx.tsv') %>%
-  left_join(dx_codes, by='code')
+dx_raw = read_tsv('data/dx.tsv')
 
 output_table = function(x, base) write_tsv(x, sprintf('tables/%s.tsv', base))
 sem = function(x) sd(x) / sqrt(length(x))
@@ -69,6 +66,10 @@ top_abx = pde %>%
   count(antibiotic) %>%
   arrange(desc(n)) %$%
   head(antibiotic, 10)
+
+top_abx = c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin',
+            'trimethoprim/sulfamethoxazole', 'levofloxacin', 'amoxicillin/clavulanate',
+            'doxycycline', 'nitrofurantoin', 'clindamycin')
 
 # from here on, the denominators are taken from the beneficiary data grouped
 # in the same way as the consumption data, so we can use the summarize_by function
@@ -168,16 +169,31 @@ model_levo = single_f('levofloxacin', heart_frmla) %T>%
 
 ## DIAGNOSES ##
 # count diagnoses
-dx_counts = dx_raw %>%
-  select(dx_id, year, diagnosis_type) %>%
-  distinct() %>%
-  count(year, diagnosis_type) %T>%
+dx_counts = pde %>%
+  count(year, antibiotic, diagnosis_category) %>%
+  ungroup() %T>%
   output_table('dx_counts')
 
 # count delays
-dx_delays = dx_raw %>%
+dx_delays = pde %>%
   count(delay) %T>%
   output_table('dx_delay')
+
+dxrx = pde %>%
+  filter(antibiotic %in% top_abx) %>%
+  select(antibiotic, diagnosis_category) %>%
+  distinct() %>%
+  rowwise() %>%
+  do((function(a, d) {
+    write(str_c(a, ' ', d), file='log', append=TRUE)
+    dx_raw %>%
+      filter(antibiotic==a) %>%
+      mutate(y=diagnosis_category==d) %>%
+      glm(abx_frmla, data=., family=binomial) %>%
+      tidy %>%
+      mutate(antibiotic=a, diagnosis_category=d)
+  })(.$antibiotic, .$diagnosis_category))
+    
 
 # for each diagnosis, how often is each drug used?
 dx_freqs = dx_raw %>%
@@ -189,8 +205,9 @@ dxrx = dx_raw %>%
   select(year, bene_id, from_date, diagnosis_type, antibiotic) %>%
   mutate(antibiotic=fct_other(antibiotic, keep=c('none', top_abx))) %>%
   distinct() %>%
-  mutate(dummy=TRUE) %>% spread(antibiotic, dummy, fill=FALSE) %>%
-  left_join(bene, by=c('year', 'bene_id'))
+  count(year, antibiotic, diagnosis_type)
+  #mutate(dummy=TRUE) %>% spread(antibiotic, dummy, fill=FALSE) #%>%
+  #left_join(bene, by=c('year', 'bene_id'))
 
 dx_types = unique(dxrx$diagnosis_type)
 dx_replace = rep(FALSE, length(dx_types)) %>% as.list %>% setNames(dx_types)
