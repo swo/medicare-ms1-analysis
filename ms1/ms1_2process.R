@@ -1,31 +1,24 @@
-# Do all the heavy-lifting analyses so that the Rmd can just show the results
 library(forcats)
 
-# Load the census regions. Code them as factors so that Northeast is taken as
-# the baseline in the linear models.
-# NB: I put DC into the South
-regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
-  select(state, region) %>%
-  mutate(region=factor(region, levels=c('Northeast', 'West', 'Midwest', 'South')))
-
-dx_codes = read_tsv('../../data/fd_codes.tsv') %>%
-  select(code, diagnosis_type)
-
 # load data
+# NB: I put DC into the South
 subtract_min = function(x) x - min(x)
 
 bene = read_tsv('data/bene.tsv') %>%
-  mutate(heart_disease=AMI | ATRIALFB | CHF | ISCHMCHT) %>%
-  mutate(is_female=sex=='female', is_white=race=='white', is_dual=buyin_months>0) %>%
+  mutate(region=factor(region, levels=c('Northeast', 'West', 'Midwest', 'South')),
+         sex=factor(sex, levels=c('male', 'female')),
+         race=factor(race, levels=c('white', 'black', 'Hispanic', 'other')),
+         dual=buyin_months>0) %>%
   mutate(age=age-1) %>%
-  left_join(regions, by='state') %>%
   mutate(year0=subtract_min(year),
          age0=subtract_min(age))
 
 pde = read_tsv('data/pde.tsv')
 
-dx_raw = read_tsv('data/dx.tsv') %>%
-  left_join(dx_codes, by='code')
+dx = read_tsv('data/dx.tsv') %>%
+  left_join(bene, by=c('year', 'bene_id'))
+
+dx_pde = read_tsv('data/dx_pde.tsv')
 
 output_table = function(x, base) write_tsv(x, sprintf('tables/%s.tsv', base))
 sem = function(x) sd(x) / sqrt(length(x))
@@ -38,9 +31,9 @@ summarize_totals = function(df) {
             mean_n_cc=mean(n_cc),
             sd_n_cc=sd(n_cc),
             sem_n_cc=sem(n_cc),
-            n_female=sum(is_female),
-            n_white=sum(is_white),
-            n_dual=sum(is_dual),
+            n_female=sum(sex=='female'),
+            n_white=sum(race=='white'),
+            n_dual=sum(dual),
             n_region_south=sum(region=='South'),
             n_region_west=sum(region=='West'),
             n_region_northeast=sum(region=='Northeast'),
@@ -70,6 +63,10 @@ top_abx = pde %>%
   arrange(desc(n)) %$%
   head(antibiotic, 10)
 
+top_abx = c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin',
+            'trimethoprim/sulfamethoxazole', 'levofloxacin', 'amoxicillin/clavulanate',
+            'doxycycline', 'nitrofurantoin', 'clindamycin')
+
 # from here on, the denominators are taken from the beneficiary data grouped
 # in the same way as the consumption data, so we can use the summarize_by function
 summarize_by = function(bene, by) {
@@ -93,7 +90,7 @@ model_f = function(df, frmla, name) {
     mutate(name=name)
 }
 
-abx_frmla = y ~ year0 + age0 + n_cc + is_female + is_white + is_dual + region
+abx_frmla = y ~ year0 + age0 + n_cc + sex + race + dual + region
 
 # get models and predictions for all drugs combined
 overall_model = bene %>%
@@ -101,7 +98,7 @@ overall_model = bene %>%
   model_f(abx_frmla, 'overall')
 
 # model overall consumption, but look at individual populations
-covariates = c('age0', 'is_female', 'race', 'is_dual', 'region')
+covariates = c('age0', 'sex', 'race', 'dual', 'region')
 reduced_model = function(df, missing_term, name) {
   remaining_covariates = covariates[-which(covariates == missing_term)] %>% str_c(collapse=' + ')
   frmla = str_interp("y ~ year0 + n_cc + ${remaining_covariates}") %>% as.formula
@@ -115,8 +112,8 @@ bind_rows(
   bene %>% filter(between(age, 65, 75)) %>% reduced_model('age0', 'age65_75'),
   bene %>% filter(between(age, 76, 85)) %>% reduced_model('age0', 'age76_85'),
   bene %>% filter(between(age, 86, 95)) %>% reduced_model('age0', 'age86_95'),
-  bene %>% filter(is_female) %>% reduced_model('is_female', 'female'),
-  bene %>% filter(!is_female) %>% reduced_model('is_female', 'male'),
+  bene %>% filter(sex=='female') %>% reduced_model('sex', 'female'),
+  bene %>% filter(sex=='male') %>% reduced_model('sex', 'male'),
   bene %>% filter(race=='white') %>% reduced_model('race', 'white'),
   bene %>% filter(race=='black') %>% reduced_model('race', 'black'),
   bene %>% filter(race=='Hispanic') %>% reduced_model('race', 'Hispanic'),
@@ -152,103 +149,101 @@ model_fq = pde %>%
   model_f(abx_frmla, 'fluoroquinolone') %T>%
   output_table('model_fq')
 
-# special heart disease models
-# how many beneficiaries have heart disease?
-bene %>%
-  count(year, heart_disease) %>%
-  output_table('counts_heartdisease')
-
-# did azithro consumption decrease faster in benes with heart disease?
-heart_frmla = y ~ year0*heart_disease + age0 + n_cc + is_female + is_white + is_dual + region
-model_azithro = single_f('azithromycin', heart_frmla) %T>%
-  output_table('model_azithro')
-
-model_levo = single_f('levofloxacin', heart_frmla) %T>%
-  output_table('model_levo')
-
 ## DIAGNOSES ##
-# count diagnoses
-dx_counts = dx_raw %>%
-  select(dx_id, year, diagnosis_type) %>%
-  distinct() %>%
-  count(year, diagnosis_type) %T>%
+# total counts for each diagnosis
+# (to be adjusted to diagnoses per 1k ppl)
+dx_counts = dx %>%
+  count(year, diagnosis_category) %>%
+  ungroup() %>%
+  left_join(select(totals, year, n_bene), by=c('year')) %>%
+  mutate(dxpkp=1000*n/n_bene) %T>%
   output_table('dx_counts')
 
+# adjusted rates
+# unit of analysis is the individual
+# Poisson regression # dx ~ year + covariates
+dx_model_data = dx %>%
+  count(year, bene_id, diagnosis_category) %>%
+  ungroup() %>%
+  rename(y=n)
+
+dx_models = lapply(unique(dx$diagnosis_category), function(x) {
+  dx_model_data %>%
+    filter(diagnosis_category==x) %>%
+    right_join(bene, by=c('year', 'bene_id')) %>%
+    replace_na(list(y=0)) %>%
+    glm(abx_frmla, data=., family='poisson') %>%
+    tidy %>%
+    mutate(diagnosis_category=x)
+}) %>%
+  bind_rows() %T>%
+  output_table('dx_models')
+
 # count delays
-dx_delays = dx_raw %>%
+dx_delays = dx_pde %>%
   count(delay) %T>%
   output_table('dx_delay')
 
-# for each diagnosis, how often is each drug used?
-dx_freqs = dx_raw %>%
-  count(year, diagnosis_type, antibiotic) %>% ungroup() %T>%
-  output_table('dxrx_fractions')
-
-# create a table of dx (rows) with multiple abx as columns
-dxrx = dx_raw %>%
-  select(year, bene_id, from_date, diagnosis_type, antibiotic) %>%
-  mutate(antibiotic=fct_other(antibiotic, keep=c('none', top_abx))) %>%
-  distinct() %>%
-  mutate(dummy=TRUE) %>% spread(antibiotic, dummy, fill=FALSE) %>%
+# for each drug, how often is a diagnosis present?
+pde_dx_data = pde %>%
+  left_join(select(dx_pde, year, pde_id, dx_id, diagnosis_category), by=c('year', 'pde_id')) %>%
+  replace_na(list(diagnosis_category='none')) %>%
   left_join(bene, by=c('year', 'bene_id'))
 
-dx_types = unique(dxrx$diagnosis_type)
-dx_replace = rep(FALSE, length(dx_types)) %>% as.list %>% setNames(dx_types)
+# (NB: PDE can get double-counted, so need to use raw PDE counts
+# as denominator)
+pde_dx_counts = pde_dx_data %>%
+  count(year, antibiotic, diagnosis_category) %>%
+  ungroup() %>%
+  rename(n_pde_with_dx=n) %>%
+  left_join(select(claims_by_abx, year, antibiotic, n_pde_denom=n), by=c('year', 'antibiotic')) %>%
+  mutate(f_pde_with_dx=n_pde_with_dx/n_pde_denom) %T>%
+  output_table('pde_dx_counts')
 
-dxrx_binary = dxrx %>%
-  select(year, bene_id, diagnosis_type) %>%
-  distinct() %>%
-  mutate(dummy=TRUE) %>%
-  spread(diagnosis_type, dummy) %>%
-  right_join(bene, by=c('year', 'bene_id')) %>%
-  replace_na(dx_replace)
+# for each drug, how does the frequecy of a diagnosis
+# change with time, when adjusted for covariates?
+pde_dx_adjust_f = function(abx, dx) {
+  pde_dx_data %>%
+    filter(antibiotic==abx) %>%
+    mutate(y=diagnosis_category==dx) %>%
+    glm(abx_frmla, data=., family='binomial') %>%
+    tidy %>%
+    mutate(antibiotic=abx, diagnosis_category=dx)
+}
+
+pde_dx_models = crossing(antibiotic=top_abx, diagnosis_category=c('none', unique(dx$diagnosis_category))) %>%
+  rowwise() %>%
+  do(pde_dx_adjust_f(.$antibiotic, .$diagnosis_category)) %T>%
+  output_table('pde_dx_model')
+
+# for each diagnosis, how often is each drug present?
+dx_pde_data = dx %>%
+  left_join(select(dx_pde, year, pde_id, dx_id, antibiotic), by=c('year', 'dx_id')) %>%
+  replace_na(list(antibiotic='none'))
+
+dx_pde_counts = dx_pde_data %>%
+  count(year, diagnosis_category, antibiotic) %>%
+  ungroup() %>%
+  rename(n_dx_with_pde=n) %>%
+  left_join(select(dx_counts, year, diagnosis_category, n_dx_denom=n), by=c('year', 'diagnosis_category')) %>%
+  mutate(f_dx_with_pde=n_dx_with_pde/n_dx_denom) %T>%
+  output_table('dx_pde_counts')
+
+# for each diagnosis, how does the frequency of giving a drug
+# change over time, adjusted for covariates?
+dx_pde_adjust_f = function(dx, abx) {
+  dx_pde_data %>%
+    filter(diagnosis_category==dx) %>%
+    mutate(y=antibiotic==abx) %>%
+    glm(abx_frmla, data=., family='binomial') %>%
+    tidy %>%
+    mutate(antibiotic=abx, diagnosis_type=dx)
+}
+
+dx_pde_models = crossing(diagnosis_category=top_dx, antibiotic=top_abx) %>%
+  rowwise() %>%
+  do(dx_pde_adjust_f(.$antibiotic, .$diagnosis_category)) %T>%
+  output_table('dx_pde_model')
 
 # risk ratio
-rr = function(or, p) or / (1 - p + (p * or))
-
-# adjusted OR for diagnoses
-# i.e., logistic regression bene_had_dx_in_year? ~ year + covariates
-dx_adjust_f = function(dxrx, dx) {
-  frmla = as.formula(str_interp("${dx} ~ year0 + age0 + n_cc + is_white + is_dual + is_female + region"))
-  m = glm(frmla, data=dxrx, family='binomial')
-  yearly_risks = dxrx %>%
-    mutate(risk=predict(m, type='response')) %>%
-    group_by(year0) %>%
-    summarize(risk=mean(risk)) %>%
-    mutate(term=str_interp("yearly_risk_year0=${year0}"), estimate=risk) %>%
-    select(term, estimate)
-  
-  bind_rows(tidy(m), yearly_risks) %>%
-    mutate(diagnosis_type=dx)
-}
-
-dx_res = lapply(dx_types, function(x) dx_adjust_f(dxrx_binary, x)) %>%
-  bind_rows() %T>%
-  output_table('model_dx')
-
-# for a diagnosis type dx and an antibiotic, what is the trend in the probability
-# that that drug will be used for that diagnosis?
-# i.e., logistic regression drug_used? ~ dx_present?*year + covariates
-# we also ask about "any diagnosis", i.e., drug_used? ~ year + covariates
-dxrx_f = function(dxrx, dx, abx) {
-  if (dx=='any_dx') {
-    filter_f = function(df) df
-  } else {
-    filter_f = function(df) filter(df, diagnosis_type==dx)
-  }
-  
-  frmla = as.formula(str_interp("`${abx}` ~ year0 + age0 + n_cc + is_white + is_dual + is_female + region"))
-  
-  dxrx %>%
-    filter_f() %>%
-    glm_f(frmla, family='binomial') %>%
-    tidy %>%
-    mutate(diagnosis_type=dx, antibiotic=abx)
-}
-
-dxrx_res = crossing(diagnosis_type=dx_types,
-                    antibiotic=c('azithromycin', 'levofloxacin', 'amoxicillin/clavulanate', 'cephalexin', 'ciprofloxacin')) %>%
-  rowwise() %>%
-  do(dxrx_f(dxrx, .$diagnosis_type, .$antibiotic)) %>%
-  ungroup() %T>%
-  output_table('model_dxrx')
+#rr = function(or, p) or / (1 - p + (p * or))
