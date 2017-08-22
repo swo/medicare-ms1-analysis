@@ -202,19 +202,20 @@ pde_dx_counts = pde_dx_data %>%
 
 # for each drug, how does the frequecy of a diagnosis
 # change with time, when adjusted for covariates?
-pde_dx_adjust_f = function(abx, dx) {
-  pde_dx_data %>%
-    filter(antibiotic==abx) %>%
-    mutate(y=diagnosis_category==dx) %>%
-    glm(abx_frmla, data=., family='binomial') %>%
-    tidy %>%
-    mutate(antibiotic=abx, diagnosis_category=dx)
-}
-
-pde_dx_models = crossing(antibiotic=top_abx, diagnosis_category=c('none', unique(dx$diagnosis_category))) %>%
-  rowwise() %>%
-  do(pde_dx_adjust_f(.$antibiotic, .$diagnosis_category)) %T>%
-  output_table('pde_dx_model')
+# SWO: don't need this?
+# pde_dx_adjust_f = function(abx, dx) {
+#   pde_dx_data %>%
+#     filter(antibiotic==abx) %>%
+#     mutate(y=diagnosis_category==dx) %>%
+#     glm(abx_frmla, data=., family='binomial') %>%
+#     tidy %>%
+#     mutate(antibiotic=abx, diagnosis_category=dx)
+# }
+# 
+# pde_dx_models = crossing(antibiotic=top_abx, diagnosis_category=c('none', unique(dx$diagnosis_category))) %>%
+#   rowwise() %>%
+#   do(pde_dx_adjust_f(.$antibiotic, .$diagnosis_category)) %T>%
+#   output_table('pde_dx_model')
 
 # for each diagnosis, how often is each drug present?
 dx_pde_data = dx %>%
@@ -240,9 +241,17 @@ dx_pde_adjust_f = function(dx, abx) {
     mutate(antibiotic=abx, diagnosis_type=dx)
 }
 
+top_dx = dx_counts %>%
+  group_by(diagnosis_category) %>%
+  summarize(dxpkp=max(dxpkp)) %>%
+  arrange(desc(dxpkp)) %>%
+  head(17) %$%
+  diagnosis_category
+
 dx_pde_models = crossing(diagnosis_category=top_dx, antibiotic=top_abx) %>%
   rowwise() %>%
-  do(dx_pde_adjust_f(.$antibiotic, .$diagnosis_category)) %T>%
+  do(dx_pde_adjust_f(.$diagnosis_category, .$antibiotic)) %>%
+  ungroup() %T>%
   output_table('dx_pde_model')
 
 # risk ratio

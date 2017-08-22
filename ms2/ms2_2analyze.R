@@ -69,18 +69,18 @@ hrr_abg = summarize_abg(abg, 'hrr') %T>% write_tsv('abg_hrr.tsv')
 linear_model = function(df, y, xs) {
   frmla = as.formula(str_interp("${y} ~ ${str_c(xs, collapse=' + ')}"))
   m = lm(formula=frmla, weights=n_place_antibiograms, data=df)
-  
+
   anova_res = anova(m) %>%
     tidy %>%
     filter(term != 'Residuals') %>%
     select(term, anova.p.value=p.value)
-  
+ 
   coef_res = tidy(m) %>%
     mutate(ci=1.96*std.error,
            ci_low=estimate-ci,
            ci_high=estimate+ci) %>%
     select(term, estimate, ci_low, ci_high, p.value)
-  
+ 
   left_join(coef_res, anova_res, by='term')
 }
 
@@ -95,7 +95,7 @@ spearman_model = function(df, y_name, x_name) {
   } else {
     cis = c(0, 0, 1)
   }
-  
+
   data_frame(term=x_name,
              estimate=m$estimate,
              ci_low=cis[2],
