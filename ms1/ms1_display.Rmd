@@ -242,15 +242,15 @@ adjusted_changes %>%
 ```
 
 ```{r adjusted_changes_table}
-x %>% arrange(desc(antibiotic)) %>% kable
+adjusted_changes %>% arrange(desc(antibiotic)) %>% kable
 
-adjusted_az_decrease = x %>%
+adjusted_az_decrease = adjusted_changes %>%
   filter(antibiotic=='azithromycin') %$%
   { (1 + pct_change/100)^3 } %>%
   { (1 - .) * 100 } %>%
   round(2)
 
-adjusted_levo_increase = x %>%
+adjusted_levo_increase = adjusted_changes %>%
   filter(antibiotic=='levofloxacin') %$%
   { (1 + pct_change/100)^3 } %>%
   { (. - 1) * 100 } %>%
@@ -279,66 +279,15 @@ read_tsv('tables/model_fq.tsv') %>%
 
 Overall, fluoroquinolones changed by about 0% per year during this period. This included `r fq_names`.
 
-## Heart disease
-
-We suspected that changes in azithromycin and levofloxacin consumption could be due to altered prescribing guidelines, including one that recommends that azithromycin not be used to treat people at risk for heart fibrillations. This includes all elderly, but we epxect the risk would be especially high for those people with heart disease (i.e., AMI | ATRIALFB | CHF | ISCHMCHT). I ran separate models for azithromycin and levofloxacin where I include an interaction between a heart disease flag and the year.
-
-```{r heart_model}
-bind_rows(
-  read_tsv('tables/model_azithro.tsv') %>% mutate(model='azithro'),
-  read_tsv('tables/model_levo.tsv') %>% mutate(model='levo')
-) %>%
-  model_ci() %>%
-  select(term, model, pct_change) %>%
-  spread(model, pct_change) %>%
-  kable
-```
-
-For azithromycin, there is a moderate interaction: azithromycin consumption decrease 6.6% per year amongst those without heart disease and 10.2% per year ($1.06588 \times 1.03344$) among those with heart disease. For levofloxacin, there is a small interaction that is the opposite of what we might expect: levo consumption increased 10.1% per year among those without heart disease and at a lower rate, 9.4% ($1.10149*(1-0.006782)$), among those with heart disease.
-
-The weakness to this analysis is that I use the CCW flag for heart disease during each year, which means that someone might be getting a lot of azithromycin before they have a heart attack, and afterward they get none. I'm also using the one-year chronic conditions, so if someone has a heart attack last year, I don't know about that for the next eyar. Nevertheless, as a rough slice, it seems like heart disease doesn't explain what's going on.
-
 # Prescribing practice
 
 ## Methodology
 
-The unit of analysis are encounters recorded in the Carrier Line File whose HCPCS code indicated an office visit. We only examined encounters whose primary diagnosis fell into set of groups: skin and soft tissue infections (SSTIs), UTIs, probably viral URIs, pneumonia, bronchitis, pharyngitis, sinusitis.
+I examined encounters recorded in the Carrier Line File whose HCPCS code indicated an office visit. I grouped diagnoses into categories using the Fleming-Dutra eTable 2.
 
-## Trends in diagnoses
+To link diagnoses and PDEs, I looked for all diagnosis-PDE pairs where the PDE came 0-3 days after the diagnosis.
 
-Trends per 1,000 beneficiaries in each year. The $p$-value indicates a linear trend.
-
-```{r dx_counts}
-dx_counts = read_tsv('tables/dx_counts.tsv') %>%
-  left_join(totals, by='year') %>%
-  mutate(dx_pkb=n/n_bene*1000) %>%
-  select(diagnosis_type, year, dx_pkb)
-
-dx_counts_trends = dx_counts %>%
-  group_by(diagnosis_type) %>%
-  arrange(year) %>%
-  summarize(p=trend_p(dx_pkb))
-
-dx_counts %>%
-  spread(year, dx_pkb) %>%
-  mutate(pct_change_per_year=(`2014`-`2011`)/`2011`*100/3) %>%
-  left_join(dx_counts_trends, by='diagnosis_type') %>%
-  arrange(desc(`2011`)) %>%
-  mutate_at(vars(`2011`:p), function(x) round(x, 2)) %>%
-  kable
-```
-
-I also performed a similar analysis using logistic regression. I predicted whether a beneficiary would have a diagnosis at any point in the year. The main predictor variable was year, and the covariates were as elsewhere.
-
-```{r adjusted_dx_or}
-read_tsv('tables/model_dx.tsv') %>%
-  filter(term=='year0') %>%
-  model_ci() %>%
-  select(diagnosis_type, change_str) %>%
-  kable
-```
-
-## Delays between diagnosis and prescription
+### Delays between diagnosis and prescription
 
 The table shows the number of diagnoses that were followed by that number of days' delay before the following antibiotic prescription. Most prescriptions were filled on the same day as the diagnosis.
 
@@ -349,49 +298,91 @@ dx_delay %>%
   filter(!is.na(delay)) %>%
   mutate(f=n/sum(n)) %>%
   kable
-
-f_dx_not_followed = dx_delay %>%
-  group_by(a=!is.na(delay)) %>%
-  summarize(n=sum(n)) %>%
-  spread(a, n) %>%
-  rename(yes=`TRUE`, no=`FALSE`) %$%
-  { yes / (yes + no) }
 ```
 
-However, only `r f_dx_not_followed*100`% of these diagnoses were followed by an antibiotic prescription fill.
+## Trends in diagnoses
 
-## Unadjusted changes in prescribing practice
+Are some diagnoses becoming more or less common?
 
-For each diagnosis type, I computed what fraction of diagnoses were followed by treatment with each antibiotic. In the table, I only include dx/rx combinations where the antibiotic was filled after at least 5% of diagnoses.
+### Unadjusted trends in diagnoses
 
-```{r dxrx_fraction}
-dxrx_frac = read_tsv('tables/dxrx_fractions.tsv') %>%
-  group_by(year, diagnosis_type) %>%
-  mutate(total=sum(n)) %>%
-  ungroup() %>%
-  mutate(f=round(100*n/total, 1)) %>%
-  filter(antibiotic %in% top_abx) %>%
-  select(diagnosis_type, antibiotic, year, f) %>%
-  spread(year, f) %>%
-  filter(`2011` >= 3) %>%
-  arrange(diagnosis_type, desc(`2011`))
+First, unadjusted trends in the number of diagnoses per 1,000 beneficiaries in each year:
 
-dxrx_frac %>%
+```{r dx_counts}
+read_tsv('tables/dx_counts.tsv') %>%
+  select(diagnosis_category, year, dxpkp) %>%
+  filter(year %in% c(2011, 2014)) %>%
+  spread(year, dxpkp) %>%
+  mutate(pct_change=(`2014`/`2011`-1)*100) %>%
+  arrange(desc(`2011`)) %>%
+  mutate_if(is.numeric, function(x) round(x, 2)) %>%
   kable
 ```
 
-## Adjusted changes in prescribing practice
+### Adjusted trends in diagnoses
 
-To correct for the changing population, I ran a logistic regression for each diagnosis/antibiotic combination. The units of analysis were encounters with a primary diagnosis in that diagnosis group, and the outcome was whether that antibiotic was filled after the encounter. The main predictor variable was the year, and adjusted covariates included the same as before (age, # chronic conditions, sex, white race, region, dual eligibility).
+Second, adjusted trends, using Poisson regressions. The unit of analysis is the beneficiary in a year. The outcome variable is number of diagnoses in that category. The main predictor is year; the other covariates are as above. The percent change is between 2011 and 2014.
 
-```{r dxrx_models}
-read_tsv('tables/model_dxrx.tsv') %>%
-  model_ci() %>%
+```{r dx_trends_adjusted}
+read_tsv('tables/dx_models.tsv') %>%
   filter(term=='year0') %>%
-  # swo: pick the right models to show
-  right_join(dxrx_frac, by=c('diagnosis_type', 'antibiotic')) %>%
-  filter(!is.na(pct_change)) %>%
-  select(antibiotic, diagnosis_type, pct_change, ci_low, ci_high, p.value) %>%
-  arrange(antibiotic, desc(pct_change)) %>%
+  mutate(pct_change=100*(exp(estimate*3)-1),
+         p.value=p.adjust(p.value, method='BH')) %>%
+  mutate_if(is.numeric, function(x) round(x, 2)) %>%
+  select(diagnosis_category, pct_change, p.value) %>%
+  kable
+```
+
+## Common diagnoses by drug
+
+For each drug, I asked what fraction of PDEs are associated with each diagnosis. This gives you a sense that, say, the diagnoses that give rise to azithromycin are bronchitis, URI, etc. The values are percents. I might display just the 2011 data in the paper.
+
+```{r pde_dx}
+read_tsv('tables/pde_dx_counts.tsv') %>%
+  filter(antibiotic %in% top_abx, year %in% c(2011, 2014)) %>%
+  rename(pct=f_pde_with_dx) %>%
+  select(antibiotic, year, diagnosis_category, pct) %>%
+  spread(year, pct) %>%
+  mutate(pct_change=`2014`/`2011`-1) %>%
+  gather('key', 'value', c('2011', '2014', 'pct_change')) %>%
+  mutate(value=round(value*100, 1)) %>%
+  spread(diagnosis_category, value) %>%
+  kable
+```
+
+I also did logistic regressions for these trends, but I don't think it's very important. We're not particulary interested in whether the diagnoses that contribute to a drug are changing. We're more interested in whether the drugs that *follow* diagnoses are changing, which is next.
+
+## Trends in prescribing practice
+
+### Unadjusted trends
+
+For each diagnosis and each drug, I ask what fraction of diagnoses are followed by a PDE for that drug.
+
+```{r dx_pde}
+read_tsv('tables/dx_pde_counts.tsv') %>%
+  filter(antibiotic %in% top_abx, year %in% c(2011, 2014)) %>%
+  rename(pct=f_dx_with_pde) %>%
+  select(antibiotic, year, diagnosis_category, pct) %>%
+  spread(year, pct) %>%
+  mutate(pct_change=`2014`/`2011`-1) %>%
+  gather('key', 'value', c('2011', '2014', 'pct_change')) %>%
+  mutate(value=round(value*100, 1)) %>%
+  spread(diagnosis_category, value) %>%
+  kable
+```
+
+### Adjusted trends
+
+These are logistic regressions. The unit of analysis is the diagnosis. The outcome is whether a PDE for that drug follows a diagnosis in that category. The main predictor is year; covariates are as above. The odds ratio is between 2011 and 2014. I'll convert that into a risk ratio using the 2011 probabilities from the previous table.
+
+```{r dx_pde_adjusted}
+read_tsv('tables/dx_pde_model.tsv') %>%
+  filter(term=='year0') %>%
+  mutate(p.value=p.adjust(p.value, method='BH'),
+         OR=round(exp(3*estimate), 2)) %>%
+  filter(p.value < 0.05) %>%
+  select(antibiotic, diagnosis_category, OR) %>%
+  spread(diagnosis_category, OR) %>%
+  head %>%
   kable
 ```

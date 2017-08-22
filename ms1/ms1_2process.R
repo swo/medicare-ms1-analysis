@@ -238,7 +238,7 @@ dx_pde_adjust_f = function(dx, abx) {
     mutate(y=antibiotic==abx) %>%
     glm(abx_frmla, data=., family='binomial') %>%
     tidy %>%
-    mutate(antibiotic=abx, diagnosis_type=dx)
+    mutate(antibiotic=abx, diagnosis_category=dx)
 }
 
 top_dx = dx_counts %>%
