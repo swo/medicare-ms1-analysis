@@ -359,11 +359,11 @@ I also did logistic regressions for these trends, but I don't think it's very im
 
 ## Trends in prescribing practice
 
-### Unadjusted trends
-
 For each diagnosis and each drug, I ask what fraction of diagnoses are followed by a PDE for that drug in 2011 and 2014. I compute the percent change in those fractions.
 
-Second, I do logistic regressions. The unit of analysis is the diagnosis. The outcome is whether a PDE for that drug follows a diagnosis in that category. The main predictor is year; covariates are as above. The odds ratio is between 2011 and 2014. (I'll convert that into a risk ratio using the 2011 probabilities.)
+Second, I do logistic regressions. The unit of analysis is the diagnosis. The outcome is whether a PDE for that drug follows a diagnosis in that category. The main predictor is year; covariates are as above. The adjusted percent change is between 2011 and 2014. (I computed this adjusted change, which is a relative risk, using the odds ratio from the regression and the mean probability of PDE for that diagnosis in 2011. This strictly incorrect: the mean relative risk is the mean of the risks computed using the predicted probabilities for each 2011 diagnosis, *not* the relative risk computed using the mean probability in 2011. But it seems like it's decently close, and I think insisting on the thing that is technically correct will only create confusion.)
+
+I broke this into three tables by antibiotic, just to make it easier to navigate.
 
 ```{r dx_pde_trends}
 dx_pde_unadj = read_tsv('tables/dx_pde_counts.tsv') %>%
@@ -382,7 +382,7 @@ dx_pde_adj = read_tsv('tables/dx_pde_model.tsv') %>%
 # risk ratio
 rr = function(odds_ratio, p0) odds_ratio / (1 - p0 + (p0 * odds_ratio))
 
- bind_rows(dx_pde_unadj, dx_pde_adj) %>%
+dx_pde_both= bind_rows(dx_pde_unadj, dx_pde_adj) %>%
    spread(key, value) %>%
    mutate(pct_change=(y2014/y2011-1)*100,
           adj_pct_change=(rr(OR, y2011)-1)*100) %>%
@@ -392,6 +392,17 @@ rr = function(odds_ratio, p0) odds_ratio / (1 - p0 + (p0 * odds_ratio))
    mutate(value=round(value, 2)) %>%
    spread(diagnosis_category, value) %>%
    mutate(key=factor(key, levels=c('y2011', 'y2014', 'pct_change', 'adj_pct_change'))) %>%
-   arrange(antibiotic, key) %>%
+   arrange(antibiotic, key)
+
+dx_pde_both %>%
+  filter(str_detect(antibiotic, '^a')) %>%
+   kable
+
+dx_pde_both %>%
+  filter(str_detect(antibiotic, '^c')) %>%
+   kable
+
+dx_pde_both %>%
+  filter(str_detect(antibiotic, '^[^ac]')) %>%
    kable
 ```
