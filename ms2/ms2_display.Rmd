@@ -264,14 +264,19 @@ There are a few significant results:
 - *S. pneumoniae* and tetracyclines have a negative relationship
 - *E. faecium* and $\beta$-lactams have a positive relationship (implying higher mean consumption, given the same fraction of people consuming, goes with more resistance)
 
-Interestingly, these are the same three values that are significant when performing the (ill-advised) regression using $f_>$ and $\mu$:
+Interestingly, these are the same three values that are significant when performing the (ill-advised) regression using $f_>$ and $\mu$. The table shows that bug/drug combinations in which the multiple regressions have significantly non-zero $\beta_{\mu_>}$. The values in the columns show the estimates of $\beta$ in each model. Note the big differences in $\beta_{f_>}$ between the two models. Note that although the regression $R \sim f_> + \mu$ distorts $\beta_{f_>}$ more than the regression $R \sim f_> + \mu_>$, the coefficient still gets changed quite a bit nonetheless. We were hoping for $\mu_>$ to give information in addition to $f_>$, not to just change it completely.
 
 ```{r fnz_mu_results}
 results %>%
-  filter(unit_type=='hrr', model=='multivariate_fnz_mup', term=='mup') %>%
-  filter(p.adjust(p.value, method='BH') < 0.05) %>%
-  select(bug, drug_group, estimate, p.value) %>%
-  arrange(desc(estimate)) %>%
+  filter(unit_type=='hrr', model %in% c('univariate_fnz', 'multivariate_fnz_mean', 'multivariate_fnz_mup'), term != '(Intercept)') %>%
+  (function(df) {
+    filter(df, term != 'fnz', p.adjust(p.value, method='BH') < 0.05) %>%
+      select(bug, drug_group) %>%
+      distinct() %>%
+      inner_join(df, by=c('bug', 'drug_group')) }) %>%
+  mutate(model=str_replace(model, '^multivariate_', '')) %>%
+  select(bug, drug_group, model, term, estimate) %>%
+  spread(term, estimate) %>%
   kable
 ```
 
