@@ -406,3 +406,89 @@ dx_pde_both %>%
   filter(str_detect(antibiotic, '^[^ac]')) %>%
    kable
 ```
+
+# Summary of results for each drug
+
+For azithromycin, the most common diagnoses are bronchitis, URI, and sinusitis.
+Bronchitis diagnoses are on a steep decline (15% over the study period), URI
+diagnoses rose slightly (~5%), and sinusitis diagnoses remained nearly constant
+(+0.13%). Azithromycin prescribing per diagnosis also fell during the study
+period for each of these diagnoses (10-15%). So the diagnoses for which
+azithromycin is used were overall less common, and azithromycin was also less
+used for all those diagnoses.
+
+For levofloxacin, the most common diagnoses are bronchitis, "other
+respiratory", and URI. Bronchitis fell steeply, other respiratory fell somewhat
+(5%) and URIs rose slightly (2%). However, levofloxacin prescribing rose
+sharply for bronchitis (75%), other respiratory (60%), and URI (75%). So even
+though bronchitis diagnosing fell, levo prescribing for its diagnoses rose so
+much.
+
+The most common diagnoses for clindamycin, which rose, were SSTIs (tier 2 and
+tier 3). Tier 3 diagnoses rose somewhat (2%) and Tier 2 diagnoses fell somewhat
+(4%). Clindamycin prescribing for Tier 2 and Tier 3 diagnoses rose (27%, 22%).
+So clinda simply became a more popular treatment for SSTIs.
+
+The most common diagnoses for amox/clav, which rose, were sinusitis, SSTIs,
+bronchitis, and URIs. Amox/clav prescribing rose sharply for sinusitis (42%),
+rose for Tier 3 SSTIs (10%) but not Tier 2 SSTIs (n.s.), and rose for
+bronchitis (29%) and URIs (36%). So amox/clav became more popular for most of
+its diagnoses, like levo.
+
+The most common diagnoses for amox, which rose, were similar to those for
+amox/clav: sinusitis, SSTIs, bronchitis, and URIs. Amox prescribing rose
+slightly for sinusitis (3%), rose for Tier 2 and Tier 3 SSTIs (7%, 10%), and
+rose for bronchitis (12%) and URI (9%). The story is similar to amox/clav, just
+not as pronounced.
+
+The most common diagnoses for cephalexin, which rose slightly, were SSTIs, and
+somewhat UTIs. Prescribing for SSTIs rose (6%) and rose more for UTIs (32% for
+Tier 1 UTIs, 20% for Tier 3). So there was some growth in SSTIs, which make up
+more of cephalexin's portfolio, and big growth in UTIs, which make up a small
+part.
+
+The most common diagnoses for Bactrim, which fell slightly, are UTIs and
+SSTIs.  UTIs are nearly constant and SSTIs increased a little. However, Bactrim
+prescribing *increased* for SSTIs and UTIs. This means that the decrease
+occurred among the PDEs that were not associated with diagnoses. My first guess
+is that there is less long-term treatment (since, in long-term treatment, most
+of the PDEs will nt be associated with a visit).
+
+The most common diagnoses for doxy, which fell, are SSTIs and bronchitis.
+Doxy prescribing increased for Tier 2 SSTIs (5%), remained constant for Tier 3
+SSTIs (n.s.), and decreased slightly for bronchitis (2%). So it seems there was
+not big change in prescribing practice, and maybe this is more a reflection of
+what gets diagnosed as bronchitis.
+
+The most common diagnoses for cipro, which fell, are UTIs, followed by GI
+infections. GI infections fell (5%). Cipro prescribing for UTIs and GI
+infections remained constant (n.s. for all diagnoses). My first guess is that
+cipro fell because GI infection diagnoses fell and because of a decrease in
+long-term treatment for UTIs, like in Bactrim.
+
+The most common diagnoses for nitrofurantoin, which fell, were UTIs. UTIs
+remained nearly constant, and nitro prescribing for UTIs only fell slightly (3%
+for Tier 1 UTIs, n.s. for Tier 3). Again, my first guess is that there was a
+decrease in the number of PDEs not associated with diagnoses, i.e., those in
+long-term treatment.
+
+## Questions for the paper
+
+### Breaking up the tables
+
+I don't want to show this enormous table in the main text. I might break this into three tables:
+
+- Skin and soft tissue infections (Tiers 2 and 3): clindamycin, cephalexin, Bactrim, doxy, amox, amox/clav
+- Respiratory conditions (bronchitis, URI, sinusitis, "other respiratory"): azithro, levo, amox, amox/clav, doxy
+- UTIs (Tier 1 infections and Tier 3 conditions): cipro, Bactrim, nitro, cephalexin
+- GI (optional): but this is just cipro
+
+Alternatively, I could keep one table that has these diagnoses as columns and all these drugs going down as rows.
+
+### Lumping together diagnoses.
+
+I could lump the multiple tiers for diagnoses together. This
+makes the table easier to interpret, but it doesn't make the point that
+diagnosing patterns for multiple tiers for the same diagnosis genus have
+similar dynamics, i.e., appropriate and inappropriate prescribing are changing
+the same ways.
