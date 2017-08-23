@@ -110,8 +110,10 @@ models = function(df) {
     linear_model(df, 'y', 'fnz') %>% mutate(model='univariate_fnz'),
     linear_model(df, 'y', 'mup') %>% mutate(model='univariate_mup'),
     linear_model(df, 'y', 'nb_mu') %>% mutate(model='univariate_nb_mu'),
-    linear_model(df, 'y', c('fnz', 'mup')) %>% mutate(model='multivariate'),
-    linear_model(df, 'y', c('mup', 'fnz')) %>% mutate(model='multivariate'),
+    linear_model(df, 'y', c('fnz', 'mup')) %>% mutate(model='multivariate_fnz_mup'),
+    linear_model(df, 'y', c('mup', 'fnz')) %>% mutate(model='multivariate_mup_fnz'),
+    linear_model(df, 'y', c('fnz', 'mean')) %>% mutate(model='multivariate_fnz_mean'),
+    linear_model(df, 'y', c('mean', 'fnz')) %>% mutate(model='multivariate_mean_fnz'),
     linear_model(df, 'y', c('nb_mu', 'nb_size')) %>% mutate(model='nb')
   ) %>%
     mutate(n_data=nrow(df))
@@ -121,7 +123,7 @@ hrr_results = ineq %>%
   filter(unit_type=='hrr') %>%
   mutate(hrr=as.integer(unit)) %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
-  left_join(hrr_out, by='hrr') %>%
+  #left_join(hrr_out, by='hrr') %>%
   mutate(y=mean_percent_nonsusceptible/100) %>%
   group_by(bug, drug_group) %>%
   do(models(.)) %>%
