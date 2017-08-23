@@ -306,47 +306,52 @@ Are some diagnoses becoming more or less common?
 
 ### Unadjusted trends in diagnoses
 
-First, unadjusted trends in the number of diagnoses per 1,000 beneficiaries in each year:
-
-```{r dx_counts}
-read_tsv('tables/dx_counts.tsv') %>%
-  select(diagnosis_category, year, dxpkp) %>%
-  filter(year %in% c(2011, 2014)) %>%
-  spread(year, dxpkp) %>%
-  mutate(pct_change=(`2014`/`2011`-1)*100) %>%
-  arrange(desc(`2011`)) %>%
-  mutate_if(is.numeric, function(x) round(x, 2)) %>%
-  kable
-```
-
-### Adjusted trends in diagnoses
+First, unadjusted trends in the number of diagnoses per 1,000 beneficiaries in each year. The percent change is between 2011 and 2014.
 
 Second, adjusted trends, using Poisson regressions. The unit of analysis is the beneficiary in a year. The outcome variable is number of diagnoses in that category. The main predictor is year; the other covariates are as above. The percent change is between 2011 and 2014.
 
-```{r dx_trends_adjusted}
-read_tsv('tables/dx_models.tsv') %>%
+```{r dx_trends}
+dx_unadj = read_tsv('tables/dx_counts.tsv') %>%
+  select(diagnosis_category, year, dxpkp) %>%
+  filter(year %in% c(2011, 2014)) %>%
+  spread(year, dxpkp) %>%
+  mutate(unadj_pct_change=(`2014`/`2011`-1)*100) %>%
+  arrange(desc(`2011`)) %>%
+  mutate_if(is.numeric, function(x) round(x, 2))
+
+dx_adj = read_tsv('tables/dx_models.tsv') %>%
   filter(term=='year0') %>%
-  mutate(pct_change=100*(exp(estimate*3)-1),
+  mutate(adj_pct_change=100*(exp(estimate*3)-1),
          p.value=p.adjust(p.value, method='BH')) %>%
   mutate_if(is.numeric, function(x) round(x, 2)) %>%
-  select(diagnosis_category, pct_change, p.value) %>%
+  select(diagnosis_category, adj_pct_change, p.value)
+
+full_join(dx_unadj, dx_adj, by='diagnosis_category') %>%
   kable
 ```
 
 ## Common diagnoses by drug
 
-For each drug, I asked what fraction of PDEs are associated with each diagnosis. This gives you a sense that, say, the diagnoses that give rise to azithromycin are bronchitis, URI, etc. The values are percents. I might display just the 2011 data in the paper.
+For each drug, I asked what fraction of PDEs are associated with each diagnosis. This gives you a sense that, say, the diagnoses that give rise to azithromycin are bronchitis, URI, etc. The values are percents in 2011.
+
+The first table includes a "no diagnosis" category. This means that the majority of PDEs were not downstream of a diagnosis. In the second table, I remove the "none" diagnosis and rescale the values, which helps make it easier to read.
 
 ```{r pde_dx}
 read_tsv('tables/pde_dx_counts.tsv') %>%
-  filter(antibiotic %in% top_abx, year %in% c(2011, 2014)) %>%
-  rename(pct=f_pde_with_dx) %>%
-  select(antibiotic, year, diagnosis_category, pct) %>%
-  spread(year, pct) %>%
-  mutate(pct_change=`2014`/`2011`-1) %>%
-  gather('key', 'value', c('2011', '2014', 'pct_change')) %>%
-  mutate(value=round(value*100, 1)) %>%
-  spread(diagnosis_category, value) %>%
+  filter(antibiotic %in% top_abx, year==2011) %>%
+  mutate(pct=round(f_pde_with_dx*100, 1)) %>%
+  select(antibiotic, diagnosis_category, pct) %>%
+  spread(diagnosis_category, pct) %>%
+  kable
+
+read_tsv('tables/pde_dx_counts.tsv') %>%
+  filter(antibiotic %in% top_abx, year==2011, diagnosis_category != 'none') %>%
+  group_by(antibiotic) %>%
+  mutate(f=f_pde_with_dx/sum(f_pde_with_dx),
+         pct=round(f*100, 1)) %>%
+  ungroup() %>%
+  select(antibiotic, diagnosis_category, pct) %>%
+  spread(diagnosis_category, pct) %>%
   kable
 ```
 
@@ -356,33 +361,37 @@ I also did logistic regressions for these trends, but I don't think it's very im
 
 ### Unadjusted trends
 
-For each diagnosis and each drug, I ask what fraction of diagnoses are followed by a PDE for that drug.
+For each diagnosis and each drug, I ask what fraction of diagnoses are followed by a PDE for that drug in 2011 and 2014. I compute the percent change in those fractions.
 
-```{r dx_pde}
-read_tsv('tables/dx_pde_counts.tsv') %>%
+Second, I do logistic regressions. The unit of analysis is the diagnosis. The outcome is whether a PDE for that drug follows a diagnosis in that category. The main predictor is year; covariates are as above. The odds ratio is between 2011 and 2014. (I'll convert that into a risk ratio using the 2011 probabilities.)
+
+```{r dx_pde_trends}
+dx_pde_unadj = read_tsv('tables/dx_pde_counts.tsv') %>%
   filter(antibiotic %in% top_abx, year %in% c(2011, 2014)) %>%
-  rename(pct=f_dx_with_pde) %>%
-  select(antibiotic, year, diagnosis_category, pct) %>%
-  spread(year, pct) %>%
-  mutate(pct_change=`2014`/`2011`-1) %>%
-  gather('key', 'value', c('2011', '2014', 'pct_change')) %>%
-  mutate(value=round(value*100, 1)) %>%
-  spread(diagnosis_category, value) %>%
-  kable
-```
+  mutate(key=str_c('y', year)) %>%
+  select(diagnosis_category, antibiotic, key, value=f_dx_with_pde)
 
-### Adjusted trends
-
-These are logistic regressions. The unit of analysis is the diagnosis. The outcome is whether a PDE for that drug follows a diagnosis in that category. The main predictor is year; covariates are as above. The odds ratio is between 2011 and 2014. I'll convert that into a risk ratio using the 2011 probabilities from the previous table.
-
-```{r dx_pde_adjusted}
-read_tsv('tables/dx_pde_model.tsv') %>%
+dx_pde_adj = read_tsv('tables/dx_pde_model.tsv') %>%
   filter(term=='year0') %>%
-  mutate(p.value=p.adjust(p.value, method='BH'),
+  mutate(key='OR',
+         p.value=p.adjust(p.value, method='BH'),
          OR=round(exp(3*estimate), 2)) %>%
   filter(p.value < 0.05) %>%
-  select(antibiotic, diagnosis_category, OR) %>%
-  spread(diagnosis_category, OR) %>%
-  head %>%
-  kable
+  select(diagnosis_category, antibiotic, key, value=OR)
+
+# risk ratio
+rr = function(odds_ratio, p0) odds_ratio / (1 - p0 + (p0 * odds_ratio))
+
+ bind_rows(dx_pde_unadj, dx_pde_adj) %>%
+   spread(key, value) %>%
+   mutate(pct_change=(y2014/y2011-1)*100,
+          adj_pct_change=(rr(OR, y2011)-1)*100) %>%
+   select(-OR) %>%
+   #mutate_if(is.numeric, function(x) round(x, 2)) %>%
+   gather('key', 'value', y2011:adj_pct_change) %>%
+   mutate(value=round(value, 2)) %>%
+   spread(diagnosis_category, value) %>%
+   mutate(key=factor(key, levels=c('y2011', 'y2014', 'pct_change', 'adj_pct_change'))) %>%
+   arrange(antibiotic, key) %>%
+   kable
 ```
