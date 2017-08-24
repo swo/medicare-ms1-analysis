@@ -280,6 +280,18 @@ results %>%
   kable
 ```
 
+I contrast this situation against *E. coli* and quinolones. In that case, adding terms to the regression doesn't drastically alter $\beta_{f_>}$.
+
+```{r fnz_mu_ecoliquin}
+results %>%
+  filter(unit_type=='hrr', model %in% c('univariate_fnz', 'multivariate_fnz_mean', 'multivariate_fnz_mup'), term != '(Intercept)') %>%
+  filter(bug=='E. coli', drug_group=='quinolone') %>%
+  mutate(model=str_replace(model, '^multivariate_', '')) %>%
+  select(bug, drug_group, model, term, estimate) %>%
+  spread(term, estimate) %>%
+  kable
+```
+
 For *E. faecium* with $\beta$-lactams, the univariate regression with $f_>$ gives a slightly negative slope but is not significant. The univariate regression with $\mu$ gives a slightly positive slope and is not significant. In the multiple regression, the signs stay the same but the coefficients are very different. Thus, we can't trust that $\mu$ provides data in addition to $f_>$ when it's not clear that either provides the information on its own.
 
 For *S. pneumoniae* and tetracyclines, the regression with $f_>$ and the regression with $\mu$ give negative slopes, but neither are significant. In the multiple regression, the $f_>$ coefficient becomes positive. Again, I'm not sure I can trust this.
