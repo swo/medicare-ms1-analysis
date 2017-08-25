@@ -5,7 +5,6 @@
 
 polish_cc = function(x) {
   rename(x, bene_id=BENE_ID) %>%
-    select(-STRCTFLG) %>%
     mutate_at(vars(AMI:HYPOTH), function(x) x==3)
 }
 
@@ -14,13 +13,17 @@ polish_year = function(y) {
   bene_fn = sprintf('bene_%i.tsv', y)
   cc_out_fn = sprintf('cc_%i.feather', y)
 
-  bene_ids = read_tsv(bene_fn) %$% bene_id
+  bene = read_tsv(bene_fn)
 
-  cc = read_tsv(cc_fn) %>%
+  read_tsv(cc_fn) %>%
     polish_cc() %>%
-    filter(bene_id %in% bene_ids)
-
-  write_feather(cc, cc_out_fn)
+    semi_join(bene, by='bene_id') %>%
+    write_feather(cc_out_fn)
 }
 
-for (year in 2011:2014) polish_year(year)
+library(parallel)
+cluster = makeCluster(3, type='FORK')
+
+parLapply(cluster, 2011:2014, polish_year)
+
+stopCluster(cluster)
