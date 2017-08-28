@@ -1,68 +1,12 @@
 #!/usr/bin/env Rscript
 
-# utility functions function
-gini = function(x) ineq::ineq(x, type='Gini')
-nonzero = function(x) x[x > 0]
-fraction_nonzero = function(x) length(nonzero(x)) / length(x)
-pad0 = function(x, to) c(x, rep(0, to - length(x)))
-
-without_min = function(x) x[-which.min(x)]
-without_max = function(x) x[-which.max(x)]
-without_1 = function(x) x[-match(1, x)]
-
-filter_eq_ = function(df, col, val) filter_(df, str_interp("${col}=='${val}'"))
-
-inequalities = function(pde, drug_group, unit_type, unit, n_bene) {
-  if (drug_group=='overall') {
-    filter_drug_f = function(df) group_by(df, bene_id) %>% summarize(n_claims=sum(n_claims))
-  } else {
-    filter_drug_f = function(df) filter_eq_(df, 'drug_group', drug_group)
-  }
-
-  filtered_pde = pde %>%
-    filter_eq_(unit_type, unit) %>%
-    filter_drug_f()
-
-  if(n_bene < nrow(filtered_pde)) {
-    stop(str_interp("n_bene=${n_bene}, but got ${nrow(filtered_pde)} rows when doing ${drug_group}, ${unit_type}, ${unit}"))
-  }
-
-  x = pad0(filtered_pde$n_claims, n_bene)
-  nzx = nonzero(x)
-
-  nb_par = fitdistrplus::fitdist(x, 'nbinom')$estimate
-  nb_size = nb_par['size']
-  nb_mu = nb_par['mu']
-
-  stopifnot(length(x) == n_bene)
-
-  data_frame(drug_group,
-             unit_type,
-             unit,
-             n_bene,
-             n_0=sum(x==0),
-             n_1=sum(x==1),
-             n_2p=sum(x>1),
-             total=sum(x),
-             mean=mean(x),
-             mean_without_1=mean(without_1(x)),
-             mean_without_max=mean(without_max(x)),
-             fnz=fraction_nonzero(x),
-             nb_size,
-             nb_mu)
-}
-
-# auxiliary data
-consumption_groups = read_tsv('consumption_groups.tsv')
-
-regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
-  select(state, state_abbreviation, region) %>%
-  filter(state != 'District of Columbia')
-stopifnot('DC' %in% regions$state)
+library(rlang)
 
 # read in HRR designations for all years
 hrr_all = read_tsv('../../db/hrr/hrr.tsv') %>%
   mutate(hrr=as.character(hrr))
+
+consumption_groups = read_tsv('consumption_groups.tsv')
 
 summarize_inequality = function(y) {
   # get HRR designations just for that year
@@ -74,43 +18,66 @@ summarize_inequality = function(y) {
   bene_fn = sprintf('../bene_%i.tsv', y)
   pde_fn = sprintf('../pde_%i.tsv', y)
 
+  # get information about bene locations
   bene = read_tsv(bene_fn) %>%
-    left_join(regions, by='state') %>%
     left_join(hrr, by='zipcode') %>%
-    select(bene_id, state, zipcode, region, hrr)
+    select(bene_id, state, hrr)
 
+  # get PDEs
   pde = read_tsv(pde_fn) %>%
     rename(drug=antibiotic) %>%
-    left_join(consumption_groups, by='drug') %>%
-    group_by(bene_id, drug_group) %>%
-    summarize(n_claims=n()) %>%
-    ungroup() %>%
+    inner_join(consumption_groups, by='drug') %>%
+    count(bene_id, drug_group) %>% rename(n_claims=n) %>%
     left_join(bene, by='bene_id')
-
-  # compute number of benes in each state, HRR
-  denom = bind_rows(
-    bene %>% rename(unit=state) %>% count(unit) %>% mutate(unit_type='state'),
-    bene %>% rename(unit=hrr) %>% count(unit) %>% mutate(unit_type='hrr')
+  
+  # function to compute the denominators, i.e., the number of benes in each unit
+  denom_f = function(bene, unit_type_) {
+    bene %>%
+      rename(unit=!!sym(unit_type_)) %>%
+      count(unit) %>% rename(n_bene=n)
+  }
+  
+  # function to compute inequality, i.e., the number of beneficiaries taking
+  # each number of drug
+  ineq_f = function(pde, bene, unit_type_) {
+    # get denominator, which we'll use to fill in the non-consumers
+    denom = denom_f(bene, unit_type_)
+    
+    pde %>%
+      # rename, e.g., the "state" column to "unit"
+      rename(unit=!!sym(unit_type_)) %>%
+      # get, e.g., Massachusetts, amoxicillin, 2 claims, 234 beneficiaries
+      count(unit, drug_group, n_claims) %>% rename(n_bene=n) %>%
+      # find the zero-consumers
+      (function(df) {
+        # count un beneficiaries who took >= 1 drug in each unit/drug
+        group_by(df, unit, drug_group) %>%
+          summarize(n_consumers=sum(n_bene)) %>%
+          ungroup() %>%
+          # get the denominators
+          left_join(denom, by='unit') %>%
+          # infer number of nonconsumers from number of consumers and denominator
+          mutate(n_nonconsumers = n_bene - n_consumers,
+                 n_claims = 0) %>%
+          select(unit, drug_group, n_claims, n_bene=n_nonconsumers) %>%
+          # add these non-consumer rows to the rest of the data
+          bind_rows(df)
+      }) %>%
+      arrange(unit, drug_group) %>%
+      mutate(unit_type=unit_type_)
+  }
+  
+  # get inequalities for each drug/unit at the state and HRR levels
+  ineq = bind_rows(
+    ineq_f(pde, bene, 'state'),
+    ineq_f(pde, bene, 'hrr')
   ) %>%
-    rename(n_bene=n)
-
-  # compute and return inequalities
-  crossing(drug_group=c('overall', consumption_groups$drug_group), unit=denom$unit) %>%
-    left_join(denom, by='unit') %>%
-    rowwise() %>%
-    do(inequalities(pde, .$drug_group, .$unit_type, .$unit, .$n_bene)) %>%
-    ungroup() %>%
     mutate(year=y)
+  
+  ineq
 }
 
-# prepare for parallel execution
-library(parallel)
-n_cores = detectCores() - 1
-cluster = makeCluster(n_cores, type='FORK')
-
-#lapply(2011:2014, summarize_inequality) %>%
-parLapply(cluster, 2011:2014, summarize_inequality) %>%
+# get inequalities for each drug, unit, year, and level
+lapply(2011:2014, summarize_inequality) %>%
   bind_rows() %>%
   write_tsv('ineq.tsv')
-
-stopCluster(cluster)

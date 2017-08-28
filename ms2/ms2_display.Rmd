@@ -159,6 +159,36 @@ Why should the linear models do so much better than the Spearman? I think it's b
 
 # Unevenness of consumption and antibiotic resistance
 
+## Unevenness of consumption
+
+For each drug, what fraction of people took that drug? Of people who took it, how many had one claim? How many claims are accounted for by singleton users? This is data from 2011.
+
+```{r ineq_table}
+pct = function(x) round(x*100, 2)
+
+ineq %>%
+  # use only 2011 data
+  filter(year==2011, unit_type=='state') %>%
+  # sum across unit types
+  group_by(drug_group, n_claims) %>%
+  summarize(n_bene=sum(n_bene)) %>%
+  ungroup() %>%
+  mutate(n_class_claims = n_claims * n_bene) %>%
+  group_by(drug_group) %>%
+  mutate(pct_bene=pct(n_bene/sum(n_bene)),
+         pct_claims=pct(n_class_claims/sum(n_class_claims))) %>%
+  select(drug_group, n_claims, pct_bene, pct_claims) %>%
+  mutate(n_claims=fct_other(factor(n_claims), keep=0:2, other_level='3+')) %>%
+  group_by(drug_group, n_claims) %>%
+  summarize_at(vars(pct_bene, pct_claims), sum) %>%
+  ungroup() %>%
+  gather('key', 'val', pct_bene:pct_claims) %>%
+  mutate(key2=str_c(n_claims, ':', key)) %>%
+  select(drug_group, key2, val) %>%
+  spread(key2, val) %>%
+  kable
+```
+
 ## Unevenness is mostly related to the "extensive margin"
 
 The line has slope 1.5.
