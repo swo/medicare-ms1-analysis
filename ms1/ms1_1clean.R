@@ -13,14 +13,11 @@ regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
 # window of days that you can look ahead from an rx to a dx
 rxdx_window = 3
 
-# diagnosis types
-fd = read_tsv('../../db/fd_icd/fd_categories.tsv') %>%
-  mutate(dc_id=1:n())
-
 load_data = function(year) {
   # pde data
   pde = read_tsv(sprintf('../pde_%i.tsv', year)) %>%
-    select(bene_id, service_date, antibiotic) %>%
+    select(bene_id, pde_date, antibiotic) %>%
+    distinct() %>%
     mutate(year=year, pde_id=1:n())
 
   # total numbers of PDEs
@@ -41,16 +38,14 @@ load_data = function(year) {
     replace_na(list(n_claims=0))
 
   # diagnosis claims
-  dx = read_tsv(str_interp('../../data/dx_${year}.tsv')) %>%
-    select(bene_id=BENE_ID, code=dx_code, diagnosis_category, from_date=dt1) %>%
-    # filter for bene's we have
-    semi_join(bene, by='bene_id') %>%
+  dx = read_tsv(str_interp('../dx_${year}.tsv')) %>%
+    select(bene_id, dx_date, dx_category) %>%
     distinct() %>%
-    mutate(from_date=dmy(from_date), year=year, dx_id=1:n())
+    mutate(year=year, dx_id=1:n())
 
   # find all possible dx-PDE combinations
   dx_pde = inner_join(dx, pde, by=c('year', 'bene_id')) %>%
-    mutate(delay=service_date - from_date) %>%
+    mutate(delay=pde_date - dx_date) %>%
     filter(between(delay, 0, rxdx_window)) %>%
     mutate(year=year)
 
@@ -66,8 +61,7 @@ save_dat = function(dat, name) {
 
 # prepare for parallel execution
 library(parallel)
-n_cores = detectCores() - 1
-cluster = makeCluster(n_cores, type='FORK')
+cluster = makeCluster(3, type='FORK')
 
 dat = parLapply(cluster, 2011:2014, load_data)
 

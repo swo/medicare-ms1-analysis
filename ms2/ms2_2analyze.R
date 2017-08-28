@@ -3,7 +3,8 @@ ineq = read_tsv('ineq.tsv') %>%
   group_by(drug_group, unit_type, unit) %>%
   summarize_if(is.numeric, mean) %>%
   ungroup() %>%
-  mutate(mup=mean/fnz)
+  mutate(mup=mean/fnz,
+         emup=mup - 1)
 
 # Resistance data
 resistance_groups = read_tsv('resistance_groups.tsv')
@@ -22,6 +23,11 @@ hrr = read_tsv('../../db/hrr/hrr.tsv') %>%
   select(zipcode, hrr) %>%
   left_join(zipcodes, by='zipcode') %>%
   left_join(regions, by='state')
+
+# Associate each HRR with a single region by just taking the first one
+hrr_region = hrr %>%
+  group_by(hrr) %>%
+  summarize(region=first(region))
 
 raw_abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c')) %>%
   mutate(drug=tolower(drug), percent_nonsusceptible=100-percent_susceptible) %>%
@@ -108,9 +114,14 @@ models = function(df) {
     spearman_model(df, 'y', 'mean') %>% mutate(model='spearman'),
     linear_model(df, 'y', 'mean') %>% mutate(model='univariate_mean'),
     linear_model(df, 'y', 'fnz') %>% mutate(model='univariate_fnz'),
+    linear_model(df, 'y', c('fnz', '0')) %>% mutate(model='univariate_fnz_0'),
     linear_model(df, 'y', 'mup') %>% mutate(model='univariate_mup'),
     linear_model(df, 'y', 'nb_mu') %>% mutate(model='univariate_nb_mu'),
     linear_model(df, 'y', c('fnz', 'mup')) %>% mutate(model='multivariate_fnz_mup'),
+    linear_model(df, 'y', c('fnz', 'emup')) %>% mutate(model='multivariate_fnz_emup'),
+    linear_model(df, 'y', c('fnz', 'mup', '0')) %>% mutate(model='multivariate_fnz_mup_0'),
+    linear_model(df, 'y', c('fnz', 'I(1/fnz)')) %>% mutate(model='multivariate_fnz_1fnz'),
+    linear_model(df, 'y', c('fnz', 'I(fnz^2)')) %>% mutate(model='multivariate_fnz_fnz2'),
     linear_model(df, 'y', c('mup', 'fnz')) %>% mutate(model='multivariate_mup_fnz'),
     linear_model(df, 'y', c('fnz', 'mean')) %>% mutate(model='multivariate_fnz_mean'),
     linear_model(df, 'y', c('mean', 'fnz')) %>% mutate(model='multivariate_mean_fnz'),
@@ -123,7 +134,7 @@ hrr_results = ineq %>%
   filter(unit_type=='hrr') %>%
   mutate(hrr=as.integer(unit)) %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
-  #left_join(hrr_out, by='hrr') %>%
+  left_join(hrr_region, by='hrr') %>%
   mutate(y=mean_percent_nonsusceptible/100) %>%
   group_by(bug, drug_group) %>%
   do(models(.)) %>%

@@ -169,9 +169,11 @@ cbbPalette <- c("#000000", "#D55E00", "#CC79A7", "#999999", "#E69F00", "#56B4E9"
 ineq %>%
   filter(unit_type=='state', drug_group != 'overall') %>%
   ggplot(aes(x=fnz, y=mean, color=drug_group)) +
-  geom_abline(slope=1.5, color='gray') +
+  #geom_abline(slope=1.5, color='gray') +
+  stat_smooth(method='lm', se=F, fullrange=TRUE) +
   geom_point() +
   xlab('Fraction nonzero') + ylab('claims per beneficiary') +
+  geom_hline(yintercept=0) + geom_vline(xintercept=0) +
   ggtitle('Fraction consuming and mean consumption, states') +
   theme_minimal() +
   scale_color_manual(values=cbbPalette)
@@ -462,7 +464,7 @@ How do the regressions $R \sim f_>$ compare to $R \sim \mu$? Here I look at the 
 
 The column titles are `metric1_metric2`, and the value shows the correlation between the univariate models' coefficients for predicting resistance to that drug across bugs.
 
-```{r univariate_result_correlation}
+```{r univariate_result_correlation, eval=FALSE}
 results %>%
   filter(str_detect(model, '^uni'), term != '(Intercept)') %>%
   select(unit_type, bug, drug_group, term, estimate) %>%
