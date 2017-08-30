@@ -1,10 +1,14 @@
+#!/usr/bin/env Rscript
+
 # Consumption data
 ineq = read_tsv('ineq.tsv') %>%
-  group_by(drug_group, unit_type, unit) %>%
-  summarize_if(is.numeric, mean) %>%
-  ungroup() %>%
-  mutate(mup=mean/fnz,
-         emup=mup - 1)
+  group_by(year, unit_type, unit, drug_group) %>%
+  summarize(mean=weighted.mean(n_claims, w=n_bene),
+            fnz=sum(n_bene[n_claims > 0]) / sum(n_bene),
+            mup=mean/fnz) %>%
+  group_by(unit_type, unit, drug_group) %>%
+  summarize_at(vars(mean, fnz,mup), mean) %>%
+  ungroup()
 
 # Resistance data
 resistance_groups = read_tsv('resistance_groups.tsv')
@@ -114,18 +118,13 @@ models = function(df) {
     spearman_model(df, 'y', 'mean') %>% mutate(model='spearman'),
     linear_model(df, 'y', 'mean') %>% mutate(model='univariate_mean'),
     linear_model(df, 'y', 'fnz') %>% mutate(model='univariate_fnz'),
-    linear_model(df, 'y', c('fnz', '0')) %>% mutate(model='univariate_fnz_0'),
     linear_model(df, 'y', 'mup') %>% mutate(model='univariate_mup'),
-    linear_model(df, 'y', 'nb_mu') %>% mutate(model='univariate_nb_mu'),
     linear_model(df, 'y', c('fnz', 'mup')) %>% mutate(model='multivariate_fnz_mup'),
-    linear_model(df, 'y', c('fnz', 'emup')) %>% mutate(model='multivariate_fnz_emup'),
-    linear_model(df, 'y', c('fnz', 'mup', '0')) %>% mutate(model='multivariate_fnz_mup_0'),
     linear_model(df, 'y', c('fnz', 'I(1/fnz)')) %>% mutate(model='multivariate_fnz_1fnz'),
     linear_model(df, 'y', c('fnz', 'I(fnz^2)')) %>% mutate(model='multivariate_fnz_fnz2'),
     linear_model(df, 'y', c('mup', 'fnz')) %>% mutate(model='multivariate_mup_fnz'),
     linear_model(df, 'y', c('fnz', 'mean')) %>% mutate(model='multivariate_fnz_mean'),
-    linear_model(df, 'y', c('mean', 'fnz')) %>% mutate(model='multivariate_mean_fnz'),
-    linear_model(df, 'y', c('nb_mu', 'nb_size')) %>% mutate(model='nb')
+    linear_model(df, 'y', c('mean', 'fnz')) %>% mutate(model='multivariate_mean_fnz')
   ) %>%
     mutate(n_data=nrow(df))
 }

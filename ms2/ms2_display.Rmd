@@ -13,11 +13,16 @@ library(forcats)
 ```
 
 ```{r load_data, cache.extra=c(md5sum('ineq.tsv'), md5sum('results.tsv'))}
-ineq = read_tsv('ineq.tsv') %>%
-  group_by(drug_group, unit_type, unit) %>%
-  summarize_if(is.numeric, mean) %>%
-  ungroup() %>%
-  mutate(mup=mean/fnz)
+ineq = read_tsv('ineq.tsv')
+
+ineq_summary = ineq %>%
+  group_by(year, unit_type, unit, drug_group) %>%
+  summarize(mean=weighted.mean(n_claims, w=n_bene),
+            fnz=sum(n_bene[n_claims > 0]) / sum(n_bene),
+            mup=mean/fnz) %>%
+  group_by(unit_type, unit, drug_group) %>%
+  summarize_at(vars(mean, fnz,mup), mean) %>%
+  ungroup()
 
 results = read_tsv('results.tsv')
 
@@ -38,7 +43,7 @@ hrr = read_tsv('../../db/hrr/hrr.tsv') %>%
   left_join(zipcodes, by='zipcode') %>%
   left_join(regions, by='state')
 
-hrr_out = hrr %>%
+hrr_regions = hrr %>%
   count(hrr, region) %>%
   group_by(hrr) %>%
   filter(n==max(n)) %>%
@@ -151,6 +156,7 @@ results %>%
 results %>%
   filter(model=='univariate_fnz', unit_type=='state', term=='fnz') %>%
   interval_plot() +
+  geom_hline(yintercept=1, color='gray') +
   ylab(expression(beta[f['>']])) +
   ggtitle("Linear univariate, state")
 ```
@@ -167,25 +173,31 @@ For each drug, what fraction of people took that drug? Of people who took it, ho
 pct = function(x) round(x*100, 2)
 
 ineq %>%
-  # use only 2011 data
-  filter(year==2011, unit_type=='state') %>%
-  # sum across unit types
-  group_by(drug_group, n_claims) %>%
+  filter(unit_type=='state') %>%
+  # sum across units
+  group_by(year, drug_group, n_claims) %>%
   summarize(n_bene=sum(n_bene)) %>%
   ungroup() %>%
+  # compute the number of claims made by people making 1 claim, etc.
   mutate(n_class_claims = n_claims * n_bene) %>%
-  group_by(drug_group) %>%
+  # compute percentages: fr. of benes w/ 1 claim, fr. of claims made by 1-claimers, etc.
+  group_by(year, drug_group) %>%
   mutate(pct_bene=pct(n_bene/sum(n_bene)),
          pct_claims=pct(n_class_claims/sum(n_class_claims))) %>%
-  select(drug_group, n_claims, pct_bene, pct_claims) %>%
+  select(year, drug_group, n_claims, pct_bene, pct_claims) %>%
+  # group 3+ claims into one group, then sum up fractions in that new group
   mutate(n_claims=fct_other(factor(n_claims), keep=0:2, other_level='3+')) %>%
-  group_by(drug_group, n_claims) %>%
+  group_by(year, drug_group, n_claims) %>%
   summarize_at(vars(pct_bene, pct_claims), sum) %>%
   ungroup() %>%
+  # merge the claims group and metric into one key, and spread
   gather('key', 'val', pct_bene:pct_claims) %>%
   mutate(key2=str_c(n_claims, ':', key)) %>%
-  select(drug_group, key2, val) %>%
+  select(year, drug_group, key2, val) %>%
   spread(key2, val) %>%
+  # keep only 2011 data
+  filter(year==2011) %>%
+  select(-year) %>%
   kable
 ```
 
@@ -196,12 +208,11 @@ The line has slope 1.5.
 ```{r fnz_mean_drug}
 cbbPalette <- c("#000000", "#D55E00", "#CC79A7", "#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2")
 
-ineq %>%
+ineq_summary %>%
   filter(unit_type=='state', drug_group != 'overall') %>%
   ggplot(aes(x=fnz, y=mean, color=drug_group)) +
-  #geom_abline(slope=1.5, color='gray') +
-  stat_smooth(method='lm', se=F, fullrange=TRUE) +
-  geom_point() +
+  stat_smooth(aes(color=NA), color='gray', method='lm', se=F, fullrange=TRUE) +
+  geom_point(shape=1) +
   xlab('Fraction nonzero') + ylab('claims per beneficiary') +
   geom_hline(yintercept=0) + geom_vline(xintercept=0) +
   ggtitle('Fraction consuming and mean consumption, states') +
@@ -212,11 +223,11 @@ ineq %>%
 Because $f_>$ is so collinear with $\mu$, multiple regressions using both as predictors will cause problems (cf. the Supplement). Rather than mean consumption $\mu$, I'll use the mean consumption among consumers $\mu_> = \mu / f_>$ as my second predictor.
 
 ```{r fnz_mup}
-ineq %>%
+ineq_summary %>%
   filter(unit_type=='state', drug_group != 'overall') %>%
   ggplot(aes(x=fnz, y=mup, color=drug_group)) +
   geom_smooth(method='lm', se=F) +
-  geom_point() +
+  geom_point(shape=1) +
   xlab(expression(f['>'])) +
   ylab(expression(mu['>'])) +
   ggtitle('Mean nonzero consumption vs. fraction consuming, states') +
@@ -231,10 +242,10 @@ In both cases, it seems like the South is the mass with the most leverage, and i
 For $\beta$-lactams, cephalosporins, clindamycin, macrolides, and quinolones, the slopes seem to mostly agree with one another. This suggests that tetracycline and Bactrim prescribing are somehow quite variable between regions.
 
 ```{r fnz_mup_by_drug}
-ineq %>%
+ineq_summary %>%
   filter(unit_type=='hrr') %>%
-  filter(mup < 2.2) %>% # get rid of one outlier
-  mutate(hrr=as.integer(unit)) %>% left_join(hrr_out, by='hrr') %>%
+  #rename(state=unit) %>% left_join(regions, by='state') %>%
+  mutate(hrr=as.integer(unit)) %>% left_join(hrr_regions) %>%
   ggplot(aes(x=fnz, y=mup, color=region)) +
   facet_wrap(~drug_group, scales='free') +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='gray') +
@@ -253,10 +264,10 @@ Tetracycline and Bactrim are interesting: the South has this long tail where $f_
 However, among those people who do consume, consumption is smaller per capita (i.e., the slope is similar but the intercept is smaller). In this sense, consumption in the South is less concentrated than in the Midwest.
 
 ```{r fnz_mean_region}
-ineq %>%
-  filter(unit_type=='state', drug_group == 'overall') %>%
+ineq_summary %>%
+  filter(unit_type=='state', drug_group=='overall') %>%
   rename(state=unit) %>%
-  filter(state != 'DC') %>%
+  filter(state != 'District of Columbia') %>%
   left_join(regions, by='state') %>%
   ggplot(aes(x=fnz, y=mean, color=region)) +
   geom_smooth(aes(color=NULL), method='lm', se=F, color='gray') +

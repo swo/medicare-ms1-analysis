@@ -28,21 +28,28 @@ summarize_inequality = function(y) {
     rename(drug=antibiotic) %>%
     inner_join(consumption_groups, by='drug') %>%
     count(bene_id, drug_group) %>% rename(n_claims=n) %>%
+    # add the "overall" category
+    (function(df) {
+      group_by(df, bene_id) %>%
+        summarize(n_claims=sum(n_claims)) %>%
+        mutate(drug_group='overall') %>%
+        bind_rows(df)
+    }) %>%
     left_join(bene, by='bene_id')
-  
+
   # function to compute the denominators, i.e., the number of benes in each unit
   denom_f = function(bene, unit_type_) {
     bene %>%
       rename(unit=!!sym(unit_type_)) %>%
       count(unit) %>% rename(n_bene=n)
   }
-  
+
   # function to compute inequality, i.e., the number of beneficiaries taking
   # each number of drug
   ineq_f = function(pde, bene, unit_type_) {
     # get denominator, which we'll use to fill in the non-consumers
     denom = denom_f(bene, unit_type_)
-    
+
     pde %>%
       # rename, e.g., the "state" column to "unit"
       rename(unit=!!sym(unit_type_)) %>%
@@ -66,14 +73,14 @@ summarize_inequality = function(y) {
       arrange(unit, drug_group) %>%
       mutate(unit_type=unit_type_)
   }
-  
+
   # get inequalities for each drug/unit at the state and HRR levels
   ineq = bind_rows(
     ineq_f(pde, bene, 'state'),
     ineq_f(pde, bene, 'hrr')
   ) %>%
     mutate(year=y)
-  
+
   ineq
 }
 
