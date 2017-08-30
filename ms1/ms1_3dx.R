@@ -22,7 +22,7 @@ read_years = function(years, template) {
 }
 
 dx_by_bene = read_years(2011:2014, '../../data/dx_by_bene_%i.tsv') %>%
-  rename(bene_id=BENE_ID, dx_cat=diagnosis_category) %>%
+  rename(bene_id=BENE_ID, dx_cat=diagnosis_category)
 
 dxs = unique(dx_by_bene$dx_cat)
 
@@ -45,7 +45,7 @@ dx_trends_models = lapply(dxs, function(dx) {
 # which dx's contribute to each abx?
 # in 2011
 dx_from_pde = read_tsv(sprintf('../../data/dx_from_pde_%i.tsv', 2011)) %>%
-  rename(pde_id=PDE_ID)
+  rename(pde_id=PDE_ID, dx_cat=diagnosis_category)
 
 top_abx = c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin',
             'trimethoprim/sulfamethoxazole', 'levofloxacin', 'amoxicillin/clavulanate',
@@ -70,6 +70,7 @@ dx_from_pde_table = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
   output_table('dx_from_pde')
 
 # what are trends in prescribing practice?
+# swo: test this part
 dx_to_pde = read_years(2011:2014, '../../data/dx_to_pde_%i.tsv') %>%
   rename(bene_id=BENE_ID, dx_cat=diagnosis_category) %>%
   mutate(dummy=TRUE) %>% spread(antibiotic, dummy) %>%
@@ -82,7 +83,7 @@ dx_rx_table = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
     dx_to_pde %>%
       filter(dx_cat==dx) %>%
       count(!!sym(a))
-  }) %T>%
+  })(.$antibiotic, .$dx_cat)) %T>%
   output_table('dx_rx_table')
 
 dx_rx_trends = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
