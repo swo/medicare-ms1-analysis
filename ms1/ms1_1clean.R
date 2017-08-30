@@ -37,20 +37,8 @@ load_data = function(year) {
     left_join(n_claims, by='bene_id') %>%
     replace_na(list(n_claims=0))
 
-  # diagnosis claims
-  dx = read_tsv(str_interp('../dx_${year}.tsv')) %>%
-    select(bene_id, dx_date, dx_category) %>%
-    distinct() %>%
-    mutate(year=year, dx_id=1:n())
-
-  # find all possible dx-PDE combinations
-  dx_pde = inner_join(dx, pde, by=c('year', 'bene_id')) %>%
-    mutate(delay=pde_date - dx_date) %>%
-    filter(between(delay, 0, rxdx_window)) %>%
-    mutate(year=year)
-
   # take the bene, pde (with diagnoses) and diagnoses (separately)
-  list(bene=bene, pde=pde, dx=dx, dx_pde=dx_pde)
+  list(bene=bene, pde=pde)
 }
 
 save_dat = function(dat, name) {
@@ -60,4 +48,4 @@ save_dat = function(dat, name) {
 }
 
 dat = lapply(2011:2014, load_data)
-lapply(c('bene', 'pde', 'dx', 'dx_pde'), function(x) save_dat(dat, x))
+lapply(c('bene', 'pde'), function(x) save_dat(dat, x))
