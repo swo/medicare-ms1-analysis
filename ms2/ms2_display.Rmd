@@ -201,6 +201,35 @@ ineq_table %>%
   kable
 ```
 
+```{r ineq_hist}
+cbbPalette <- c("#000000", "#D55E00", "#CC79A7", "#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2")
+
+ineq_table %>%
+  filter(unit_type=='state') %>%
+  # sum across units
+  group_by(year, drug_group, n_claims) %>%
+  summarize(n_bene=sum(n_bene)) %>%
+  ungroup() %>%
+  # compute the number of claims made by people making 1 claim, etc.
+  mutate(n_class_claims = n_claims * n_bene) %>%
+  # compute percentages: fr. of benes w/ 1 claim, fr. of claims made by 1-claimers, etc.
+  group_by(year, drug_group) %>%
+  mutate(pct_bene=pct(n_bene/sum(n_bene))) %>%
+  select(year, drug_group, n_claims, pct_bene) %>%
+  # group 3+ claims into one group, then sum up fractions in that new group
+  mutate(n_claims=fct_other(factor(n_claims), keep=0:2, other_level='3+')) %>%
+  group_by(year, drug_group, n_claims) %>%
+  summarize_at(vars(pct_bene), sum) %>%
+  ungroup() %>%
+  # show only 2011 data
+  filter(year==2011) %>%
+  mutate(drug_group=fct_reorder(drug_group, pct_bene, fun=max)) %>%
+  ggplot(aes(x=n_claims, y=pct_bene, fill=drug_group)) +
+  geom_bar(stat='identity', position='dodge') +
+  scale_fill_manual(values=cbbPalette) +
+  theme_minimal()
+```
+
 ## Unevenness is mostly related to the "extensive margin"
 
 The line has slope 1.5.
@@ -639,6 +668,19 @@ results %>%
 Points above the black line are significant. Note that the $p$-values in the two cases are really similar (i.e., most dumbbells are on the same horizontal line) but they can differ somewhat in their slope. The right-most pink dot is pneumococcus/macrolides, and the next is *P. mirabilis*/Bactrim.
 
 I also tried doing beta regressions, which get similar-sized changes in the slope but really significant $p$-values. Not sure what to make of those.
+
+```{r linear_beta}
+results %>%
+  filter(unit_type=='hrr', model %in% c('univariate_fnz', 'univariate_fnz_beta'), term=='fnz') %>%
+  select(bug, drug_group, model, estimate, p.value) %>%
+  group_by(model) %>%
+  mutate(p.value = p.adjust(p.value, method='BH')) %>%
+  ungroup() %>%
+  ggplot(aes(x=estimate, y=-log10(p.value), color=model, group=interaction(bug, drug_group))) +
+  geom_hline(yintercept = -log10(0.05)) +
+  geom_point() +
+  geom_line(color='gray')
+```
 
 ## Correlations between the metrics
 
