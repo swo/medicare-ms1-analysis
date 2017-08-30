@@ -13,9 +13,9 @@ library(forcats)
 ```
 
 ```{r load_data, cache.extra=c(md5sum('ineq.tsv'), md5sum('results.tsv'))}
-ineq = read_tsv('ineq.tsv')
+ineq_table = read_tsv('ineq.tsv')
 
-ineq_summary = ineq %>%
+ineq = ineq_table %>%
   group_by(year, unit_type, unit, drug_group) %>%
   summarize(mean=weighted.mean(n_claims, w=n_bene),
             fnz=sum(n_bene[n_claims > 0]) / sum(n_bene),
@@ -172,7 +172,7 @@ For each drug, what fraction of people took that drug? Of people who took it, ho
 ```{r ineq_table}
 pct = function(x) round(x*100, 2)
 
-ineq %>%
+ineq_table %>%
   filter(unit_type=='state') %>%
   # sum across units
   group_by(year, drug_group, n_claims) %>%
@@ -208,7 +208,7 @@ The line has slope 1.5.
 ```{r fnz_mean_drug}
 cbbPalette <- c("#000000", "#D55E00", "#CC79A7", "#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2")
 
-ineq_summary %>%
+ineq %>%
   filter(unit_type=='state', drug_group != 'overall') %>%
   ggplot(aes(x=fnz, y=mean, color=drug_group)) +
   stat_smooth(aes(color=NA), color='gray', method='lm', se=F, fullrange=TRUE) +
@@ -223,7 +223,7 @@ ineq_summary %>%
 Because $f_>$ is so collinear with $\mu$, multiple regressions using both as predictors will cause problems (cf. the Supplement). Rather than mean consumption $\mu$, I'll use the mean consumption among consumers $\mu_> = \mu / f_>$ as my second predictor.
 
 ```{r fnz_mup}
-ineq_summary %>%
+ineq %>%
   filter(unit_type=='state', drug_group != 'overall') %>%
   ggplot(aes(x=fnz, y=mup, color=drug_group)) +
   geom_smooth(method='lm', se=F) +
@@ -242,7 +242,7 @@ In both cases, it seems like the South is the mass with the most leverage, and i
 For $\beta$-lactams, cephalosporins, clindamycin, macrolides, and quinolones, the slopes seem to mostly agree with one another. This suggests that tetracycline and Bactrim prescribing are somehow quite variable between regions.
 
 ```{r fnz_mup_by_drug}
-ineq_summary %>%
+ineq %>%
   filter(unit_type=='hrr') %>%
   #rename(state=unit) %>% left_join(regions, by='state') %>%
   mutate(hrr=as.integer(unit)) %>% left_join(hrr_regions) %>%
@@ -264,7 +264,7 @@ Tetracycline and Bactrim are interesting: the South has this long tail where $f_
 However, among those people who do consume, consumption is smaller per capita (i.e., the slope is similar but the intercept is smaller). In this sense, consumption in the South is less concentrated than in the Midwest.
 
 ```{r fnz_mean_region}
-ineq_summary %>%
+ineq %>%
   filter(unit_type=='state', drug_group=='overall') %>%
   rename(state=unit) %>%
   filter(state != 'District of Columbia') %>%
@@ -352,7 +352,7 @@ It's the L-shape!
 ```{r ecoli_bactrim_fnz_hrr}
 ineq %>%
   filter(unit_type=='hrr') %>%
-  mutate(hrr=as.integer(unit)) %>% left_join(hrr_out, by='hrr') %>%
+  mutate(hrr=as.integer(unit)) %>% left_join(hrr_regions, by='hrr') %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   filter(bug=='E. coli', drug_group=='tmp_smx') %>%
   filter(mean_percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
@@ -389,7 +389,7 @@ But the same patterns are visible when looking at $\mu_>$ across HRRs:
 ```{r ecoli_bactrim_mup}
 ineq %>%
   filter(unit_type=='hrr') %>%
-  mutate(hrr=as.integer(unit)) %>% left_join(hrr_out, by='hrr') %>%
+  mutate(hrr=as.integer(unit)) %>% left_join(hrr_regions, by='hrr') %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   filter(bug=='E. coli', drug_group=='tmp_smx') %>%
   filter(mean_percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
@@ -407,7 +407,7 @@ ineq %>%
 ```{r efaecium_betalactam}
 ineq %>%
   filter(unit_type=='hrr') %>%
-  mutate(hrr=as.integer(unit)) %>% left_join(hrr_out, by='hrr') %>%
+  mutate(hrr=as.integer(unit)) %>% left_join(hrr_regions, by='hrr') %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   filter(bug=='Ec. faecium', drug_group=='beta_lactam') %>%
   ggplot(aes(x=fnz, y=mean_percent_nonsusceptible, color=region)) +
@@ -438,7 +438,7 @@ ineq %>%
 ```{r pneumo_tetra}
 ineq %>%
   filter(unit_type=='hrr') %>%
-  mutate(hrr=as.integer(unit)) %>% left_join(hrr_out, by='hrr') %>%
+  mutate(hrr=as.integer(unit)) %>% left_join(hrr_regions, by='hrr') %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   filter(bug=='S. pneumoniae', drug_group=='tetracycline') %>%
   ggplot(aes(x=fnz, y=mean_percent_nonsusceptible, color=region)) +
@@ -471,7 +471,7 @@ This negative relationship was significant only for HRRs, not states. Not surpri
 ```{r ecoli_betalactam}
 ineq %>%
   filter(unit_type=='hrr') %>%
-  mutate(hrr=as.integer(unit)) %>% left_join(hrr_out, by='hrr') %>%
+  mutate(hrr=as.integer(unit)) %>% left_join(hrr_regions, by='hrr') %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   filter(bug=='E. coli', drug_group=='beta_lactam') %>%
   filter(mean_percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
@@ -618,6 +618,27 @@ results %>%
   ylab(expression(beta[mu['>']])) +
   ggtitle('Relationship between model coefficients (f>, mu>) , HRR')
 ```
+
+## Using logistic models
+
+We don't expect that, over a large range, the consumption/resistance relationship will be linear. We expect it would be something more like a logistic function. To evaluate the difference between these two approaches, I performed quasibinomial regressions $R \sim f_>$. If $\bar{f}$ is the midpoint of the $f_>$ values (i.e., the weighted mean) and $\hat{y}$ is the predicted resistance from the model, then the slope at the midpoint is $\beta_f \hat{y}(\bar{x}) \left[ 1- \hat{y}(\bar{x}) \right]$. I compare the $p$-values and slopes in the linear and quasibinomial regressions:
+
+```{r linear_quasibin}
+results %>%
+  filter(unit_type=='hrr', model %in% c('univariate_fnz', 'univariate_fnz_log'), term=='fnz') %>%
+  select(bug, drug_group, model, estimate, p.value) %>%
+  group_by(model) %>%
+  mutate(p.value = p.adjust(p.value, method='BH')) %>%
+  ungroup() %>%
+  ggplot(aes(x=estimate, y=-log10(p.value), color=model, group=interaction(bug, drug_group))) +
+  geom_hline(yintercept = -log10(0.05)) +
+  geom_point() +
+  geom_line(color='gray')
+```
+
+Points above the black line are significant. Note that the $p$-values in the two cases are really similar (i.e., most dumbbells are on the same horizontal line) but they can differ somewhat in their slope. The right-most pink dot is pneumococcus/macrolides, and the next is *P. mirabilis*/Bactrim.
+
+I also tried doing beta regressions, which get similar-sized changes in the slope but really significant $p$-values. Not sure what to make of those.
 
 ## Correlations between the metrics
 

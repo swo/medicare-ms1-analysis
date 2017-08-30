@@ -113,6 +113,39 @@ spearman_model = function(df, y_name, x_name) {
              p.value=m$p.value)
 }
 
+beta_model = function(df_raw, y, x) {
+  # replace 0 and 1 with slightly different values
+  eps = 1e-6
+  df = df_raw %>%
+    mutate(y=case_when(.$y == 0 ~ eps,
+                       .$y == 1 ~ 1 - eps,
+                       TRUE ~ .$y))
+  
+  frmla = as.formula(str_interp("${y} ~ ${x}"))
+  m = betareg::betareg(formula=frmla, weights=n_place_antibiograms, data=df, link='logit')
+  
+  xbar = weighted.mean(df[[y]], w=df$n_place_antibiograms)
+  newdata = setNames(list(xbar), x) %>% as_data_frame
+
+  yhat = predict(m, newdata=newdata, type='response')
+  slope = m$coefficients$mean[[x]] * yhat * (1 - yhat)
+  pvalue = tidy(m) %>% filter(term==x) %>% pull(p.value)
+  data_frame(term=x, estimate=slope, p.value=pvalue)
+}
+
+logistic_model = function(df, y, xs) {
+  frmla = as.formula(str_interp("${y} ~ ${str_c(xs, collapse='+')}"))
+  m = glm(formula=frmla, weights=n_place_antibiograms, data=df, family=quasibinomial)
+  
+  xbar = weighted.mean(df[[y]], w=df$n_place_antibiograms)
+  newdata = setNames(list(xbar), x) %>% as_data_frame
+  
+  yhat = predict(m, newdata=newdata, type='response')
+  slope = m$coefficients[[x]] * yhat * (1 - yhat)
+  pvalue = tidy(m) %>% filter(term==x) %>% pull(p.value)
+  data_frame(term=x, estimate=slope, p.value=pvalue)
+}
+
 models = function(df) {
   bind_rows(
     spearman_model(df, 'y', 'mean') %>% mutate(model='spearman'),
@@ -124,7 +157,9 @@ models = function(df) {
     linear_model(df, 'y', c('fnz', 'I(fnz^2)')) %>% mutate(model='multivariate_fnz_fnz2'),
     linear_model(df, 'y', c('mup', 'fnz')) %>% mutate(model='multivariate_mup_fnz'),
     linear_model(df, 'y', c('fnz', 'mean')) %>% mutate(model='multivariate_fnz_mean'),
-    linear_model(df, 'y', c('mean', 'fnz')) %>% mutate(model='multivariate_mean_fnz')
+    linear_model(df, 'y', c('mean', 'fnz')) %>% mutate(model='multivariate_mean_fnz'),
+    beta_model(df, 'y', 'fnz') %>% mutate(model='univariate_fnz_beta'),
+    logistic_model(df, 'y', 'fnz') %>% mutate(model='univariate_fnz_log')
   ) %>%
     mutate(n_data=nrow(df))
 }
@@ -149,7 +184,8 @@ state_results = ineq %>%
   do(models(.)) %>%
   ungroup()
 
-bind_rows(
+results = bind_rows(
   hrr_results %>% mutate(unit_type='hrr'),
   state_results %>% mutate(unit_type='state')
-) %>% write_tsv('results.tsv')
+) %T>%
+  write_tsv('results.tsv')
