@@ -59,12 +59,5 @@ save_dat = function(dat, name) {
     write_tsv(str_interp('data/${name}.tsv'))
 }
 
-# prepare for parallel execution
-library(parallel)
-cluster = makeCluster(3, type='FORK')
-
-dat = parLapply(cluster, 2011:2014, load_data)
-
+dat = lapply(2011:2014, load_data)
 lapply(c('bene', 'pde', 'dx', 'dx_pde'), function(x) save_dat(dat, x))
-
-stopCluster(cluster)
