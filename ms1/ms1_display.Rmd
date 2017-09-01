@@ -39,7 +39,7 @@ n_million_pde = round(n_pde / 1e6, 2)
 
 est2pct = function(x) (exp(x) - 1)*100
 mult_est = function(df, m) {
-  mutate(df, estimate=m*estimate, std.error=sqrt(m)*estimate)
+  mutate(df, estimate=m*estimate, std.error=sqrt(m)*std.error)
 }
 model_ci = function(df) {
   df %>%
@@ -335,14 +335,16 @@ read_tsv('tables/dx_from_pde.tsv') %>%
   mutate(pct=`TRUE`/(`TRUE` + `FALSE`)*100 %>% round(2)) %>%
   select(antibiotic, dx_cat, pct) %>%
   spread(dx_cat, pct) %>%
-  head %>% kable
+  kable
 ```
 
 ## Trends in prescribing practice
 
 For each diagnosis and each drug, I ask what fraction of diagnoses are followed by a PDE for that drug in 2011 and 2014. I compute the percent change in those fractions.
 
-```{r dx_to_pde_table}
+Second, I do logistic regressions. The unit of analysis is the diagnosis. The outcome is whether a PDE for that drug follows a diagnosis in that category. The main predictor is year; covariates are as above. The adjusted percent change is between 2011 and 2014. (I computed this adjusted change, which is a relative risk, using the odds ratio from the regression and the mean probability of PDE for that diagnosis in 2011. This strictly incorrect: the mean relative risk is the mean of the risks computed using the predicted probabilities for each 2011 diagnosis, *not* the relative risk computed using the mean probability in 2011.)
+
+```{r dx_to_pde}
 dx_to_pde_unadj = read_tsv('tables/dx_rx_table.tsv') %>%
   filter(year %in% c(2011, 2014)) %>%
   select(dx_cat, antibiotic, year, f) %>%
@@ -354,27 +356,28 @@ dx_to_pde_adj = read_tsv('tables/dx_rx_trends.tsv') %>%
   mutate(ci=1.96*std.error,
          ci_low=estimate-ci,
          ci_high=estimate+ci) %>%
-  select(dx_cat, antibiotic, estimate, ci_low, ci_high)
+  select(dx_cat, antibiotic, estimate, ci_low, ci_high) %>%
+  arrange(dx_cat, antibiotic)
 
-risk_ratio_f = function(or, p) or / (1 + p * (or - 1))
+risk_ratio_f = function(odr, p) odr / (1 + p * (odr - 1))
 
 inner_join(dx_to_pde_unadj, dx_to_pde_adj, by=c('dx_cat', 'antibiotic')) %>%
-  mutate(estimate=risk_ratio_f(estimate, `2011`),
-         ci_low=risk_ratio_f(ci_low, `2011`),
-         ci_high=risk_ratio_f(ci_high, `2011`),
+  # convert model estimates to odds ratios, then to risk ratios,
+  # then to adjusted fractional changes, then to percentages
+  mutate(or=exp(estimate),
+         or_low=exp(ci_low),
+         or_high=exp(ci_high),
+         rr=risk_ratio_f(or, `2011`),
+         rr_low=risk_ratio_f(or_low, `2011`),
+         rr_high=risk_ratio_f(or_high, `2011`),
+         adj_change=rr-1,
+         adj_change_low=rr_low-1,
+         adj_change_high=rr_high-1,
          pct_change=(`2014`-`2011`)/`2011`) %>%
   mutate_if(is.numeric, function(x) round(x*100, 2)) %>%
-  mutate(adj_change=sprintf('%.2f%% (%.2f -- %.2f%%)', estimate, ci_low, ci_high)) %>%
+  mutate(adj_change=sprintf('%.2f%% (%.2f -- %.2f%%)', adj_change, adj_change_low, adj_change_high)) %>%
   select(dx_cat, antibiotic, `2011`, `2014`, pct_change, adj_change) %>%
   kable
-```
-
-Second, I do logistic regressions. The unit of analysis is the diagnosis. The outcome is whether a PDE for that drug follows a diagnosis in that category. The main predictor is year; covariates are as above. The adjusted percent change is between 2011 and 2014. (I computed this adjusted change, which is a relative risk, using the odds ratio from the regression and the mean probability of PDE for that diagnosis in 2011. This strictly incorrect: the mean relative risk is the mean of the risks computed using the predicted probabilities for each 2011 diagnosis, *not* the relative risk computed using the mean probability in 2011. But it seems like it's decently close, and I think insisting on the thing that is technically correct will only create confusion.)
-
-I broke this into three tables by antibiotic, just to make it easier to navigate.
-
-```{r dx_to_pde_trends}
-
 ```
 
 # Summary of results for each drug
