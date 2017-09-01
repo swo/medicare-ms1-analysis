@@ -120,7 +120,7 @@ beta_model = function(df_raw, y, x) {
     mutate(y=case_when(.$y == 0 ~ eps,
                        .$y == 1 ~ 1 - eps,
                        TRUE ~ .$y))
-  
+
   frmla = as.formula(str_interp("${y} ~ ${x}"))
   m = betareg::betareg(formula=frmla, weights=n_place_antibiograms, data=df, link='logit')
   

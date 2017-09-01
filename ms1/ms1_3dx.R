@@ -50,6 +50,10 @@ dx_trends_models = lapply(dxs, function(dx) {
   bind_rows() %T>%
   output_table('dx_trends')
 
+# swo:
+# NB! SAS truncated the abx names in some files
+# esp., "trimethoprim/sulfamethoxazole" got chopped to "..metho"
+
 # which dx's contribute to each abx?
 # in 2011
 dx_from_pde = read_tsv(sprintf('../../data/dx_from_pde_%i.tsv', 2011)) %>%
@@ -80,13 +84,18 @@ dx_from_pde_table = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
 # what are trends in prescribing practice?
 # swo: test this part
 dx_to_pde = read_years(2011:2014, '../../data/dx_to_pde_%i.tsv') %>%
+  # hack to fix the weird TMP/SMX values
+  mutate(antibiotic=if_else(antibiotic=='trimethoprim/sulfametho',
+                            'trimethoprim/sulfamethoxazole',
+                            antibiotic)) %>%
   rename(bene_id=BENE_ID, dx_cat=diagnosis_category) %>%
   replace_na(list(antibiotic='no_abx')) %>%
   # drop no infection and no abx, since we won't look at those
   filter(!(dx_cat=='not_infectious' & antibiotic=='no_abx')) %>%
   # lump abx outside of top 10 into "other"
   mutate(antibiotic=fct_other(factor(antibiotic), keep=c(top_abx, 'no_abx'))) %>%
-  count(year, bene_id, dx_cat, antibiotic)
+  count(year, bene_id, dx_cat, antibiotic) %>%
+  left_join(bene, by=c('year', 'bene_id'))
 
 dx_rx_table = dx_to_pde %>%
   group_by(year, dx_cat, antibiotic) %>%
@@ -104,5 +113,6 @@ dx_rx_trends = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
       mutate(y=antibiotic==a) %>%
       glm_f(frmla, family='binomial', weights=n) %>%
       tidy
-  })(.$antibiotic, .$dx_cat)) %T>%
+  })(.$antibiotic, .$dx_cat)) %>%
+  ungroup() %T>%
   output_table('dx_rx_trends')

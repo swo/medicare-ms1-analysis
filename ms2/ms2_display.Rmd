@@ -184,6 +184,7 @@ ineq_table %>%
   group_by(year, drug_group) %>%
   mutate(pct_bene=pct(n_bene/sum(n_bene)),
          pct_claims=pct(n_class_claims/sum(n_class_claims))) %>%
+  ungroup() %>%
   select(year, drug_group, n_claims, pct_bene, pct_claims) %>%
   # group 3+ claims into one group, then sum up fractions in that new group
   mutate(n_claims=fct_other(factor(n_claims), keep=0:2, other_level='3+')) %>%

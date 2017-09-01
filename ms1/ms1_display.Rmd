@@ -310,7 +310,7 @@ dx_unadj = read_tsv('tables/dx_trends_table.tsv') %>%
   mutate(dxpkp=1000*n_dx/n_bene) %>%
   select(dx_cat, year, dxpkp) %>%
   spread(year, dxpkp) %>%
-  mutate(unadj_pct_change=(`2014`/`2011`-1)*100) %>%
+  mutate(pct_change=(`2014`/`2011`-1)*100) %>%
   arrange(desc(`2011`)) %>%
   mutate_if(is.numeric, function(x) round(x, 2))
 
@@ -319,9 +319,9 @@ dx_adj = read_tsv('tables/dx_trends.tsv') %>%
   filter(term=='year') %>%
   mult_est(3) %>%
   model_ci() %>%
-  select(dx_cat, change_str, p.value)
+  select(dx_cat, adj_change=change_str, p.value)
 
-full_join(dx_unadj, dx_adj, by='dx_cat') %>%
+dx_trends = full_join(dx_unadj, dx_adj, by='dx_cat') %T>%
   kable
 ```
 
@@ -329,12 +329,12 @@ full_join(dx_unadj, dx_adj, by='dx_cat') %>%
 
 For each drug, I asked what fraction of PDEs are associated with each diagnosis. This gives you a sense that, say, the diagnoses that give rise to azithromycin are bronchitis, URI, etc. The values are percents in 2011.
 
-```{r pde_dx}
-read_tsv('tables/dx_from_pde.tsv') %>% 
+```{r dx_from_pde}
+dx_from_pde = read_tsv('tables/dx_from_pde.tsv') %>% 
   spread(present, n) %>%
   mutate(pct=`TRUE`/(`TRUE` + `FALSE`)*100 %>% round(2)) %>%
   select(antibiotic, dx_cat, pct) %>%
-  spread(dx_cat, pct) %>%
+  spread(dx_cat, pct) %T>%
   kable
 ```
 
@@ -361,7 +361,9 @@ dx_to_pde_adj = read_tsv('tables/dx_rx_trends.tsv') %>%
 
 risk_ratio_f = function(odr, p) odr / (1 + p * (odr - 1))
 
-inner_join(dx_to_pde_unadj, dx_to_pde_adj, by=c('dx_cat', 'antibiotic')) %>%
+dx_to_pde = inner_join(dx_to_pde_unadj,
+                       dx_to_pde_adj,
+                       by=c('dx_cat', 'antibiotic')) %>%
   # convert model estimates to odds ratios, then to risk ratios,
   # then to adjusted fractional changes, then to percentages
   mutate(or=exp(estimate),
@@ -376,7 +378,66 @@ inner_join(dx_to_pde_unadj, dx_to_pde_adj, by=c('dx_cat', 'antibiotic')) %>%
          pct_change=(`2014`-`2011`)/`2011`) %>%
   mutate_if(is.numeric, function(x) round(x*100, 2)) %>%
   mutate(adj_change=sprintf('%.2f%% (%.2f -- %.2f%%)', adj_change, adj_change_low, adj_change_high)) %>%
-  select(dx_cat, antibiotic, `2011`, `2014`, pct_change, adj_change) %>%
+  select(dx_cat, antibiotic, `2011`, `2014`, pct_change, adj_change) %T>%
+  kable
+```
+
+## Combined tables
+
+```{r}
+x = dx_trends %>%
+  select(-p.value) %>%
+  gather('key', 'value', -dx_cat) %>%
+  spread(dx_cat, value) %>%
+  mutate(antibiotic='dx_trends')
+
+y = dx_from_pde %>%
+  mutate(key='dx_from_pde') %>%
+  mutate_if(is.numeric, function(x) as.character(round(x, 2)))
+
+z = dx_to_pde %>%
+  gather('key', 'value', -dx_cat, -antibiotic) %>%
+  spread(dx_cat, value)
+
+combined_table = bind_rows(x, y, z) %>%
+  mutate(antibiotic=factor(antibiotic, levels=c('dx_trends', top_abx)),
+         key=factor(key, levels=c('dx_from_pde', '2011', '2014', 'pct_change', 'adj_change'))) %>%
+  arrange(antibiotic, key)
+```
+
+### Respiratory stuff
+
+```{r respiratory}
+combined_table %>%
+  filter(antibiotic %in% c('dx_trends', 'azithromycin', 'levofloxacin', 'amoxicillin', 'amoxicillin/clavulanate')) %>%
+  select(antibiotic, key, not_infectious, asthma, bronchitis, other_resp, pharyngitis, pneumonia, sinusitis, uri) %>%
+  kable
+```
+
+### UTIs
+
+```{r uti}
+combined_table %>%
+  filter(antibiotic %in% c('dx_trends', 'ciprofloxacin', 'trimethoprim/sulfamethoxazole', 'nitrofurantoin')) %>%
+  select(antibiotic, key, not_infectious, uti, uti_t3) %>%
+  kable
+```
+
+### SSTI
+
+```{r ssti}
+combined_table %>%
+  filter(antibiotic %in% c('dx_trends', 'clindamycin', 'cephalexin', 'trimethoprim/sulfamethoxazole')) %>%
+  select(antibiotic, key, not_infectious, ssti, ssti_t3) %>%
+  kable
+```
+
+### GI
+
+```{r gi}
+combined_table %>%
+  filter(antibiotic %in% c('dx_trends', 'ciprofloxacin')) %>%
+  select(antibiotic, key, not_infectious, gi, gi_t3) %>%
   kable
 ```
 
