@@ -38,6 +38,9 @@ n_pde = sum(claims_by_abx$n)
 n_million_pde = round(n_pde / 1e6, 2)
 
 est2pct = function(x) (exp(x) - 1)*100
+mult_est = function(df, m) {
+  mutate(df, estimate=m*estimate, std.error=sqrt(m)*estimate)
+}
 model_ci = function(df) {
   df %>%
     mutate(pct_change=est2pct(estimate),
@@ -46,10 +49,6 @@ model_ci = function(df) {
            ci_high=est2pct(estimate + ci),
            change_str=sprintf('%.2f%% (%.2f -- %.2f%%)', pct_change, ci_low, ci_high))
 }
-
-model_abx = read_tsv('tables/model_abx.tsv') %>%
-  rename(antibiotic=name) %>%
-  model_ci()
 
 claims_overall = claims_by_abx %>%
   select(-n_bene) %>%
@@ -113,9 +112,6 @@ top_abx = claims_by_abx %>%
   arrange(desc(cpkp)) %$%
   head(antibiotic, 10)
 
-# this should be the same list as for the models
-stopifnot(all(top_abx %in% model_abx$antibiotic))
-
 claims_by_top_abx = claims_by_abx %>%
   bind_rows(claims_overall) %>%
   mutate(antibiotic=fct_relevel(fct_other(antibiotic, keep=c('overall', top_abx)),
@@ -163,7 +159,7 @@ change_demog = read_tsv('tables/model_overall_demography.tsv') %>%
   mutate(estimate=3*estimate,
          std.error=sqrt(3)*std.error) %>%
   model_ci() %>%
-  filter(term=='year0') %>%
+  filter(term=='year') %>%
   select(name, adj_change=change_str)
 
 claims_by = function(x) {
@@ -211,8 +207,12 @@ Adjusted changes were computed using a Poisson regression predicting claims per 
 ## By drug
 
 ```{r adjusted_changes}
-adjusted_changes = model_abx %>%
-  filter(term=='year0') %>%
+adjusted_changes = read_tsv('tables/model_abx.tsv') %>%
+  rename(antibiotic=name) %>%
+  filter(term=='year') %>%
+  mutate(estimate=3*estimate,
+         std.error=sqrt(3)*std.error) %>%
+  model_ci() %>%
   select(antibiotic, pct_change, ci_low, ci_high) %>%
   arrange(pct_change) %>%
   mutate(antibiotic=fct_inorder(antibiotic),
@@ -222,7 +222,7 @@ unadjusted_changes = bind_rows(claims_by_abx, claims_overall) %>%
   filter(antibiotic %in% c('overall', top_abx), year %in% c(2011, 2014)) %>%
   select(antibiotic, year, cpkp) %>%
   spread(year, cpkp) %>%
-  mutate(change=(`2014`-`2011`)/3,
+  mutate(change=`2014`-`2011`,
          fold_change=change/`2011`,
          pct_change=100*fold_change) %>%
   select(antibiotic, pct_change)
@@ -234,8 +234,8 @@ adjusted_changes %>%
   geom_point(dat=unadjusted_changes, aes(x=antibiotic, y=pct_change, ymin=NULL, ymax=NULL), color='red') +
   coord_flip() +
   xlab('') +
-  ylab('adjusted yearly change in consumption (%)') +
-  scale_y_continuous(limits=c(-10, 10), breaks=c(-10, -5, 0, 5, 10)) +
+  ylab('adjusted change in consumption 2011 to 2014 (%)') +
+  scale_y_continuous(limits=c(-22, 32), breaks=c(-20, -10, 0, 10, 20, 30)) +
   theme_minimal() +
   theme(axis.title.x = element_text(size=16),
         axis.text = element_text(size=16))
@@ -245,15 +245,13 @@ adjusted_changes %>%
 adjusted_changes %>% arrange(desc(antibiotic)) %>% kable
 
 adjusted_az_decrease = adjusted_changes %>%
-  filter(antibiotic=='azithromycin') %$%
-  { (1 + pct_change/100)^3 } %>%
-  { (1 - .) * 100 } %>%
+  filter(antibiotic=='azithromycin') %>%
+  pull(pct_change) %>%
   round(2)
 
 adjusted_levo_increase = adjusted_changes %>%
-  filter(antibiotic=='levofloxacin') %$%
-  { (1 + pct_change/100)^3 } %>%
-  { (. - 1) * 100 } %>%
+  filter(antibiotic=='levofloxacin') %>%
+  pull(pct_change) %>%
   round(2)
 ```
 
@@ -271,62 +269,59 @@ fq_names = claims_by_abx %>%
   arrange(desc(n)) %$%
   antibiotic
 
-read_tsv('tables/model_fq.tsv') %>%
+fq_trends = read_tsv('tables/model_fq.tsv') %>%
+  mult_est(3) %>%
   model_ci() %>%
-  select(term, pct_change, ci_low, ci_high, p.value) %>%
+  select(term, pct_change, ci_low, ci_high, p.value) %T>%
   kable
+
+fq_change_pct = fq_trends %>%
+  filter(term=='year') %>%
+  pull(pct_change) %>%
+  round(2)
 ```
 
-Overall, fluoroquinolones changed by about 0% per year during this period. This included `r fq_names`.
+Overall, fluoroquinolones changed by a tiny amount, `r fq_change_pct`%, over this period. This included `r fq_names`.
 
 # Prescribing practice
 
 ## Methodology
 
-I examined encounters recorded in the Carrier Line File whose HCPCS code indicated an office visit. I grouped diagnoses into categories using the Fleming-Dutra eTable 2.
+First, I looked at all encounters recorded in the Carrier Line File and the Outpatient file. A large fraction, I think 78%, of PDEs had an encounter 0-7 days before.
 
-To link diagnoses and PDEs, I looked for all diagnosis-PDE pairs where the PDE came 0-3 days after the diagnosis.
+Next, I limited by analysis to encounters who HCPCS code indicated an E&M visit, and I grouped diagnostic codes into categories using Fleming-Dutra eTable 2. I determined the trends in the prevalence of these diagnosis categories by counting the diagnoses per beneficiary per year and by using Poisson regressions that account for the unusual covariates.
 
-### Delays between diagnosis and prescription
+I analyzed trends in prescribing practice by computing the fraction of encounters in each diagnosis category that were followed by PDEs for each drug. I computed adjusted trends using logistic regression.
 
-The table shows the number of diagnoses that were followed by that number of days' delay before the following antibiotic prescription. Most prescriptions were filled on the same day as the diagnosis.
-
-```{r dx_delay}
-dx_delay = read_tsv('tables/dx_delay.tsv')
-
-dx_delay %>%
-  filter(!is.na(delay)) %>%
-  mutate(f=n/sum(n)) %>%
-  kable
-```
+Finally, I considered only those PDEs that are downstream of those E&M diagnoses. For each antibiotic, I computed the fraction of PDEs that have each diagnosis category upstream.
 
 ## Trends in diagnoses
 
 Are some diagnoses becoming more or less common?
-
-### Unadjusted trends in diagnoses
 
 First, unadjusted trends in the number of diagnoses per 1,000 beneficiaries in each year. The percent change is between 2011 and 2014.
 
 Second, adjusted trends, using Poisson regressions. The unit of analysis is the beneficiary in a year. The outcome variable is number of diagnoses in that category. The main predictor is year; the other covariates are as above. The percent change is between 2011 and 2014.
 
 ```{r dx_trends}
-dx_unadj = read_tsv('tables/dx_counts.tsv') %>%
-  select(diagnosis_category, year, dxpkp) %>%
+dx_unadj = read_tsv('tables/dx_trends_table.tsv') %>%
   filter(year %in% c(2011, 2014)) %>%
+  left_join(select(totals, year, n_bene), by='year') %>%
+  mutate(dxpkp=1000*n_dx/n_bene) %>%
+  select(dx_cat, year, dxpkp) %>%
   spread(year, dxpkp) %>%
   mutate(unadj_pct_change=(`2014`/`2011`-1)*100) %>%
   arrange(desc(`2011`)) %>%
   mutate_if(is.numeric, function(x) round(x, 2))
 
-dx_adj = read_tsv('tables/dx_models.tsv') %>%
-  filter(term=='year0') %>%
-  mutate(adj_pct_change=100*(exp(estimate*3)-1),
-         p.value=p.adjust(p.value, method='BH')) %>%
-  mutate_if(is.numeric, function(x) round(x, 2)) %>%
-  select(diagnosis_category, adj_pct_change, p.value)
+dx_adj = read_tsv('tables/dx_trends.tsv') %>%
+  rename(dx_cat=model) %>%
+  filter(term=='year') %>%
+  mult_est(3) %>%
+  model_ci() %>%
+  select(dx_cat, change_str, p.value)
 
-full_join(dx_unadj, dx_adj, by='diagnosis_category') %>%
+full_join(dx_unadj, dx_adj, by='dx_cat') %>%
   kable
 ```
 
@@ -334,77 +329,52 @@ full_join(dx_unadj, dx_adj, by='diagnosis_category') %>%
 
 For each drug, I asked what fraction of PDEs are associated with each diagnosis. This gives you a sense that, say, the diagnoses that give rise to azithromycin are bronchitis, URI, etc. The values are percents in 2011.
 
-The first table includes a "no diagnosis" category. This means that the majority of PDEs were not downstream of a diagnosis. In the second table, I remove the "none" diagnosis and rescale the values, which helps make it easier to read.
-
 ```{r pde_dx}
-read_tsv('tables/pde_dx_counts.tsv') %>%
-  filter(antibiotic %in% top_abx, year==2011) %>%
-  mutate(pct=round(f_pde_with_dx*100, 1)) %>%
-  select(antibiotic, diagnosis_category, pct) %>%
-  spread(diagnosis_category, pct) %>%
-  kable
-
-read_tsv('tables/pde_dx_counts.tsv') %>%
-  filter(antibiotic %in% top_abx, year==2011, diagnosis_category != 'none') %>%
-  group_by(antibiotic) %>%
-  mutate(f=f_pde_with_dx/sum(f_pde_with_dx),
-         pct=round(f*100, 1)) %>%
-  ungroup() %>%
-  select(antibiotic, diagnosis_category, pct) %>%
-  spread(diagnosis_category, pct) %>%
-  kable
+read_tsv('tables/dx_from_pde.tsv') %>% 
+  spread(present, n) %>%
+  mutate(pct=`TRUE`/(`TRUE` + `FALSE`)*100 %>% round(2)) %>%
+  select(antibiotic, dx_cat, pct) %>%
+  spread(dx_cat, pct) %>%
+  head %>% kable
 ```
-
-I also did logistic regressions for these trends, but I don't think it's very important. We're not particulary interested in whether the diagnoses that contribute to a drug are changing. We're more interested in whether the drugs that *follow* diagnoses are changing, which is next.
 
 ## Trends in prescribing practice
 
 For each diagnosis and each drug, I ask what fraction of diagnoses are followed by a PDE for that drug in 2011 and 2014. I compute the percent change in those fractions.
 
+```{r dx_to_pde_table}
+dx_to_pde_unadj = read_tsv('tables/dx_rx_table.tsv') %>%
+  filter(year %in% c(2011, 2014)) %>%
+  select(dx_cat, antibiotic, year, f) %>%
+  spread(year, f)
+
+dx_to_pde_adj = read_tsv('tables/dx_rx_trends.tsv') %>%
+  filter(term=='year') %>%
+  mult_est(3) %>%
+  mutate(ci=1.96*std.error,
+         ci_low=estimate-ci,
+         ci_high=estimate+ci) %>%
+  select(dx_cat, antibiotic, estimate, ci_low, ci_high)
+
+risk_ratio_f = function(or, p) or / (1 + p * (or - 1))
+
+inner_join(dx_to_pde_unadj, dx_to_pde_adj, by=c('dx_cat', 'antibiotic')) %>%
+  mutate(estimate=risk_ratio_f(estimate, `2011`),
+         ci_low=risk_ratio_f(ci_low, `2011`),
+         ci_high=risk_ratio_f(ci_high, `2011`),
+         pct_change=(`2014`-`2011`)/`2011`) %>%
+  mutate_if(is.numeric, function(x) round(x*100, 2)) %>%
+  mutate(adj_change=sprintf('%.2f%% (%.2f -- %.2f%%)', estimate, ci_low, ci_high)) %>%
+  select(dx_cat, antibiotic, `2011`, `2014`, pct_change, adj_change) %>%
+  kable
+```
+
 Second, I do logistic regressions. The unit of analysis is the diagnosis. The outcome is whether a PDE for that drug follows a diagnosis in that category. The main predictor is year; covariates are as above. The adjusted percent change is between 2011 and 2014. (I computed this adjusted change, which is a relative risk, using the odds ratio from the regression and the mean probability of PDE for that diagnosis in 2011. This strictly incorrect: the mean relative risk is the mean of the risks computed using the predicted probabilities for each 2011 diagnosis, *not* the relative risk computed using the mean probability in 2011. But it seems like it's decently close, and I think insisting on the thing that is technically correct will only create confusion.)
 
 I broke this into three tables by antibiotic, just to make it easier to navigate.
 
-```{r dx_pde_trends}
-dx_pde_unadj = read_tsv('tables/dx_pde_counts.tsv') %>%
-  filter(antibiotic %in% top_abx, year %in% c(2011, 2014)) %>%
-  mutate(key=str_c('y', year)) %>%
-  select(diagnosis_category, antibiotic, key, value=f_dx_with_pde)
+```{r dx_to_pde_trends}
 
-dx_pde_adj = read_tsv('tables/dx_pde_model.tsv') %>%
-  filter(term=='year0') %>%
-  mutate(key='OR',
-         p.value=p.adjust(p.value, method='BH'),
-         OR=round(exp(3*estimate), 2)) %>%
-  filter(p.value < 0.05) %>%
-  select(diagnosis_category, antibiotic, key, value=OR)
-
-# risk ratio
-rr = function(odds_ratio, p0) odds_ratio / (1 - p0 + (p0 * odds_ratio))
-
-dx_pde_both= bind_rows(dx_pde_unadj, dx_pde_adj) %>%
-   spread(key, value) %>%
-   mutate(pct_change=(y2014/y2011-1)*100,
-          adj_pct_change=(rr(OR, y2011)-1)*100) %>%
-   select(-OR) %>%
-   #mutate_if(is.numeric, function(x) round(x, 2)) %>%
-   gather('key', 'value', y2011:adj_pct_change) %>%
-   mutate(value=round(value, 2)) %>%
-   spread(diagnosis_category, value) %>%
-   mutate(key=factor(key, levels=c('y2011', 'y2014', 'pct_change', 'adj_pct_change'))) %>%
-   arrange(antibiotic, key)
-
-dx_pde_both %>%
-  filter(str_detect(antibiotic, '^a')) %>%
-   kable
-
-dx_pde_both %>%
-  filter(str_detect(antibiotic, '^c')) %>%
-   kable
-
-dx_pde_both %>%
-  filter(str_detect(antibiotic, '^[^ac]')) %>%
-   kable
 ```
 
 # Summary of results for each drug
