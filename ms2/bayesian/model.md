@@ -59,45 +59,6 @@ Half-Cauchy isn't the right thing.
 # Values for the hyperparameters
 
 - $\tau_\phi$: I expect a standard deviation on the order of 10% within a state. That means a variance of $10^{-2}$, which would be $\phi = 25$. So let's put this at 25.
-- $\tau_{\gamma_0}$: This could depend strongly on the drug. Instead let's say that if consumption were increased 2-fold from the highest-consuming state, would we expect 50% resistance? Maybe. 100-fold? Seems very likely. So let's put this at 10-fold higher than the highest-consumed drug, which will be an overestimate for other drugs. Mean consumption for quinolones tops out at 0.5 claims per beneficiary, so let's put this at 50.
+- $\tau_{\gamma_0}$: This could depend strongly on the drug. Instead let's say that if consumption were increased 2-fold from the highest-consuming state, would we expect 50% resistance? Maybe. 10-fold? Seems very likely. So let's put this at 10-fold higher than the highest-consumed drug, which will be an overestimate for other drugs. Mean consumption for quinolones tops out at 0.5 claims per beneficiary, so let's put this at 5.
 - $\tau_{\gamma_1}$: If you consumption needs to be $x$ to get 50% resistance, what does consumption have to be to get 75% resistance? Maybe $2x$, but it seems unlikely that it's $100x$. So let's put this at $10$.
-- $\tau_\psi$: How much variance in the consumption-resistance relationship do we expect? If you had multiple states with exactly the consumption that will give rise to a mean 50% resistance, what variation do we expect? Maybe this is higher than what I would expect for $\tau_\phi$, so let's say 50.
-
-# Stan code
-
-~~~~
-data {
-  int<lower=0> S; // number of states
-  int<lower=0> A; // number of antibiograms (total)
-  int<lower=0> I[A]; // number of isolates in each antibiogram
-  int<lower=0> R[A]; // number of resistant isolates in each antibiogram
-  int<lower=0> Q[A, S]; // indicator for whether an antibiogram is in a state
-  real<lower=0> C[S]; // consumption
-}
-
-parameters {
-  real<lower=0> p[A]; // probability of resistance in each antibiogram
-  real<lower=0> mu[S]; // mean resistance in each state
-  real<lower=0> phi[S]; // narrowness of resistance in each state
-  real<lower=0> g0; // consumption leading to 50% resistance
-  real<lower=0> g1; // 1/g1 is the fraction above g0 leading to 75% resistance
-  real<lower=0> psi; // narrowness of the consumption-resistance relationship
-}
-
-transformed parameters {
-  vector[S] eta; // linear predictor
-  vector[S] muhat; // estimator
-  eta = g1 * (C / g0 - 1);
-  muhat = 1 / (1 + exp(-eta));
-}
-
-model {
-  R ~ binomial(I, Q * p);
-  p ~ beta(phi .* mu, phi .* (1-mu)); // alpha=mu*phi, beta=(1-mu)*phi
-  phi ~ cauchy(0, 25); // mean, sigma
-  g0 ~ cauchy(0, 50);
-  g1 ~ cauchy(0, 10);
-  mu ~ beta(psi * muhat, psi * (1-muhat));
-  psi ~ cauchy(0, 50);
-}
-~~~~
+- $\tau_\psi$: How much variance in the consumption-resistance relationship do we expect? If you had multiple states with exactly the consumption that will give rise to a mean 50% resistance, what variation do we expect? I think this could be a little higher than for $\phi$, so let's also put this at 50.

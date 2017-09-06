@@ -40,7 +40,7 @@ model {
   }
 
   phi ~ cauchy(0, 25); // mean, sigma
-  g0 ~ cauchy(0, 50);
+  g0 ~ cauchy(0, 5);
   g1 ~ cauchy(0, 10);
   mu ~ beta(psi * muhat, psi * (1-muhat));
   psi ~ cauchy(0, 50);
