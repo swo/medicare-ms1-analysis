@@ -125,16 +125,13 @@ claims_by_top_abx %>%
   filter(antibiotic=='overall') %>%
   ggplot(aes(x=year, y=cpkp)) +
   geom_point() + geom_line() +
-  #ylim(0, 1520) +
-  scale_y_continuous(limits=c(0, 1525), breaks=c(0, 250, 500, 1000, 1500)) +
+  scale_y_continuous(limits=c(975, 1525), breaks=c(1000, 1125, 1250, 1375, 1500)) +
   theme_minimal() +
   ggtitle('Unadjusted consumption, all abx')
 
 claims_by_top_abx %>%
   filter(antibiotic %in% c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin', 'trimethoprim/sulfamethoxazole', 'levofloxacin')) %>%
   ggplot(aes(x=year, y=cpkp, color=antibiotic)) +
-  #ggplot(aes(x=year, y=cpkp)) +
-  #facet_wrap(~antibiotic, ncol=5) +
   geom_point() + geom_line() +
   scale_y_continuous(limits=c(0, 250), breaks=c(0, 50, 100, 150, 200, 250)) +
   theme_minimal() +
@@ -143,10 +140,31 @@ claims_by_top_abx %>%
 claims_by_top_abx %>%
   filter(antibiotic %in% c('amoxicillin/clavulanate', 'doxycycline', 'nitrofurantoin', 'clindamycin')) %>%
   ggplot(aes(x=year, y=cpkp, color=antibiotic)) +
-  #ggplot(aes(x=year, y=cpkp)) +
-  #facet_wrap(~antibiotic, ncol=5) +
   geom_point() + geom_line() +
   scale_y_continuous(limits=c(0, 100), breaks=c(0, 50, 100)) +
+  #ylim(0, 140) +
+  theme_minimal() +
+  ggtitle('Unadjusted consumption, next 5')
+```
+
+```{r claims_by_top_abx_facet, eval=FALSE}
+claims_by_top_abx %>%
+  filter(antibiotic %in% c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin', 'trimethoprim/sulfamethoxazole')) %>%
+  ggplot(aes(x=year, y=cpkp, color=antibiotic)) +
+  #ggplot(aes(x=year, y=cpkp)) +
+  facet_wrap(~antibiotic, ncol=5) +
+  geom_point() + geom_line() +
+  scale_y_continuous(limits=c(0, 250), breaks=c(0, 50, 100, 150, 200, 250)) +
+  theme_minimal() +
+  ggtitle('Unadjusted consumption, top 5')
+
+claims_by_top_abx %>%
+  filter(antibiotic %in% c('levofloxacin', 'amoxicillin/clavulanate', 'doxycycline', 'nitrofurantoin', 'clindamycin')) %>%
+  ggplot(aes(x=year, y=cpkp, color=antibiotic)) +
+  #ggplot(aes(x=year, y=cpkp)) +
+  facet_wrap(~antibiotic, ncol=5) +
+  geom_point() + geom_line() +
+  scale_y_continuous(limits=c(0, 150), breaks=c(0, 50, 100)) +
   #ylim(0, 140) +
   theme_minimal() +
   ggtitle('Unadjusted consumption, next 5')
@@ -231,7 +249,7 @@ adjusted_changes %>%
   ggplot(aes(x=antibiotic, y=pct_change, ymin=ci_low, ymax=ci_high)) +
   geom_bar(stat='identity', fill=NA, color='black') +
   geom_errorbar(width=0.5) +
-  geom_point(dat=unadjusted_changes, aes(x=antibiotic, y=pct_change, ymin=NULL, ymax=NULL), color='red') +
+  geom_point(dat=unadjusted_changes, aes(x=antibiotic, y=pct_change, ymin=NULL, ymax=NULL), shape=1) +
   coord_flip() +
   xlab('') +
   ylab('adjusted change in consumption 2011 to 2014 (%)') +
@@ -261,7 +279,7 @@ Consumption of azithromycin fell by `r adjusted_az_decrease`% over the entire st
 
 Consumption of ciprofloxacin is slightly decreasing, and consumption of levofloxacin is increasing. How does fluoroquinolone consumption overall change?
 
-```{r fq}
+```{r fq_table}
 fq_names = claims_by_abx %>%
   filter(str_detect(antibiotic, 'floxacin')) %>%
   group_by(antibiotic) %>%
@@ -269,19 +287,30 @@ fq_names = claims_by_abx %>%
   arrange(desc(n)) %$%
   antibiotic
 
+fq_table = claims_by_abx %>%
+  filter(antibiotic %in% fq_names) %>%
+  group_by(year) %>%
+  summarize(cpkp=sum(cpkp))
+
+fq_change_pct_unadj = fq_table %>%
+  spread(year, cpkp) %$%
+  { (`2014`-`2011`)/`2011` } %>%
+  { round(100*., 2) }
+```
+
+```{r fq_trends}
 fq_trends = read_tsv('tables/model_fq.tsv') %>%
   mult_est(3) %>%
   model_ci() %>%
-  select(term, pct_change, ci_low, ci_high, p.value) %T>%
-  kable
+  select(term, pct_change, ci_low, ci_high, p.value)
 
-fq_change_pct = fq_trends %>%
-  filter(term=='year') %>%
-  pull(pct_change) %>%
-  round(2)
+fq_change_adj = fq_trends %>%
+  filter(term=='year') %>% 
+  mutate_at(vars(pct_change, ci_low, ci_high), function(x) round(x, 2)) %$%
+  str_interp("${pct_change}% (${ci_low}% -- ${ci_high}%)")
 ```
 
-Overall, fluoroquinolones changed by a tiny amount, `r fq_change_pct`%, over this period. This included `r fq_names`.
+Overall, fluoroquinolones changed by a tiny amount, `r fq_change_pct_unadj`% (unadjusted). The adjusted change is `r fq_change_adj` over this period. This included `r fq_names`.
 
 # Prescribing practice
 
@@ -321,8 +350,9 @@ dx_adj = read_tsv('tables/dx_trends.tsv') %>%
   model_ci() %>%
   select(dx_cat, adj_change=change_str, p.value)
 
-dx_trends = full_join(dx_unadj, dx_adj, by='dx_cat') %T>%
-  kable
+dx_trends = full_join(dx_unadj, dx_adj, by='dx_cat')
+
+dx_trends %>% kable
 ```
 
 ## Common diagnoses by drug
@@ -407,6 +437,8 @@ combined_table = bind_rows(x, y, z) %>%
 
 ### Respiratory stuff
 
+All respiratory diagnoses fell, bronchitis the most sharply. Azithromycin prescribing fell for all diagnoses, while levofloxacin, amox, and amox/clav prescribing rose for all diagnoses. 
+
 ```{r respiratory}
 combined_table %>%
   filter(antibiotic %in% c('dx_trends', 'azithromycin', 'levofloxacin', 'amoxicillin', 'amoxicillin/clavulanate')) %>%
@@ -415,6 +447,8 @@ combined_table %>%
 ```
 
 ### UTIs
+
+UTIs declined somewhat in prevalence. Ciprofloxacin prescribing remained nearly constant, nitrofurantion fell 3%, and Bactrim rose 4-6%.
 
 ```{r uti}
 combined_table %>%
@@ -425,7 +459,11 @@ combined_table %>%
 
 ### SSTI
 
+Although skin and soft tissue infections declined in prevalence, prescribing of clindamycin, cephalexin, Bactrim, amox, and amox/clav increased, with one exception: amox/clav use for Tier 2 SSTIs stay nearly constant. Clindamycin was the biggest winner.
+
 ```{r ssti}
+# swo: I removed amox and amox/clav because they mostly
+# showed trends in Tier 3, which is confusing
 combined_table %>%
   filter(antibiotic %in% c('dx_trends', 'clindamycin', 'cephalexin', 'trimethoprim/sulfamethoxazole')) %>%
   select(antibiotic, key, not_infectious, ssti, ssti_t3) %>%
@@ -434,6 +472,8 @@ combined_table %>%
 
 ### GI
 
+GI indications became less prevalent, and cipro prescribing fell 1-2%. Only a small amount of cipro is used for GI indications: compare the 5-6% of cipro PDEs preceded by GI indications with the 14-20% preceded by UTIs.
+
 ```{r gi}
 combined_table %>%
   filter(antibiotic %in% c('dx_trends', 'ciprofloxacin')) %>%
@@ -441,85 +481,9 @@ combined_table %>%
   kable
 ```
 
-# Summary of results for each drug
+# Questions for the paper
 
-For azithromycin, the most common diagnoses are bronchitis, URI, and sinusitis.
-Bronchitis diagnoses are on a steep decline (15% over the study period), URI
-diagnoses rose slightly (~5%), and sinusitis diagnoses remained nearly constant
-(+0.13%). Azithromycin prescribing per diagnosis also fell during the study
-period for each of these diagnoses (10-15%). So the diagnoses for which
-azithromycin is used were overall less common, and azithromycin was also less
-used for all those diagnoses.
-
-For levofloxacin, the most common diagnoses are bronchitis, "other
-respiratory", and URI. Bronchitis fell steeply, other respiratory fell somewhat
-(5%) and URIs rose slightly (2%). However, levofloxacin prescribing rose
-sharply for bronchitis (75%), other respiratory (60%), and URI (75%). So even
-though bronchitis diagnosing fell, levo prescribing for its diagnoses rose so
-much.
-
-The most common diagnoses for clindamycin, which rose, were SSTIs (tier 2 and
-tier 3). Tier 3 diagnoses rose somewhat (2%) and Tier 2 diagnoses fell somewhat
-(4%). Clindamycin prescribing for Tier 2 and Tier 3 diagnoses rose (27%, 22%).
-So clinda simply became a more popular treatment for SSTIs.
-
-The most common diagnoses for amox/clav, which rose, were sinusitis, SSTIs,
-bronchitis, and URIs. Amox/clav prescribing rose sharply for sinusitis (42%),
-rose for Tier 3 SSTIs (10%) but not Tier 2 SSTIs (n.s.), and rose for
-bronchitis (29%) and URIs (36%). So amox/clav became more popular for most of
-its diagnoses, like levo.
-
-The most common diagnoses for amox, which rose, were similar to those for
-amox/clav: sinusitis, SSTIs, bronchitis, and URIs. Amox prescribing rose
-slightly for sinusitis (3%), rose for Tier 2 and Tier 3 SSTIs (7%, 10%), and
-rose for bronchitis (12%) and URI (9%). The story is similar to amox/clav, just
-not as pronounced.
-
-The most common diagnoses for cephalexin, which rose slightly, were SSTIs, and
-somewhat UTIs. Prescribing for SSTIs rose (6%) and rose more for UTIs (32% for
-Tier 1 UTIs, 20% for Tier 3). So there was some growth in SSTIs, which make up
-more of cephalexin's portfolio, and big growth in UTIs, which make up a small
-part.
-
-The most common diagnoses for Bactrim, which fell slightly, are UTIs and
-SSTIs.  UTIs are nearly constant and SSTIs increased a little. However, Bactrim
-prescribing *increased* for SSTIs and UTIs. This means that the decrease
-occurred among the PDEs that were not associated with diagnoses. My first guess
-is that there is less long-term treatment (since, in long-term treatment, most
-of the PDEs will nt be associated with a visit).
-
-The most common diagnoses for doxy, which fell, are SSTIs and bronchitis.
-Doxy prescribing increased for Tier 2 SSTIs (5%), remained constant for Tier 3
-SSTIs (n.s.), and decreased slightly for bronchitis (2%). So it seems there was
-not big change in prescribing practice, and maybe this is more a reflection of
-what gets diagnosed as bronchitis.
-
-The most common diagnoses for cipro, which fell, are UTIs, followed by GI
-infections. GI infections fell (5%). Cipro prescribing for UTIs and GI
-infections remained constant (n.s. for all diagnoses). My first guess is that
-cipro fell because GI infection diagnoses fell and because of a decrease in
-long-term treatment for UTIs, like in Bactrim.
-
-The most common diagnoses for nitrofurantoin, which fell, were UTIs. UTIs
-remained nearly constant, and nitro prescribing for UTIs only fell slightly (3%
-for Tier 1 UTIs, n.s. for Tier 3). Again, my first guess is that there was a
-decrease in the number of PDEs not associated with diagnoses, i.e., those in
-long-term treatment.
-
-## Questions for the paper
-
-### Breaking up the tables
-
-I don't want to show this enormous table in the main text. I might break this into three tables:
-
-- Skin and soft tissue infections (Tiers 2 and 3): clindamycin, cephalexin, Bactrim, doxy, amox, amox/clav
-- Respiratory conditions (bronchitis, URI, sinusitis, "other respiratory"): azithro, levo, amox, amox/clav, doxy
-- UTIs (Tier 1 infections and Tier 3 conditions): cipro, Bactrim, nitro, cephalexin
-- GI (optional): but this is just cipro
-
-Alternatively, I could keep one table that has these diagnoses as columns and all these drugs going down as rows.
-
-### Lumping together diagnoses.
+## Lumping together diagnoses
 
 I could lump the multiple tiers for diagnoses together. This
 makes the table easier to interpret, but it doesn't make the point that

@@ -84,22 +84,22 @@ linear_model = function(df, y, xs) {
     tidy %>%
     filter(term != 'Residuals') %>%
     select(term, anova.p.value=p.value)
- 
+
   coef_res = tidy(m) %>%
     mutate(ci=1.96*std.error,
            ci_low=estimate-ci,
            ci_high=estimate+ci) %>%
     select(term, estimate, ci_low, ci_high, p.value)
- 
+
   left_join(coef_res, anova_res, by='term')
 }
 
 spearman_model = function(df, y_name, x_name) {
   y = df[[y_name]]
   x = df[[x_name]]
-  
+
   m = cor.test(y, x, method='spearman')
-  
+
   if (length(y) > 3) {
     cis = mada::CIrho(m$estimate, length(y), level=0.95)
   } else {
@@ -113,37 +113,34 @@ spearman_model = function(df, y_name, x_name) {
              p.value=m$p.value)
 }
 
-beta_model = function(df_raw, y, x) {
+beta_model = function(df_raw, y, xs, link='logit', eps=1e-6) {
   # replace 0 and 1 with slightly different values
-  eps = 1e-6
   df = df_raw %>%
-    mutate(y=case_when(.$y == 0 ~ eps,
-                       .$y == 1 ~ 1 - eps,
+    mutate(y=case_when(.$y==0 ~ eps,
+                       .$y==1 ~ 1 - eps,
                        TRUE ~ .$y))
 
-  frmla = as.formula(str_interp("${y} ~ ${x}"))
-  m = betareg::betareg(formula=frmla, weights=n_place_antibiograms, data=df, link='logit')
-  
-  xbar = weighted.mean(df[[y]], w=df$n_place_antibiograms)
-  newdata = setNames(list(xbar), x) %>% as_data_frame
+  frmla = as.formula(str_interp("${y} ~ ${str_c(xs, collapse=' + ')}"))
+  m = betareg::betareg(formula=frmla, weights=n_place_antibiograms, data=df, link=link)
 
-  yhat = predict(m, newdata=newdata, type='response')
-  slope = m$coefficients$mean[[x]] * yhat * (1 - yhat)
-  pvalue = tidy(m) %>% filter(term==x) %>% pull(p.value)
-  data_frame(term=x, estimate=slope, p.value=pvalue)
+  coef_res = tidy(m) %>%
+    mutate(ci=1.96*std.error,
+           ci_low=estimate-ci,
+           ci_high=estimate+ci) %>%
+    select(term, estimate, ci_low, ci_high, p.value)
+ 
+  coef_res
 }
 
 logistic_model = function(df, y, xs) {
   frmla = as.formula(str_interp("${y} ~ ${str_c(xs, collapse='+')}"))
   m = glm(formula=frmla, weights=n_place_antibiograms, data=df, family=quasibinomial)
-  
-  xbar = weighted.mean(df[[y]], w=df$n_place_antibiograms)
-  newdata = setNames(list(xbar), x) %>% as_data_frame
-  
-  yhat = predict(m, newdata=newdata, type='response')
-  slope = m$coefficients[[x]] * yhat * (1 - yhat)
-  pvalue = tidy(m) %>% filter(term==x) %>% pull(p.value)
-  data_frame(term=x, estimate=slope, p.value=pvalue)
+
+  tidy(m) %>%
+    mutate(ci=1.96*std.error,
+           ci_low=estimate-ci,
+           ci_high=estimate+ci) %>%
+    select(term, estimate, ci_low, ci_high, p.value)
 }
 
 models = function(df) {
@@ -159,6 +156,8 @@ models = function(df) {
     linear_model(df, 'y', c('fnz', 'mean')) %>% mutate(model='multivariate_fnz_mean'),
     linear_model(df, 'y', c('mean', 'fnz')) %>% mutate(model='multivariate_mean_fnz'),
     beta_model(df, 'y', 'fnz') %>% mutate(model='univariate_fnz_beta'),
+    beta_model(df, 'y', c('fnz', 'mean')) %>% mutate(model='multivariate_fnz_mean_beta'),
+    beta_model(df, 'y', c('fnz', 'mup')) %>% mutate(model='multivariate_fnz_mup_beta'),
     logistic_model(df, 'y', 'fnz') %>% mutate(model='univariate_fnz_log')
   ) %>%
     mutate(n_data=nrow(df))
