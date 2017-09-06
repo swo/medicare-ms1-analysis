@@ -8,8 +8,8 @@ data {
 }
 
 parameters {
-  vector<lower=0>[A] p; // probability of resistance in each antibiogram
-  vector<lower=0>[S] mu; // mean resistance in each state
+  vector<lower=0, upper=1>[A] p; // probability of resistance in each antibiogram
+  vector<lower=0, upper=1>[S] mu; // mean resistance in each state
   vector<lower=0>[S] phi; // narrowness of resistance in each state
   real<lower=0> g0; // consumption leading to 50% resistance
   real<lower=0> g1; // 1/g1 is the fraction above g0 leading to 75% resistance
@@ -18,7 +18,7 @@ parameters {
 
 transformed parameters {
   vector[S] eta; // linear predictor
-  vector[S] muhat; // estimator
+  vector<lower=0, upper=1>[S] muhat; // estimator
   eta = g1 * ((Cons / g0) - 1);
   muhat = 1.0 ./ (1 + exp(-eta));
 }
@@ -29,13 +29,16 @@ model {
   int pos;
   pos = 1;
 
+  // For the antibiogram data and parameters (Iso, Res, p), we go state by state
+  // because the data is ragged (different number of abg in each state)
   // cf. p. 231 in Stan reference for using this construct
   for (state in 1:S) {
     segment(Res, pos, Size[state]) ~ binomial(segment(Iso, pos, Size[state]), p[state]);
+    // In the beta distributions, alpha=mu*phi, beta=(1-mu)*phi
+    segment(p, pos, Size[state]) ~ beta(phi[state] * mu[state], phi[state] * (1-mu[state]));
     pos = pos + Size[state];
   }
 
-  p ~ beta(phi .* mu, phi .* (1-mu)); // alpha=mu*phi, beta=(1-mu)*phi
   phi ~ cauchy(0, 25); // mean, sigma
   g0 ~ cauchy(0, 50);
   g1 ~ cauchy(0, 10);
