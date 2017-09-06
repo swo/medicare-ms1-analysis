@@ -11,16 +11,16 @@ parameters {
   vector<lower=0, upper=1>[A] p; // probability of resistance in each antibiogram
   vector<lower=0, upper=1>[S] mu; // mean resistance in each state
   vector<lower=0>[S] phi; // narrowness of resistance in each state
-  real<lower=0> g0; // consumption leading to 50% resistance
-  real<lower=0> g1; // 1/g1 is the fraction above g0 leading to 75% resistance
+  real beta0; // "intercept" in logistic function
+  real beta1; // "slope" in logistic function
   real<lower=0> psi; // narrowness of the consumption-resistance relationship
 }
 
 transformed parameters {
   vector[S] eta; // linear predictor
   vector<lower=0, upper=1>[S] muhat; // estimator
-  eta = g1 * ((Cons / g0) - 1);
-  muhat = 1.0 ./ (1 + exp(-eta));
+  eta = beta0 + beta1 * Cons;
+  muhat = inv_logit(eta);
 }
 
 model {
@@ -40,8 +40,8 @@ model {
   }
 
   phi ~ cauchy(0, 25); // mean, sigma
-  g0 ~ cauchy(0, 5);
-  g1 ~ cauchy(0, 10);
+  beta0 ~ normal(0, 10);
+  beta1 ~ normal(0, 10);
   mu ~ beta(psi * muhat, psi * (1-muhat));
   psi ~ cauchy(0, 50);
 }

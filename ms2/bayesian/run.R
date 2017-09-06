@@ -41,16 +41,15 @@ ineq = read_tsv('../ineq.tsv') %>%
   # get just the data I want
   filter(unit_type=='state', drug_group==my_abx) %>%
   select(state=unit, mean) %>%
-  filter(state %in% abg_states)
+  filter(state %in% abg$state)
 
 Cons = ineq$mean
-S = length(consumption_states)
+S = nrow(ineq)
 
 # check that we got the Sizes all correct
 pos = 0;
 for (i in 1:S) {
   for (j in 1:Size[i]) {
-    #print(str_interp("i=${i} j=${j} size=${Size[i]} abg=${abg$state[pos+j]} ineq=${ineq$state[i]}"))
     stopifnot(abg$state[pos + j] == ineq$state[i]);
   }
   pos = pos + Size[i];
@@ -58,5 +57,5 @@ for (i in 1:S) {
 
 fit = stan(file='model.stan',
            data=c('S', 'A', 'Size', 'Iso', 'Res', 'Cons'),
-           iter=100,
-           chains=2)
+           iter=5000,
+           chains=5)
