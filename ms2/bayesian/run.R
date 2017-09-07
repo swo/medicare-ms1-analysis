@@ -2,7 +2,7 @@
 
 library(rstan)
 
-my_abx = 'quinolone'
+my_abx = 'tmp_smx'
 my_bug = 'E. coli'
 
 # Resistance data
@@ -36,14 +36,16 @@ ineq = read_tsv('../ineq.tsv') %>%
             fnz=sum(n_bene[n_claims > 0]) / sum(n_bene),
             mup=mean/fnz) %>%
   group_by(unit_type, unit, drug_group) %>%
-  summarize_at(vars(mean, fnz,mup), mean) %>%
+  summarize_at(vars(mean, fnz, mup), mean) %>%
   ungroup() %>%
   # get just the data I want
   filter(unit_type=='state', drug_group==my_abx) %>%
-  select(state=unit, mean) %>%
+  rename(state=unit) %>%
   filter(state %in% abg$state)
 
 Cons = ineq$mean
+Fnz = ineq$fnz
+Mup = ineq$mup
 S = nrow(ineq)
 
 # check that we got the Sizes all correct
@@ -55,7 +57,14 @@ for (i in 1:S) {
   pos = pos + Size[i];
 }
 
-fit = stan(file='model.stan',
-           data=c('S', 'A', 'Size', 'Iso', 'Res', 'Cons'),
-           iter=5000,
-           chains=5)
+fit = stan(file='probs3.stan',
+           data=c('S', 'A', 'Size', 'Iso', 'Res', 'Fnz', 'Mup'),
+           iter=1000,
+           chains=1)
+
+lm_fit = abg %>%
+  group_by(state) %>%
+  summarize(y=weighted.mean(percent_nonsusceptible/100, w=sqrt(n_isolates)),
+            n_abg=n()) %>%
+  left_join(ineq, by='state') %>%
+  lm(y ~ fnz + mup, data=., weights=n_abg)
