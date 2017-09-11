@@ -47,7 +47,7 @@ model_ci = function(df) {
            ci=1.96*std.error,
            ci_low=est2pct(estimate - ci),
            ci_high=est2pct(estimate + ci),
-           change_str=sprintf('%.2f%% (%.2f -- %.2f%%)', pct_change, ci_low, ci_high))
+           change_str=sprintf('%.2f (%.2f -- %.2f)', pct_change, ci_low, ci_high))
 }
 
 claims_overall = claims_by_abx %>%
@@ -310,7 +310,7 @@ fq_change_adj = fq_trends %>%
   str_interp("${pct_change}% (${ci_low}% -- ${ci_high}%)")
 ```
 
-Overall, fluoroquinolones changed by a tiny amount, `r fq_change_pct_unadj`% (unadjusted). The adjusted change is `r fq_change_adj` over this period. This included `r fq_names`.
+Overall, fluoroquinolones changed by a tiny amount, `r fq_change_pct_unadj`% (unadjusted). The adjusted change is `r fq_change_adj` (%) over this period. This included `r fq_names`.
 
 # Prescribing practice
 
@@ -334,7 +334,7 @@ Second, adjusted trends, using Poisson regressions. The unit of analysis is the 
 
 ```{r dx_trends}
 dx_unadj = read_tsv('tables/dx_trends_table.tsv') %>%
-  filter(year %in% c(2011, 2014)) %>%
+  #filter(year %in% c(2011, 2014)) %>%
   left_join(select(totals, year, n_bene), by='year') %>%
   mutate(dxpkp=1000*n_dx/n_bene) %>%
   select(dx_cat, year, dxpkp) %>%
@@ -407,7 +407,7 @@ dx_to_pde = inner_join(dx_to_pde_unadj,
          adj_change_high=rr_high-1,
          pct_change=(`2014`-`2011`)/`2011`) %>%
   mutate_if(is.numeric, function(x) round(x*100, 2)) %>%
-  mutate(adj_change=sprintf('%.2f%% (%.2f -- %.2f%%)', adj_change, adj_change_low, adj_change_high)) %>%
+  mutate(adj_change=sprintf('%.2f (%.2f -- %.2f)', adj_change, adj_change_low, adj_change_high)) %>%
   select(dx_cat, antibiotic, `2011`, `2014`, pct_change, adj_change) %T>%
   kable
 ```
@@ -416,10 +416,18 @@ dx_to_pde = inner_join(dx_to_pde_unadj,
 
 ```{r}
 x = dx_trends %>%
-  select(-p.value) %>%
-  gather('key', 'value', -dx_cat) %>%
+  select(dx_cat, `2011`:`2014`) %>%
+  gather('year', 'value', `2011`:`2014`) %>%
+  group_by(dx_cat) %>%
+  summarize(value=mean(value)) %>%
+  # convert to character to fit with other parts
+  mutate(value=as.character(value)) %>%
   spread(dx_cat, value) %>%
-  mutate(antibiotic='dx_trends')
+  mutate(antibiotic='dx', key='mean_per_1kyr')
+  # select(-p.value) %>%
+  # gather('key', 'value', -dx_cat) %>%
+  # spread(dx_cat, value) %>%
+  # mutate(antibiotic='dx_trends')
 
 y = dx_from_pde %>%
   mutate(key='dx_from_pde') %>%
@@ -430,8 +438,8 @@ z = dx_to_pde %>%
   spread(dx_cat, value)
 
 combined_table = bind_rows(x, y, z) %>%
-  mutate(antibiotic=factor(antibiotic, levels=c('dx_trends', top_abx)),
-         key=factor(key, levels=c('dx_from_pde', '2011', '2014', 'pct_change', 'adj_change'))) %>%
+  mutate(antibiotic=factor(antibiotic, levels=c('dx', top_abx)),
+         key=factor(key, levels=c('mean_per_1kyr', 'dx_from_pde', '2011', '2014', 'pct_change', 'adj_change'))) %>%
   arrange(antibiotic, key)
 ```
 
@@ -441,8 +449,8 @@ All respiratory diagnoses fell, bronchitis the most sharply. Azithromycin prescr
 
 ```{r respiratory}
 combined_table %>%
-  filter(antibiotic %in% c('dx_trends', 'azithromycin', 'levofloxacin', 'amoxicillin', 'amoxicillin/clavulanate')) %>%
-  select(antibiotic, key, not_infectious, asthma, bronchitis, other_resp, pharyngitis, pneumonia, sinusitis, uri) %>%
+  filter(antibiotic %in% c('dx', 'azithromycin', 'levofloxacin', 'amoxicillin', 'amoxicillin/clavulanate')) %>%
+  select(antibiotic, key, asthma, bronchitis, other_resp, pharyngitis, pneumonia, sinusitis, uri) %>%
   kable
 ```
 
@@ -452,8 +460,8 @@ UTIs declined somewhat in prevalence. Ciprofloxacin prescribing remained nearly 
 
 ```{r uti}
 combined_table %>%
-  filter(antibiotic %in% c('dx_trends', 'ciprofloxacin', 'trimethoprim/sulfamethoxazole', 'nitrofurantoin')) %>%
-  select(antibiotic, key, not_infectious, uti, uti_t3) %>%
+  filter(antibiotic %in% c('dx', 'ciprofloxacin', 'trimethoprim/sulfamethoxazole', 'nitrofurantoin')) %>%
+  select(antibiotic, key, uti, uti_t3) %>%
   kable
 ```
 
@@ -465,8 +473,8 @@ Although skin and soft tissue infections declined in prevalence, prescribing of 
 # swo: I removed amox and amox/clav because they mostly
 # showed trends in Tier 3, which is confusing
 combined_table %>%
-  filter(antibiotic %in% c('dx_trends', 'clindamycin', 'cephalexin', 'trimethoprim/sulfamethoxazole')) %>%
-  select(antibiotic, key, not_infectious, ssti, ssti_t3) %>%
+  filter(antibiotic %in% c('dx', 'clindamycin', 'cephalexin', 'trimethoprim/sulfamethoxazole')) %>%
+  select(antibiotic, key, ssti, ssti_t3) %>%
   kable
 ```
 
@@ -476,8 +484,8 @@ GI indications became less prevalent, and cipro prescribing fell 1-2%. Only a sm
 
 ```{r gi}
 combined_table %>%
-  filter(antibiotic %in% c('dx_trends', 'ciprofloxacin')) %>%
-  select(antibiotic, key, not_infectious, gi, gi_t3) %>%
+  filter(antibiotic %in% c('dx', 'ciprofloxacin')) %>%
+  select(antibiotic, key, gi, gi_t3) %>%
   kable
 ```
 
