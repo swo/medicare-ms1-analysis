@@ -21,7 +21,7 @@ ineq = ineq_table %>%
             fnz=sum(n_bene[n_claims > 0]) / sum(n_bene),
             mup=mean/fnz) %>%
   group_by(unit_type, unit, drug_group) %>%
-  summarize_at(vars(mean, fnz,mup), mean) %>%
+  summarize_at(vars(mean, fnz,mup), mean) %>% 
   ungroup()
 
 results = read_tsv('results.tsv')
@@ -308,6 +308,18 @@ ineq %>%
 ```
 
 ## Effect of unevenness on antibiotic resistance
+
+### Effect along extensive margin $\mu_>$
+
+```{r hrr_linear_mup}
+results %>%
+  filter(model=='univariate_mup', unit_type=='hrr', term=='mup') %>%
+  interval_plot() +
+  ylab(expression(beta[nu])) +
+  ggtitle("Linear univariate, HRR")
+```
+
+### Effect beyond $f_>$
 
 We ask if mean consumption $\mu$ has any information beyond fraction nonzero $f_>$ for predicting resistance $R$. We might expect that the simple two-part model represented by the regressions $R \sim f_>$ doesn't capture the fact that taking two doses should have a greater effect than taking one, etc.
 
