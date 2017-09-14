@@ -16,7 +16,7 @@ abg = read_tsv('../../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c
   right_join(bug_names, by='bug') %>%
   select(bug=bug_short, drug_group, state, percent_nonsusceptible, raw_n_isolates=n_isolates) %>%
   # get just the data I want
-  filter(drug_group==my_abx, bug==my_bug) %>% 
+  filter(drug_group==my_abx, bug==my_bug) %>%
   # fix any NAs with medians
   mutate(n_isolates=if_else(is.na(raw_n_isolates) | raw_n_isolates==0,
                             as.integer(median(raw_n_isolates[!is.na(raw_n_isolates) & raw_n_isolates > 0])),
@@ -31,40 +31,29 @@ A = nrow(abg)
 
 # Consumption data
 ineq = read_tsv('../ineq.tsv') %>%
-  group_by(year, unit_type, unit, drug_group) %>%
-  summarize(mean=weighted.mean(n_claims, w=n_bene),
-            fnz=sum(n_bene[n_claims > 0]) / sum(n_bene),
-            mup=mean/fnz) %>%
-  group_by(unit_type, unit, drug_group) %>%
-  summarize_at(vars(mean, fnz, mup), mean) %>%
-  ungroup() %>%
-  # get just the data I want
-  filter(unit_type=='state', drug_group==my_abx) %>%
+  filter(drug_group==my_abx) %>%
+  filter(unit_type=='state') %>%
   rename(state=unit) %>%
-  filter(state %in% abg$state)
+  filter(state %in% abg$state) %>%
+  group_by(state) %>%
+  mutate(f=n_bene/sum(n_bene)) %>%
+  ungroup()
 
-Cons = ineq$mean
-Fnz = ineq$fnz
-Mup = ineq$mup
-S = nrow(ineq)
+NC = max(ineq$n_claims) + 1
+states = unique(ineq$state)
+S = length(states)
 
-# check that we got the Sizes all correct
-pos = 0;
-for (i in 1:S) {
-  for (j in 1:Size[i]) {
-    stopifnot(abg$state[pos + j] == ineq$state[i]);
-  }
-  pos = pos + Size[i];
+Fmat = matrix(data=0, nrow=S, ncol=NC)
+
+for (ineq_i in 1:nrow(ineq)) {
+  i = match(ineq$state[ineq_i], states)
+  j = ineq$n_claims[ineq_i] + 1
+  f = ineq$f[ineq_i]
+  
+  Fmat[i, j] = f
 }
 
-fit = stan(file='probs3.stan',
-           data=c('S', 'A', 'Size', 'Iso', 'Res', 'Fnz', 'Mup'),
+fit = stan(file='model.stan',
+           data=c('S', 'A', 'NC', 'Size', 'Iso', 'Res', 'Fmat'),
            iter=1000,
            chains=1)
-
-lm_fit = abg %>%
-  group_by(state) %>%
-  summarize(y=weighted.mean(percent_nonsusceptible/100, w=sqrt(n_isolates)),
-            n_abg=n()) %>%
-  left_join(ineq, by='state') %>%
-  lm(y ~ fnz + mup, data=., weights=n_abg)
