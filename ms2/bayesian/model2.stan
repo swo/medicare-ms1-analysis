@@ -1,10 +1,12 @@
 data {
   int<lower=0> S;
   int<lower=0> A;
+  int<lower=0> NC;
   int<lower=0> Size[S];
   vector<lower=0>[S] cons;
   int<lower=0> Iso[A];
   int<lower=0> Res[A];
+  matrix<lower=0>[S, NC] Fmat;
 }
 
 parameters {
@@ -15,10 +17,14 @@ parameters {
 }
 
 transformed parameters {
-  vector[S] eta;
+  vector[NC] eta;
   vector[S] rho;
-  eta = beta0 + beta1 * cons;
-  rho = inv_logit(eta);
+  
+  for (n in 1:NC) {
+    eta[n] = inv_logit(beta0 + beta1 * n);
+  }
+  
+  rho = Fmat * eta;
 }
 
 model {

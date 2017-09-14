@@ -10,6 +10,33 @@ A = sum(Size)
 abg_state = hashmap::hashmap(1:A, unlist(lapply(1:S, function(i) rep(i, Size[i]))))
 
 cons = runif(S, min=0, max=0.5)
+n_bene = as.integer(rnorm(S, mean=1e5, sd=2e4))
+stopifnot(min(n_bene) > 0)
+
+poisson_count = function(n, lambda) {
+  data_frame(x=rpois(n, lambda)) %>% count(x)
+}
+
+ineq = lapply(1:S, function(i) {
+  poisson_count(n_bene[i], cons[i]) %>%
+    rename(n_claims=x, n_bene=n) %>%
+    mutate(state=i)
+}) %>% bind_rows %>%
+  group_by(state) %>%
+  mutate(f=n_bene/sum(n_bene)) %>%
+  ungroup()
+
+NC = max(ineq$n_claims) + 1
+
+Fmat = matrix(data=0, nrow=S, ncol=NC)
+
+for (ineq_i in 1:nrow(ineq)) {
+  i = ineq$state[ineq_i]
+  j = ineq$n_claims[ineq_i] + 1
+  f = ineq$f[ineq_i]
+  
+  Fmat[i, j] = f
+}
 
 beta0 = 0.1
 beta1 = 1
@@ -22,11 +49,12 @@ abg_p = lapply(1:S, function(s) rbeta(Size[s], psi*state_p[s], psi*(1 - state_p[
 Iso = as.integer(rexp(A) * 1000)
 Res = rbinom(A, Iso, abg_p)
 
-dat = left_join(
-  data_frame(state=1:S, cons, state_p),
-  data_frame(abg=1:A, Iso, Res, state=abg_state[[abg]]), by='state') %>%
-  mutate(empirical_p=Res/Iso)
+# dat = left_join(
+#   data_frame(state=1:S, cons, state_p),
+#   data_frame(abg=1:A, Iso, Res, state=abg_state[[abg]]), by='state') %>%
+#   mutate(empirical_p=Res/Iso)
 # 
+
 # n_bene = as.integer(rnorm(A, mean=1e5, sd=2e4))
 # stopifnot(min(n_bene) > 0)
 # 
@@ -66,7 +94,7 @@ dat = left_join(
 # Res = abg$Res
 
 fit = stan(file='model2.stan',
-           data=c('S', 'A', 'Size', 'cons', 'Iso', 'Res'),
+           data=c('S', 'A', 'NC', 'Size', 'Fmat', 'cons', 'Iso', 'Res'),
            iter=1000,
            chains=2)
 
