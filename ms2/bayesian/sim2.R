@@ -2,17 +2,30 @@
 
 library(rstan)
 
-A = 50
-cons = runif(A, min=0, max=0.5)
+inv_logit = function(x) 1/(1+exp(-x))
+
+S = 30
+Size = sample(1:5, S, replace=TRUE)
+A = sum(Size)
+abg_state = hashmap::hashmap(1:A, unlist(lapply(1:S, function(i) rep(i, Size[i]))))
+
+cons = runif(S, min=0, max=0.5)
 
 beta0 = 0.1
 beta1 = 1
-psi = 100
-rho = beta0 + beta1 * cons
-p = rbeta(A, psi*rho, psi*(1-rho))
+psi = 25
+eta = beta0 + beta1 * cons
+state_p = inv_logit(eta)
+abg_p = lapply(1:S, function(s) rbeta(Size[s], psi*state_p[s], psi*(1 - state_p[s]))) %>%
+  unlist
 
 Iso = as.integer(rexp(A) * 1000)
-Res = rbinom(A, Iso, p)
+Res = rbinom(A, Iso, abg_p)
+
+dat = left_join(
+  data_frame(state=1:S, cons, state_p),
+  data_frame(abg=1:A, Iso, Res, state=abg_state[[abg]]), by='state') %>%
+  mutate(empirical_p=Res/Iso)
 # 
 # n_bene = as.integer(rnorm(A, mean=1e5, sd=2e4))
 # stopifnot(min(n_bene) > 0)
@@ -53,7 +66,7 @@ Res = rbinom(A, Iso, p)
 # Res = abg$Res
 
 fit = stan(file='model2.stan',
-           data=c('A', 'cons', 'Iso', 'Res'),
+           data=c('S', 'A', 'Size', 'cons', 'Iso', 'Res'),
            iter=1000,
            chains=2)
 
