@@ -21,65 +21,106 @@ read_years = function(years, template) {
 }
 
 # trends in diagnoses by beneficiary
-dx_by_bene = read_years(2011:2014, '../../data/dx_by_bene_%i.tsv') %>%
-  rename(bene_id=BENE_ID, dx_cat=diagnosis_category)
-
-dxs = unique(dx_by_bene$dx_cat)
-
-# first, a table
-dx_trends_table = dx_by_bene %>%
-  group_by(year, dx_cat) %>%
-  summarize(n_dx=sum(n_dx)) %>%
-  ungroup() %T>%
-  output_table('dx_trends_table')
+# dx_by_bene = read_years(2011:2014, '../../data/dx_by_bene_%i.tsv') %>%
+#   rename(bene_id=BENE_ID, dx_cat=diagnosis_category)
+# 
+# dxs = unique(dx_by_bene$dx_cat)
+# 
+# # first, a table
+# dx_trends_table = dx_by_bene %>%
+#   group_by(year, dx_cat) %>%
+#   summarize(n_dx=sum(n_dx)) %>%
+#   ungroup() %T>%
+#   output_table('dx_trends_table')
 
 glm_f = function(df, frmla, ...) eval(substitute(function(df2) glm(frmla, data=df2, ...)))(df)
 frmla = y ~ year + age + n_cc + sex + race + dual + region
 
 # then models
-dx_trends_models = lapply(dxs, function(dx) {
-  dx_by_bene %>%
-    filter(dx_cat==dx) %>%
-    right_join(bene, by=c('year', 'bene_id')) %>%
-    replace_na(list(n_dx=0)) %>%
-    rename(y=n_dx) %>%
-    glm_f(frmla, family='poisson') %>%
-    tidy %>%
-    mutate(model=dx)
-}) %>%
-  bind_rows() %T>%
-  output_table('dx_trends')
+# dx_trends_models = lapply(dxs, function(dx) {
+#   dx_by_bene %>%
+#     filter(dx_cat==dx) %>%
+#     right_join(bene, by=c('year', 'bene_id')) %>%
+#     replace_na(list(n_dx=0)) %>%
+#     rename(y=n_dx) %>%
+#     glm_f(frmla, family='poisson') %>%
+#     tidy %>%
+#     mutate(model=dx)
+# }) %>%
+#   bind_rows() %T>%
+#   output_table('dx_trends')
 
 # swo:
 # NB! SAS truncated the abx names in some files
 # esp., "trimethoprim/sulfamethoxazole" got chopped to "..metho"
 
 # which dx's contribute to each abx?
-# in 2011
-dx_from_pde = read_tsv(sprintf('../../data/dx_from_pde_%i.tsv', 2011)) %>%
+dx_from_pde = read_years(2011:2014, '../../data/dx_from_pde_%i.tsv') %>%
   rename(pde_id=PDE_ID, dx_cat=diagnosis_category)
+
+dxs = unique(dx_from_pde$dx_cat)
 
 top_abx = c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin',
             'trimethoprim/sulfamethoxazole', 'levofloxacin', 'amoxicillin/clavulanate',
             'doxycycline', 'nitrofurantoin', 'clindamycin')
 
 # get a denominator for total number of PDEs
-pde_denom = dx_from_pde %>%
+pde_denom_2011 = dx_from_pde %>%
+  filter(year==2011) %>%
   filter(antibiotic %in% top_abx) %>%
   select(pde_id, antibiotic) %>%
   distinct()
 
+# compute the table just from 2011
 dx_from_pde_table = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
   group_by(antibiotic, dx_cat) %>%
   do((function(a, dx) {
     # how what fraction of PDEs for this abx had this dx upstream?
-    pde_denom %>%
+    pde_denom_2011 %>%
       filter(antibiotic==a) %>%
       left_join(filter(dx_from_pde, antibiotic==a, dx_cat==dx), by='pde_id') %>%
       mutate(present=!is.na(dx_cat)) %>%
       count(present)
   })(.$antibiotic, .$dx_cat)) %T>%
   output_table('dx_from_pde')
+
+# appropriateness
+fd = read_tsv('../../db/fd_icd/fd_categories.tsv') %>%
+  select(dx_cat=diagnosis_category, tier)
+
+pde = read_years(2011:2014, '../pde_%i.tsv') %>%
+  select(year, bene_id, pde_id)
+
+pde_approp = dx_from_pde %>%
+  left_join(fd, by='dx_cat') %>%
+  replace_na(list(tier=4)) %>%
+  group_by(year, pde_id) %>%
+  summarize(antibiotic=unique(antibiotic), tier=min(tier)) %>%
+  ungroup() %>%
+  left_join(pde, by=c('year', 'pde_id')) %>%
+  left_join(bene, by=c('year', 'bene_id'))
+
+pde_approp_table = pde_approp %>%
+  count(year, antibiotic, tier) %T>%
+  output_table('pde_approp_table')
+
+# logistic regression
+# two ways to do this: either keep the "not infectious" diagnoses in the
+# denominator, or leave them out (i.e., filter tier != 4)
+frmla = y ~ year + age + n_cc + sex + race + dual + region
+pde_approp_trends = pde_approp %>%
+  mutate(y=tier <= 2) %>%
+  (function(df) {
+    bind_rows(
+      glm_f(df, frmla, family='binomial') %>% tidy %>% mutate(antibiotic='overall'),
+      df %>%
+        filter(antibiotic %in% top_abx) %>%
+        group_by(antibiotic) %>%
+        do(tidy(glm_f(., frmla, family='binomial'))) %>%
+        ungroup()
+    )
+  }) %T>%
+  output_table('pde_approp_trends')
 
 # what are trends in prescribing practice?
 # swo: test this part
@@ -97,12 +138,12 @@ dx_to_pde = read_years(2011:2014, '../../data/dx_to_pde_%i.tsv') %>%
   count(year, bene_id, dx_cat, antibiotic) %>%
   left_join(bene, by=c('year', 'bene_id'))
 
-dx_rx_table = dx_to_pde %>%
+dx_to_pde_table = dx_to_pde %>%
   group_by(year, dx_cat, antibiotic) %>%
   summarize(n=sum(n)) %>%
-  mutate(f=n/sum(n)) %>% 
+  mutate(f=n/sum(n)) %>%
   ungroup() %T>%
-  output_table('dx_rx_table')
+  output_table('dx_to_pde_table')
 
 frmla = y ~ year + age + n_cc + sex + race + dual + region
 dx_rx_trends = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
@@ -115,4 +156,4 @@ dx_rx_trends = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
       tidy
   })(.$antibiotic, .$dx_cat)) %>%
   ungroup() %T>%
-  output_table('dx_rx_trends')
+  output_table('dx_to_pde_trends')
