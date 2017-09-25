@@ -107,20 +107,32 @@ pde_approp_table = pde_approp %>%
 # logistic regression
 # two ways to do this: either keep the "not infectious" diagnoses in the
 # denominator, or leave them out (i.e., filter tier != 4)
+# swo: i think this formula is repeated
 frmla = y ~ year + age + n_cc + sex + race + dual + region
+approp_trends_f = function(df) {
+  df %>%
+    mutate(y=tier <= 2) %>%
+    (function(df) {
+      bind_rows(
+        glm_f(df, frmla, family='binomial') %>% tidy %>% mutate(antibiotic='overall'),
+        df %>%
+          filter(antibiotic %in% top_abx) %>%
+          group_by(antibiotic) %>%
+          do(tidy(glm_f(., frmla, family='binomial'))) %>%
+          ungroup()
+      )
+    })
+}
+
 pde_approp_trends = pde_approp %>%
-  mutate(y=tier <= 2) %>%
-  (function(df) {
-    bind_rows(
-      glm_f(df, frmla, family='binomial') %>% tidy %>% mutate(antibiotic='overall'),
-      df %>%
-        filter(antibiotic %in% top_abx) %>%
-        group_by(antibiotic) %>%
-        do(tidy(glm_f(., frmla, family='binomial'))) %>%
-        ungroup()
-    )
-  }) %T>%
+  filter(fill_num==0) %>% # leave out the refills
+  approp_trends_f() %T>%
   output_table('pde_approp_trends')
+
+pde_approp_trends_wrefills = pde_approp %>%
+  # don't filter out the refills
+  approp_trends_f() %T>%
+  output_table('pde_approp_trends_wrefills')
 
 # what are trends in prescribing practice?
 # swo: test this part
@@ -157,3 +169,19 @@ dx_rx_trends = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
   })(.$antibiotic, .$dx_cat)) %>%
   ungroup() %T>%
   output_table('dx_to_pde_trends')
+
+# pde appropriateness at the margins
+pde_approp_margin = pde_approp %>%
+  # filter out refills if desired!
+  mutate(antibiotic=if_else(str_detect(antibiotic, '^trimethoprim/sulfa'), 'tmp_smx', antibiotic)) %>%
+  filter(antibiotic %in% c('tmp_smx', top_abx)) %>%
+  mutate(app=tier <= 2) %>%
+  group_by(year, bene_id, antibiotic, app) %>%
+  summarize(n_abx_app_claims=n()) %>%
+  group_by(year, bene_id, antibiotic) %>%
+  mutate(n_abx_claims=sum(n_abx_app_claims)) %>%
+  group_by(year, antibiotic, n_abx_claims, app) %>%
+  summarize(n_abx_app_claims=sum(n_abx_app_claims)) %>%
+  group_by(year, antibiotic, n_abx_claims) %>%
+  mutate(f_app=n_abx_app_claims/sum(n_abx_app_claims)) %>%
+  ungroup()

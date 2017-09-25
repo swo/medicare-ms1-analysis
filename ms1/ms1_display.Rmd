@@ -378,7 +378,7 @@ pde_approp_table %>%
   mutate_at(vars(`2011`, `2014`, raw_pct_change, adj_pct_change),
             function(x) round(x*100, 2)) %>%
   select(antibiotic, `2011`, `2014`, raw_pct_change, adj_pct_change, adj.p) %>%
-  arrange(desc(`2011`)) %>%
+  arrange(raw_pct_change) %>%
   kable
 ```
 
