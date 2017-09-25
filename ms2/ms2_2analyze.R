@@ -22,7 +22,7 @@ zipcodes = read_tsv('../../db/zipcode/zipcode.tsv') %>%
   select(zipcode=zip, state)
 
 # Just use 2014 HRRs
-hrr = read_tsv('../../db/hrr/hrr.tsv') %>%
+hrr = read_tsv('../../db/hrr/hrr.tsv', col_types=list(hrr='c')) %>%
   filter(year==2014) %>%
   select(zipcode, hrr) %>%
   left_join(zipcodes, by='zipcode') %>%
@@ -55,17 +55,39 @@ abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c'))
 # check that all the short names made it in
 if (any(is.na(abg$bug))) stop('missing bug names')
 
+# summarize antibiograms by just taking the sum of the isolates
+# regression weight is the number of antibiograms
+summarize_abg = function(df, place) {
+  place_var = enquo(place)
+  place_str = quo_name(place_var)
+
+  df %>%
+    group_by(bug, drug_group, !!place_var) %>%
+    summarize(n_place_antibiograms=n(),
+              percent_nonsusceptible=weighted.mean(percent_nonsusceptible, w=n_isolates)) %>%
+    ungroup() %>%
+    mutate(regression_weight=n_place_antibiograms)
+}
+
+# summarize antibiograms by correcting for in- vs. outpatient
+# regression weight goes like the inverse square of the standard error
+# (i.e., it's easier to estimate outpatient for some states)
 summarize_abg = function(df, place_name) {
   place_name_var = enquo(place_name)
   place_name_str = quo_name(place_name_var)
   
   frmla = str_interp("percent_nonsusceptible ~ ${place_name_str} + has_inpatient + 0") %>% as.formula
+  place_name_regex = str_c('^', place_name_str)
   
   models = df %>%
     group_by(bug, drug_group) %>%
-    do(tidy(lm(frmla, data=., weights=median_n_isolates))) %>%
-    mutate(!!place_name_str := str_replace(term, str_c('^', place_name_str), '')) %>%
-    select(-term)
+    do(tidy(lm(frmla, data=., weights=n_isolates))) %>%
+    ungroup() %>%
+    filter(str_detect(term, place_name_regex)) %>%
+    mutate(!!place_name_str := str_replace(term, place_name_regex, '')) %>%
+    rename(percent_nonsusceptible=estimate) %>%
+    select(-term) %>%
+    mutate(regression_weight=std.error ** (-2))
   
   abg_counts = df %>%
     group_by(bug, drug_group, !!place_name_var) %>%
@@ -75,11 +97,12 @@ summarize_abg = function(df, place_name) {
 }
 
 state_abg = summarize_abg(abg, state) %T>% write_tsv('abg_state.tsv')
-hrr_abg = abg %>% mutate(hrr=as.character(hrr)) %>% summarize_abg(hrr) %T>% write_tsv('abg_hrr.tsv')
+hrr_abg = summarize_abg(abg, hrr) %T>% write_tsv('abg_hrr.tsv')
 
 linear_model = function(df, y, xs) {
   frmla = as.formula(str_interp("${y} ~ ${str_c(xs, collapse=' + ')}"))
-  m = lm(formula=frmla, weights=n_place_antibiograms, data=df)
+  #m = lm(formula=frmla, weights=n_place_antibiograms, data=df)
+  m = lm(frmla, weights=std.error ** (-2), data=df)
 
   anova_res = anova(m) %>%
     tidy %>%
@@ -114,36 +137,6 @@ spearman_model = function(df, y_name, x_name) {
              p.value=m$p.value)
 }
 
-beta_model = function(df_raw, y, xs, link='logit', eps=1e-6) {
-  # replace 0 and 1 with slightly different values
-  df = df_raw %>%
-    mutate(y=case_when(.$y==0 ~ eps,
-                       .$y==1 ~ 1 - eps,
-                       TRUE ~ .$y))
-
-  frmla = as.formula(str_interp("${y} ~ ${str_c(xs, collapse=' + ')}"))
-  m = betareg::betareg(formula=frmla, weights=n_place_antibiograms, data=df, link=link)
-
-  coef_res = tidy(m) %>%
-    mutate(ci=1.96*std.error,
-           ci_low=estimate-ci,
-           ci_high=estimate+ci) %>%
-    select(term, estimate, ci_low, ci_high, p.value)
-
-  coef_res
-}
-
-logistic_model = function(df, y, xs) {
-  frmla = as.formula(str_interp("${y} ~ ${str_c(xs, collapse='+')}"))
-  m = glm(formula=frmla, weights=n_place_antibiograms, data=df, family=quasibinomial)
-
-  tidy(m) %>%
-    mutate(ci=1.96*std.error,
-           ci_low=estimate-ci,
-           ci_high=estimate+ci) %>%
-    select(term, estimate, ci_low, ci_high, p.value)
-}
-
 models = function(df) {
   bind_rows(
     spearman_model(df, 'y', 'mean') %>% mutate(model='spearman'),
@@ -158,10 +151,10 @@ models = function(df) {
 
 hrr_results = ineq %>%
   filter(unit_type=='hrr') %>%
-  mutate(hrr=as.integer(unit)) %>%
+  rename(hrr=unit) %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   left_join(hrr_region, by='hrr') %>%
-  mutate(y=mean_percent_nonsusceptible/100) %>%
+  mutate(y=percent_nonsusceptible/100) %>%
   group_by(bug, drug_group) %>%
   do(models(.)) %>%
   ungroup()
@@ -171,7 +164,7 @@ state_results = ineq %>%
   rename(state=unit) %>%
   left_join(regions, by='state') %>%
   right_join(state_abg, by=c('state', 'drug_group')) %>%
-  mutate(y=mean_percent_nonsusceptible/100) %>%
+  mutate(y=percent_nonsusceptible/100) %>%
   group_by(bug, drug_group) %>%
   do(models(.)) %>%
   ungroup()

@@ -37,7 +37,7 @@ zipcodes = read_tsv('../../db/zipcode/zipcode.tsv') %>%
   select(zipcode=zip, state)
 
 # Use the zipcode-HRR mapping from 2011
-hrr = read_tsv('../../db/hrr/hrr.tsv') %>%
+hrr = read_tsv('../../db/hrr/hrr.tsv', col_types=list(hrr='c')) %>%
   filter(year==2011) %>%
   select(zipcode, hrr) %>%
   left_join(zipcodes, by='zipcode') %>%
@@ -51,7 +51,7 @@ hrr_regions = hrr %>%
   select(hrr, region)
 
 state_abg = read_tsv('abg_state.tsv')
-hrr_abg = read_tsv('abg_hrr.tsv')
+hrr_abg = read_tsv('abg_hrr.tsv', col_types=list(hrr='c'))
 ```
 
 # Methods
@@ -275,7 +275,7 @@ For $\beta$-lactams, cephalosporins, clindamycin, macrolides, and quinolones, th
 ineq %>%
   filter(unit_type=='hrr') %>%
   #rename(state=unit) %>% left_join(regions, by='state') %>%
-  mutate(hrr=as.integer(unit)) %>% left_join(hrr_regions) %>%
+  rename(hrr=unit) %>% left_join(hrr_regions, by='hrr') %>%
   ggplot(aes(x=fnz, y=mup, color=region)) +
   facet_wrap(~drug_group, scales='free') +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='gray') +
@@ -394,11 +394,11 @@ It's the L-shape!
 ```{r ecoli_bactrim_fnz_hrr}
 ineq %>%
   filter(unit_type=='hrr') %>%
-  mutate(hrr=as.integer(unit)) %>% left_join(hrr_regions, by='hrr') %>%
+  rename(hrr=unit) %>% left_join(hrr_regions, by='hrr') %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   filter(bug=='E. coli', drug_group=='tmp_smx') %>%
-  filter(mean_percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
-  ggplot(aes(x=fnz, y=mean_percent_nonsusceptible, color=region)) +
+  filter(percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
+  ggplot(aes(x=fnz, y=percent_nonsusceptible, color=region)) +
   geom_abline(intercept=16.86, slope=114.8, color='pink') +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
@@ -417,7 +417,7 @@ ineq %>%
   left_join(regions, by='state') %>%
   right_join(state_abg, by=c('state', 'drug_group')) %>%
   filter(bug=='E. coli', drug_group=='tmp_smx') %>%
-  ggplot(aes(x=fnz, y=mean_percent_nonsusceptible, color=region)) +
+  ggplot(aes(x=fnz, y=percent_nonsusceptible, color=region)) +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
   geom_point() +
@@ -431,11 +431,11 @@ But the same patterns are visible when looking at $\mu_>$ across HRRs:
 ```{r ecoli_bactrim_mup}
 ineq %>%
   filter(unit_type=='hrr') %>%
-  mutate(hrr=as.integer(unit)) %>% left_join(hrr_regions, by='hrr') %>%
+  rename(hrr=unit) %>% left_join(hrr_regions, by='hrr') %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   filter(bug=='E. coli', drug_group=='tmp_smx') %>%
-  filter(mean_percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
-  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=region)) +
+  filter(percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
+  ggplot(aes(x=mean, y=percent_nonsusceptible, color=region)) +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
   geom_point() +
@@ -449,10 +449,10 @@ ineq %>%
 ```{r efaecium_betalactam}
 ineq %>%
   filter(unit_type=='hrr') %>%
-  mutate(hrr=as.integer(unit)) %>% left_join(hrr_regions, by='hrr') %>%
+  rename(hrr=unit) %>% left_join(hrr_regions, by='hrr') %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   filter(bug=='Ec. faecium', drug_group=='beta_lactam') %>%
-  ggplot(aes(x=fnz, y=mean_percent_nonsusceptible, color=region)) +
+  ggplot(aes(x=fnz, y=percent_nonsusceptible, color=region)) +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
   geom_point() +
@@ -466,7 +466,7 @@ ineq %>%
   left_join(regions, by='state') %>%
   right_join(state_abg, by=c('state', 'drug_group')) %>%
   filter(bug=='Ec. faecium', drug_group=='beta_lactam') %>%
-  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=region)) +
+  ggplot(aes(x=mean, y=percent_nonsusceptible, color=region)) +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
   geom_point() +
@@ -480,10 +480,10 @@ ineq %>%
 ```{r pneumo_tetra}
 ineq %>%
   filter(unit_type=='hrr') %>%
-  mutate(hrr=as.integer(unit)) %>% left_join(hrr_regions, by='hrr') %>%
+  rename(hrr=unit) %>% left_join(hrr_regions, by='hrr') %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   filter(bug=='S. pneumoniae', drug_group=='tetracycline') %>%
-  ggplot(aes(x=fnz, y=mean_percent_nonsusceptible, color=region)) +
+  ggplot(aes(x=fnz, y=percent_nonsusceptible, color=region)) +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
   geom_point() +
@@ -497,7 +497,7 @@ ineq %>%
   left_join(regions, by='state') %>%
   right_join(state_abg, by=c('state', 'drug_group')) %>%
   filter(bug=='S. pneumoniae', drug_group=='tetracycline') %>%
-  ggplot(aes(x=fnz, y=mean_percent_nonsusceptible, color=region)) +
+  ggplot(aes(x=fnz, y=percent_nonsusceptible, color=region)) +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
   geom_point() +
@@ -513,11 +513,11 @@ This negative relationship was significant only for HRRs, not states. Not surpri
 ```{r ecoli_betalactam}
 ineq %>%
   filter(unit_type=='hrr') %>%
-  mutate(hrr=as.integer(unit)) %>% left_join(hrr_regions, by='hrr') %>%
+  rename(hrr=unit) %>% left_join(hrr_regions, by='hrr') %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   filter(bug=='E. coli', drug_group=='beta_lactam') %>%
-  filter(mean_percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
-  ggplot(aes(x=fnz, y=mean_percent_nonsusceptible, color=region)) +
+  filter(percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
+  ggplot(aes(x=fnz, y=percent_nonsusceptible, color=region)) +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
   geom_point() +
@@ -531,8 +531,8 @@ ineq %>%
   left_join(regions, by='state') %>%
   right_join(state_abg, by=c('state', 'drug_group')) %>%
   filter(bug=='E. coli', drug_group=='beta_lactam') %>%
-  filter(mean_percent_nonsusceptible < 50) %>% # filter one crazy point
-  ggplot(aes(x=mean, y=mean_percent_nonsusceptible, color=region)) +
+  filter(percent_nonsusceptible < 50) %>% # filter one crazy point
+  ggplot(aes(x=mean, y=percent_nonsusceptible, color=region)) +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
   geom_point() +
@@ -579,10 +579,10 @@ state_cons_res_plot = function(b, d) {
       select(state=unit, mean),
     state_abg %>%
       filter(bug==b, drug_group==d) %>%
-      select(state, mean_percent_nonsusceptible),
+      select(state, percent_nonsusceptible),
     by='state') %>%
     left_join(regions, by='state') %>%
-    ggplot(aes(x=mean, y=mean_percent_nonsusceptible, label=state, color=region)) +
+    ggplot(aes(x=mean, y=percent_nonsusceptible, label=state, color=region)) +
     geom_smooth(method='lm', se=F) +
     geom_smooth(method='lm', se=F, col='gray') +
     geom_point() +
