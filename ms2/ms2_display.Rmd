@@ -321,26 +321,26 @@ results %>%
 
 ### Effect beyond $f_>$
 
-We ask if mean consumption $\mu$ has any information beyond fraction nonzero $f_>$ for predicting resistance $R$. We might expect that the simple two-part model represented by the regressions $R \sim f_>$ doesn't capture the fact that taking two doses should have a greater effect than taking one, etc.
+We ask if mean consumption $\mu$ has any information beyond fraction nonzero $f_>$ for predicting resistance $R$. We might expect that the simple two-part model (i.e., consuming or not) represented by the regressions $R \sim f_>$ doesn't capture the fact that taking two doses should have a greater effect than taking one, etc.
 
-These plots show the coefficient $\beta_\mu$ from the regression $R^{(u)} = \beta_0 + \beta_{f_>} f_>^{(u)} + \beta_\mu \mu^{(u)} + \varepsilon^{(u)}$.
+These plots show the coefficient $\beta_\nu$ from the regression $R = \beta_0 + \beta_{f_>} f_> + \beta_\nu \nu + \varepsilon$.
 
 ```{r hrr_multi}
 results %>%
   filter(model=='multivariate_fnz_mup', unit_type=='hrr', term=='mup') %>%
   interval_plot() +
-  ylab(expression(beta[mu['>']])) +
-  ggtitle("Linear multivariate (f> and mu>), HRR")
+  ylab(expression(beta[nu])) +
+  ggtitle("Linear multivariate (f> and nu), HRR")
 ```
 
-At the state level, none of the $\beta_\mu$ coefficients are significantly different from zero (after multiple-hypothesis correction).
+At the state level, none of the $\beta_\nu$ coefficients are significantly different from zero (after multiple-hypothesis correction).
 
 ```{r state_multi}
 results %>%
-  filter(model=='multivariate_fnz_mean', unit_type=='state', term=='mean') %>%
+  filter(model=='multivariate_fnz_mup', unit_type=='state', term=='mup') %>%
   interval_plot() +
-  ylab(expression(beta[mu])) +
-  ggtitle("Linear multivariate (f> and mean), state")
+  ylab(expression(beta[nu])) +
+  ggtitle("Linear multivariate (f> and nu), state")
 ```
 
 There are a few significant results:
