@@ -1,5 +1,8 @@
 #!/usr/bin/env Rscript
 
+# swo: separate these into three scripts no that I'm no longer doing joins
+# with bene locally
+
 polish_year = function(y) {
   # bene
   bene_in_fn = sprintf('../data/bene_%i.tsv', y)
@@ -15,7 +18,7 @@ polish_year = function(y) {
   pde_out_fn = sprintf('pde_%i.tsv', y)
 
   read_tsv(pde_in_fn) %>%
-    select(bene_id=BENE_ID, pde_id=PDE_ID, pde_date, antibiotic) %>%
+    select(bene_id=BENE_ID, pde_id=PDE_ID, pde_date, antibiotic, fill_num=FILL_NUM) %>%
     mutate(pde_date=dmy(pde_date)) %>%
     write_tsv(pde_out_fn)
 
