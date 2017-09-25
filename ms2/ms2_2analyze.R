@@ -33,25 +33,14 @@ hrr_region = hrr %>%
   group_by(hrr) %>%
   summarize(region=first(region))
 
-raw_abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c')) %>%
+abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c')) %>%
   mutate(drug=tolower(drug), percent_nonsusceptible=100-percent_susceptible) %>%
   left_join(hrr, by=c('zipcode', 'state')) %>%
   right_join(resistance_groups, by='drug') %>%
   right_join(bug_names, by='bug') %>%
-  select(bug=bug_short, drug_group, state, hrr, percent_nonsusceptible, n_isolates)
-
-# Keep only the bug/drug combos that appear in enough states
-good_combos = raw_abg %>%
-  semi_join(possible_bug_drug, by=c('bug', 'drug_group')) %>%
-  group_by(bug, drug_group) %>%
-  summarize_at(vars(state, hrr), function(x) length(unique(x))) %>%
-  ungroup() #%>%
-  #filter(state >= 35) %>%
-  #select(bug, drug_group)
-
-abg = raw_abg %>%
+  select(bug=bug_short, drug_group, state, hrr, percent_nonsusceptible, n_isolates, has_inpatient) %>%
   # filter for only the "good" combinations
-  semi_join(good_combos, by=c('bug', 'drug_group')) %>%
+  semi_join(possible_bug_drug, by=c('bug', 'drug_group')) %>%
   # compute the median number of isolates for each bug/drug combo
   (function(df) {
     filter(df, !is.na(n_isolates)) %>%
@@ -67,14 +56,26 @@ abg = raw_abg %>%
 if (any(is.na(abg$bug))) stop('missing bug names')
 
 summarize_abg = function(df, place_name) {
-    group_by_(df, 'bug', 'drug_group', place_name) %>%
-    summarize(mean_percent_nonsusceptible=weighted.mean(percent_nonsusceptible, sqrt(n_isolates)),
-              n_place_antibiograms=n()) %>%
-    ungroup()
+  place_name_var = enquo(place_name)
+  place_name_str = quo_name(place_name_var)
+  
+  frmla = str_interp("percent_nonsusceptible ~ ${place_name_str} + has_inpatient + 0") %>% as.formula
+  
+  models = df %>%
+    group_by(bug, drug_group) %>%
+    do(tidy(lm(frmla, data=., weights=median_n_isolates))) %>%
+    mutate(!!place_name_str := str_replace(term, str_c('^', place_name_str), '')) %>%
+    select(-term)
+  
+  abg_counts = df %>%
+    group_by(bug, drug_group, !!place_name_var) %>%
+    summarize(n_place_antibiograms=n())
+  
+  left_join(models, abg_counts, by=c('bug', 'drug_group', place_name_str))
 }
 
-state_abg = summarize_abg(abg, 'state') %T>% write_tsv('abg_state.tsv')
-hrr_abg = summarize_abg(abg, 'hrr') %T>% write_tsv('abg_hrr.tsv')
+state_abg = summarize_abg(abg, state) %T>% write_tsv('abg_state.tsv')
+hrr_abg = abg %>% mutate(hrr=as.character(hrr)) %>% summarize_abg(hrr) %T>% write_tsv('abg_hrr.tsv')
 
 linear_model = function(df, y, xs) {
   frmla = as.formula(str_interp("${y} ~ ${str_c(xs, collapse=' + ')}"))
@@ -128,7 +129,7 @@ beta_model = function(df_raw, y, xs, link='logit', eps=1e-6) {
            ci_low=estimate-ci,
            ci_high=estimate+ci) %>%
     select(term, estimate, ci_low, ci_high, p.value)
- 
+
   coef_res
 }
 
@@ -150,15 +151,7 @@ models = function(df) {
     linear_model(df, 'y', 'fnz') %>% mutate(model='univariate_fnz'),
     linear_model(df, 'y', 'mup') %>% mutate(model='univariate_mup'),
     linear_model(df, 'y', c('fnz', 'mup')) %>% mutate(model='multivariate_fnz_mup'),
-    linear_model(df, 'y', c('fnz', 'I(1/fnz)')) %>% mutate(model='multivariate_fnz_1fnz'),
-    linear_model(df, 'y', c('fnz', 'I(fnz^2)')) %>% mutate(model='multivariate_fnz_fnz2'),
-    linear_model(df, 'y', c('mup', 'fnz')) %>% mutate(model='multivariate_mup_fnz'),
-    linear_model(df, 'y', c('fnz', 'mean')) %>% mutate(model='multivariate_fnz_mean'),
-    linear_model(df, 'y', c('mean', 'fnz')) %>% mutate(model='multivariate_mean_fnz'),
-    beta_model(df, 'y', 'fnz') %>% mutate(model='univariate_fnz_beta'),
-    beta_model(df, 'y', c('fnz', 'mean')) %>% mutate(model='multivariate_fnz_mean_beta'),
-    beta_model(df, 'y', c('fnz', 'mup')) %>% mutate(model='multivariate_fnz_mup_beta'),
-    logistic_model(df, 'y', 'fnz') %>% mutate(model='univariate_fnz_log')
+    linear_model(df, 'y', c('mup', 'fnz')) %>% mutate(model='multivariate_mup_fnz')
   ) %>%
     mutate(n_data=nrow(df))
 }
