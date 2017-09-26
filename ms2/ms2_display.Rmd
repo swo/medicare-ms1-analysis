@@ -353,7 +353,7 @@ Interestingly, these are the same three values that are significant when perform
 
 ```{r fnz_mu_results}
 results %>%
-  filter(unit_type=='hrr', model %in% c('univariate_fnz', 'multivariate_fnz_mean', 'multivariate_fnz_mup'), term != '(Intercept)') %>%
+  filter(unit_type=='hrr', model %in% c('univariate_fnz', 'univariate_mup', 'multivariate_fnz_mean', 'multivariate_fnz_mup'), term != '(Intercept)') %>%
   (function(df) {
     filter(df, term != 'fnz', p.adjust(p.value, method='BH') < 0.05) %>%
       select(bug, drug_group) %>%

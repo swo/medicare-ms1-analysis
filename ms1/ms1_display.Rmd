@@ -332,10 +332,10 @@ Just by eye, it looks like the changes in appropriateness are small.
 
 ```{r approp_graph}
 pde_approp_table = read_tsv('tables/pde_approp_table.tsv') %>%
-  filter(year %in% c(2011, 2014)) %>%
+  #filter(year %in% c(2011, 2014)) %>%
   (function(df) bind_rows(
     df,
-    df %>% group_by(year, tier) %>%
+    df %>% group_by(year, tier, refill) %>%
       summarize(n=sum(n)) %>%
       mutate(antibiotic='overall')
   )) %>%
@@ -345,6 +345,7 @@ pde_approp_table = read_tsv('tables/pde_approp_table.tsv') %>%
   ungroup()
 
 pde_approp_table %>%
+  filter(year %in% c(2011, 2014)) %>%
   ggplot(aes(x=factor(year), y=f, fill=factor(tier))) +
   geom_bar(stat='identity') +
   facet_grid(~antibiotic) +
@@ -353,7 +354,7 @@ pde_approp_table %>%
 
 I'll focus on tier 1 and 2 because the SSTI drugs don't have common tier 1 uses. I'll call this "high tier" prescribign. If prescribing had changed in an optimal way, only low-tier prescribing would have declined, or only high-tier prescribing would have been added.
 
-If a drug declined by $X$, then the optimal change in the high tier fraction would be $1/(1-X) \approx 1+X$. For example, overall prescribing fell by about 5%, and high-tier prescribing increased by 2.5%. Azithromycin prescribing fell by about 20%, and high-tier azithro prescribing rose by only 6%.
+If a drug declined by $X$, then the optimal change in the high tier fraction would be $1/(1-X) = 1+X + \mathcal{O}(X^2)$. For example, overall prescribing fell by about 5%, and high-tier prescribing increased by 2.5%. Azithromycin prescribing fell by about 20%, and high-tier azithro prescribing rose by only 6%.
 
 I'm not sure what to make of these results, because they depend strongly on how you define the tiers. If you use only tier 1 to describe "appropriate", then levofloxacin has the biggest decline in appropriateness, but if you use tiers 1 and 2, then it's change isn't significant.
 
