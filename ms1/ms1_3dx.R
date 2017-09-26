@@ -20,43 +20,12 @@ read_years = function(years, template) {
     bind_rows()
 }
 
-# trends in diagnoses by beneficiary
-# dx_by_bene = read_years(2011:2014, '../../data/dx_by_bene_%i.tsv') %>%
-#   rename(bene_id=BENE_ID, dx_cat=diagnosis_category)
-# 
-# dxs = unique(dx_by_bene$dx_cat)
-# 
-# # first, a table
-# dx_trends_table = dx_by_bene %>%
-#   group_by(year, dx_cat) %>%
-#   summarize(n_dx=sum(n_dx)) %>%
-#   ungroup() %T>%
-#   output_table('dx_trends_table')
-
 glm_f = function(df, frmla, ...) eval(substitute(function(df2) glm(frmla, data=df2, ...)))(df)
 frmla = y ~ year + age + n_cc + sex + race + dual + region
 
-# then models
-# dx_trends_models = lapply(dxs, function(dx) {
-#   dx_by_bene %>%
-#     filter(dx_cat==dx) %>%
-#     right_join(bene, by=c('year', 'bene_id')) %>%
-#     replace_na(list(n_dx=0)) %>%
-#     rename(y=n_dx) %>%
-#     glm_f(frmla, family='poisson') %>%
-#     tidy %>%
-#     mutate(model=dx)
-# }) %>%
-#   bind_rows() %T>%
-#   output_table('dx_trends')
-
-# swo:
-# NB! SAS truncated the abx names in some files
-# esp., "trimethoprim/sulfamethoxazole" got chopped to "..metho"
-
 # which dx's contribute to each abx?
 dx_from_pde = read_years(2011:2014, '../../data/dx_from_pde_%i.tsv') %>%
-  rename(pde_id=PDE_ID, dx_cat=diagnosis_category)
+  rename(bene_id=BENE_ID, pde_id=PDE_ID, dx_cat=diagnosis_category)
 
 dxs = unique(dx_from_pde$dx_cat)
 
@@ -88,16 +57,12 @@ dx_from_pde_table = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
 fd = read_tsv('../../db/fd_icd/fd_categories.tsv') %>%
   select(dx_cat=diagnosis_category, tier)
 
-pde = read_years(2011:2014, '../pde_%i.tsv') %>%
-  select(year, bene_id, pde_id)
-
 pde_approp = dx_from_pde %>%
   left_join(fd, by='dx_cat') %>%
   replace_na(list(tier=4)) %>%
   group_by(year, pde_id) %>%
   summarize(antibiotic=unique(antibiotic), tier=min(tier)) %>%
   ungroup() %>%
-  left_join(pde, by=c('year', 'pde_id')) %>%
   left_join(bene, by=c('year', 'bene_id'))
 
 pde_approp_table = pde_approp %>%
@@ -125,14 +90,8 @@ approp_trends_f = function(df) {
 }
 
 pde_approp_trends = pde_approp %>%
-  filter(fill_num==0) %>% # leave out the refills
   approp_trends_f() %T>%
   output_table('pde_approp_trends')
-
-pde_approp_trends_wrefills = pde_approp %>%
-  # don't filter out the refills
-  approp_trends_f() %T>%
-  output_table('pde_approp_trends_wrefills')
 
 # what are trends in prescribing practice?
 # swo: test this part
