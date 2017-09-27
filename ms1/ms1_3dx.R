@@ -60,7 +60,7 @@ fd = read_tsv('../../db/fd_icd/fd_categories.tsv') %>%
 pde_approp = dx_from_pde %>%
   left_join(fd, by='dx_cat') %>%
   replace_na(list(tier=4)) %>%
-  group_by(year, pde_id) %>%
+  group_by(year, bene_id, pde_id) %>%
   summarize(antibiotic=unique(antibiotic), tier=min(tier)) %>%
   ungroup() %>%
   left_join(bene, by=c('year', 'bene_id'))
@@ -96,10 +96,6 @@ pde_approp_trends = pde_approp %>%
 # what are trends in prescribing practice?
 # swo: test this part
 dx_to_pde = read_years(2011:2014, '../../data/dx_to_pde_%i.tsv') %>%
-  # hack to fix the weird TMP/SMX values
-  mutate(antibiotic=if_else(antibiotic=='trimethoprim/sulfametho',
-                            'trimethoprim/sulfamethoxazole',
-                            antibiotic)) %>%
   rename(bene_id=BENE_ID, dx_cat=diagnosis_category) %>%
   replace_na(list(antibiotic='no_abx')) %>%
   # drop no infection and no abx, since we won't look at those
@@ -116,7 +112,6 @@ dx_to_pde_table = dx_to_pde %>%
   ungroup() %T>%
   output_table('dx_to_pde_table')
 
-frmla = y ~ year + age + n_cc + sex + race + dual + region
 dx_rx_trends = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
   group_by(antibiotic, dx_cat) %>%
   do((function(a, dx) {
@@ -131,9 +126,6 @@ dx_rx_trends = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
 
 # pde appropriateness at the margins
 pde_approp_margin = pde_approp %>%
-  # filter out refills if desired!
-  mutate(antibiotic=if_else(str_detect(antibiotic, '^trimethoprim/sulfa'), 'tmp_smx', antibiotic)) %>%
-  filter(antibiotic %in% c('tmp_smx', top_abx)) %>%
   mutate(app=tier <= 2) %>%
   group_by(year, bene_id, antibiotic, app) %>%
   summarize(n_abx_app_claims=n()) %>%
@@ -143,4 +135,5 @@ pde_approp_margin = pde_approp %>%
   summarize(n_abx_app_claims=sum(n_abx_app_claims)) %>%
   group_by(year, antibiotic, n_abx_claims) %>%
   mutate(f_app=n_abx_app_claims/sum(n_abx_app_claims)) %>%
-  ungroup()
+  ungroup() %T>%
+  output_table('pde_approp_margin')
