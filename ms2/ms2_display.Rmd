@@ -89,10 +89,11 @@ I started by considering these `r nrow(possible_bug_drug)` bug/drug combinations
 For each combination, I computed three models:
 
 - a Spearman correlation of mean claims per beneficiary $\mu$ against mean percent nonsusceptible $R$
-- a linear model predicting mean resistance from the fraction $f_>$ of people who are consumers
-- a linear model predicting mean resistance from $f_>$ and mean consumption among consumers $\mu_> = \mu/f_>$.
+- a linear model predicting mean resistance from the fraction $f$ of people who are consumers
+- a linear model predicting resistance from mean consumption among consumers $\nu = \mu/f$
+- if both univariate linear models are significant, a linear model predicting resistance from both $f$ and $\nu$
 
-When running regressions, I weight the data points by the number of antibiograms present in that unit. (The weights in a linear regression should be proportional to $1/\sigma^2$, and we generally expect that the standard error of estimators scales like $1/\sqrt{n}$.)
+When running regressions, I weight the states/HRRs by the inverse square of the standard error of the unit-level estimates.
 
 # Results
 
@@ -100,7 +101,7 @@ When running regressions, I weight the data points by the number of antibiograms
 
 ## Spearman
 
-The plot shows the Spearman correlation coefficient $\rho$ between resistance $R$ and mean consumption $\mu$. Two stars after the bug/drug combination implies that the adjusted $p < 0.05$, and one star means the unadjusted $p < 0.05$. Intervals show 95% confidence intervals. 
+The plot shows the Spearman correlation coefficient $\rho$ between resistance $R$ and mean consumption $\mu$. Two stars after the bug/drug combination indicates that the adjusted $p < 0.05$, and one star means the unadjusted $p < 0.05$. Intervals show 95% confidence intervals. 
 
 ```{r hrr_spearman}
 interval_plot = function(df) {
@@ -137,18 +138,19 @@ This table has the significant and marginally significant results from the previ
 
 ## Linear models
 
-We're interested in how it is that mean consumption drives resistance. Is it at the intensive or extensive margin? We separate that by writing $\mu = f_> \mu_>$.
+We're interested in how it is that mean consumption drives resistance. Is it at the intensive or extensive margin? We separate that by writing $\mu = f \nu$.
 
-I run models $R \sim f_>$, that is $R^{(u)} = \beta_0 + \beta_{f_>} f_>^{(u)} + \varepsilon^{(u)}$, where the superscript $u$ indicates the geographical unit (HRR or state). The plots show $\beta_{f_>}$. This model is equivalent to one in which the population resistance $R^{(u)}$ in unit $u$ is the mean of the resistance $r_i^{(u)}$ in the individual people $i$ in unit $u$, where $r_i^{(u)}$ is $\beta_0$ if person $i$ took no drug and $\beta_0 + \beta_{f_>}$ if that person took at least one dose.
+I run models $R \sim f$, that is $R^{(u)} = \beta_0 + \beta_f f^{(u)} + \varepsilon^{(u)}$, where the superscript $u$ indicates the geographical unit (HRR or state). The plots show $\beta_f$. This model is equivalent to one in which the population resistance $R^{(u)}$ in unit $u$ is the mean of the resistance $r_i^{(u)}$ in the individual people $i$ in unit $u$, where $r_i^{(u)}$ is $\beta_0$ if person $i$ took no drug and $\beta_0 + \beta_f$ if that person took at least one dose.
 
-The gray line shows $\beta_{f_>} = 1$. Most confidence intervals include that line, i.e., we can explain our data with a transmission-free model where individuals who take drug have 100% resistance and others have some smaller amount. In only one case do we have a place where the data are inconsistent with this simple model. (Note that the $\beta_0$ can mean the resistance among non-consumers or the fraction of non-consumers who are cryptic consumers.)
+The gray line shows $\beta_f = 1$. Most confidence intervals include that line, i.e., we can explain our data with a transmission-free model where individuals who take drug have 100% resistance and others have some smaller amount. In only one case do we have a place where the data are inconsistent with this simple model. (Note that the $\beta_0$ can mean the resistance among non-consumers or the fraction of non-consumers who are cryptic consumers.)
 
 ```{r hrr_linear}
 results %>%
   filter(model=='univariate_fnz', unit_type=='hrr', term=='fnz') %>%
   interval_plot() +
+  geom_hline(yintercept=0, col='gray') +
   geom_hline(yintercept=1, col='gray') +
-  ylab(expression(beta[f['>']])) +
+  ylab(expression(beta[f])) +
   ggtitle("Linear univariate, HRR")
 ```
 
@@ -156,12 +158,11 @@ results %>%
 results %>%
   filter(model=='univariate_fnz', unit_type=='state', term=='fnz') %>%
   interval_plot() +
+  geom_hline(yintercept=0, color='gray') +
   geom_hline(yintercept=1, color='gray') +
-  ylab(expression(beta[f['>']])) +
+  ylab(expression(beta[f])) +
   ggtitle("Linear univariate, state")
 ```
-
-Why should the linear models do so much better than the Spearman? I think it's because, in the linear model, I can weight the geographical units that have more antibiograms. That is, we give more weight to the greater amounts of data. The Spearman model treats them all equally.
 
 # Unevenness of consumption and antibiotic resistance
 
@@ -243,14 +244,14 @@ ineq %>%
   ggplot(aes(x=fnz, y=mean, color=drug_group)) +
   stat_smooth(aes(color=NA), color='gray', method='lm', se=F, fullrange=TRUE) +
   geom_point(shape=1) +
-  xlab('Fraction nonzero') + ylab('claims per beneficiary') +
+  xlab('fraction nonzero (f)') + ylab('mean consumption (mu)') +
   geom_hline(yintercept=0) + geom_vline(xintercept=0) +
   ggtitle('Fraction consuming and mean consumption, states') +
   theme_minimal() +
   scale_color_manual(values=cbbPalette)
 ```
 
-Because $f_>$ is so collinear with $\mu$, multiple regressions using both as predictors will cause problems (cf. the Supplement). Rather than mean consumption $\mu$, I'll use the mean consumption among consumers $\mu_> = \mu / f_>$ as my second predictor.
+Because $f$ is so collinear with $\mu$, multiple regressions using both as predictors will cause problems (cf. the Supplement). Rather than mean consumption $\mu$, I'll use the mean consumption among consumers $\nu = \mu / f$ as my second predictor.
 
 ```{r fnz_mup}
 ineq %>%
@@ -258,9 +259,9 @@ ineq %>%
   ggplot(aes(x=fnz, y=mup, color=drug_group)) +
   geom_smooth(method='lm', se=F) +
   geom_point(shape=1) +
-  xlab(expression(f['>'])) +
-  ylab(expression(mu['>'])) +
-  ggtitle('Mean nonzero consumption vs. fraction consuming, states') +
+  xlab(expression(f)) +
+  ylab(expression(nu)) +
+  ggtitle('Consumption among consumers (nu) vs. fraction consuming (f), states') +
   theme_minimal() +
   scale_color_manual(values=cbbPalette)
 ```
@@ -274,20 +275,19 @@ For $\beta$-lactams, cephalosporins, clindamycin, macrolides, and quinolones, th
 ```{r fnz_mup_by_drug}
 ineq %>%
   filter(unit_type=='hrr') %>%
-  #rename(state=unit) %>% left_join(regions, by='state') %>%
   rename(hrr=unit) %>% left_join(hrr_regions, by='hrr') %>%
   ggplot(aes(x=fnz, y=mup, color=region)) +
   facet_wrap(~drug_group, scales='free') +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='gray') +
   geom_smooth(method='lm', se=F) +
   geom_point(shape=1) +
-  xlab(expression(f['>'])) +
-  ylab(expression(mu['>'])) +
-  ggtitle('Mean nonzero consumption vs. fraction consuming, states') +
+  xlab(expression(f)) +
+  ylab(expression(nu)) +
+  ggtitle('Mean nonzero consumption vs. fraction consuming, HRR') +
   theme_minimal()
 ```
 
-Tetracycline and Bactrim are interesting: the South has this long tail where $f_>$ is exceptionally high and $\mu_>$ is low. I imagined a model where the South was like the Midwest, but just with more people taking one does of, say, Bactrim. So it goes from $d$ doses into $c$ consumers to $d + \Delta c$ doses into $c + \Delta c$ consumers. This predicts that $\mu'_> = (\mu_> + \Delta f_>)/(1 + \Delta f_>)$. This prediction is too high: it's not *just* that more people in some parts of the South are getting these drugs; it's also that those getting the drug are getting less of it.
+Tetracycline and Bactrim are interesting: the South has this long tail where $f$ is exceptionally high and $\nu$ is low. I imagined a model where the South was like the Midwest, but just with more people taking one does of, say, Bactrim. So it goes from $d$ doses into $c$ consumers to $d + \Delta c$ doses into $c + \Delta c$ consumers. This predicts that $\nu' = (\nu + \Delta f)/(1 + \Delta f)$. This prediction is too high: it's not *just* that more people in some parts of the South are getting these drugs; it's also that those getting the drug are getting less of it.
 
 ## The South has more consumers per capita
 
@@ -302,14 +302,14 @@ ineq %>%
   ggplot(aes(x=fnz, y=mean, color=region)) +
   geom_smooth(aes(color=NULL), method='lm', se=F, color='gray') +
   geom_point() +
-  xlab('Fraction nonzero') + ylab('claims per beneficiary') +
-  ggtitle('All antibiotics, f> and mean consumption, states') +
+  xlab('Fraction nonzero (f)') + ylab('claims per beneficiary (mu)') +
+  ggtitle('All antibiotics, f and mean consumption, states') +
   theme_minimal()
 ```
 
 ## Effect of unevenness on antibiotic resistance
 
-### Effect along extensive margin $\mu_>$
+### Effect along intensive margin $\nu$
 
 ```{r hrr_linear_mup}
 results %>%
@@ -319,77 +319,78 @@ results %>%
   ggtitle("Linear univariate, HRR")
 ```
 
-### Effect beyond $f_>$
+### Effect of $f$ beyond $\nu$, or vice versa
 
-We ask if mean consumption $\mu$ has any information beyond fraction nonzero $f_>$ for predicting resistance $R$. We might expect that the simple two-part model (i.e., consuming or not) represented by the regressions $R \sim f_>$ doesn't capture the fact that taking two doses should have a greater effect than taking one, etc.
+We ask if consumption among consumers $\nu$ has any information beyond fraction nonzero $f$ for predicting resistance $R$ (and vice versa). We do regressions $R = \beta_0 + \beta_f f + \beta_\nu \nu + \varepsilon$ and perform $F$-tests on the nested regression models.
 
-These plots show the coefficient $\beta_\nu$ from the regression $R = \beta_0 + \beta_{f_>} f_> + \beta_\nu \nu + \varepsilon$.
+```{r double_sig_hrr}
+double_sig = results %>%
+  filter(model %in% c('univariate_fnz', 'univariate_mup'),
+         term != '(Intercept)',
+         unit_type == 'hrr') %>%
+  group_by(model) %>%
+  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
+  ungroup() %>%
+  filter(p.value < 0.05) %>%
+  group_by(bug, drug_group) %>%
+  summarize(n=n()) %>%
+  filter(n == 2) %>%
+  select(-n)
 
-```{r hrr_multi}
 results %>%
-  filter(model=='multivariate_fnz_mup', unit_type=='hrr', term=='mup') %>%
-  interval_plot() +
-  ylab(expression(beta[nu])) +
-  ggtitle("Linear multivariate (f> and nu), HRR")
-```
-
-At the state level, none of the $\beta_\nu$ coefficients are significantly different from zero (after multiple-hypothesis correction).
-
-```{r state_multi}
-results %>%
-  filter(model=='multivariate_fnz_mup', unit_type=='state', term=='mup') %>%
-  interval_plot() +
-  ylab(expression(beta[nu])) +
-  ggtitle("Linear multivariate (f> and nu), state")
-```
-
-There are a few significant results:
-
-- *E. coli* and Bactrim have a *negative* relationship (higher consumption goes with *less* resistance)
-- *S. pneumoniae* and tetracyclines have a negative relationship
-- *E. faecium* and $\beta$-lactams have a positive relationship (implying higher mean consumption, given the same fraction of people consuming, goes with more resistance)
-
-Interestingly, these are the same three values that are significant when performing the (ill-advised) regression using $f_>$ and $\mu$. The table shows that bug/drug combinations in which the multiple regressions have significantly non-zero $\beta_{\mu_>}$. The values in the columns show the estimates of $\beta$ in each model. Note the big differences in $\beta_{f_>}$ between the two models. Note that although the regression $R \sim f_> + \mu$ distorts $\beta_{f_>}$ more than the regression $R \sim f_> + \mu_>$, the coefficient still gets changed quite a bit nonetheless. We were hoping for $\mu_>$ to give information in addition to $f_>$, not to just change it completely.
-
-```{r fnz_mu_results}
-results %>%
-  filter(unit_type=='hrr', model %in% c('univariate_fnz', 'univariate_mup', 'multivariate_fnz_mean', 'multivariate_fnz_mup'), term != '(Intercept)') %>%
-  (function(df) {
-    filter(df, term != 'fnz', p.adjust(p.value, method='BH') < 0.05) %>%
-      select(bug, drug_group) %>%
-      distinct() %>%
-      inner_join(df, by=c('bug', 'drug_group')) }) %>%
-  mutate(model=str_replace(model, '^multivariate_', '')) %>%
-  select(bug, drug_group, model, term, estimate) %>%
-  spread(term, estimate) %>%
+  semi_join(double_sig, by=c('bug', 'drug_group')) %>%
+  filter(unit_type == 'hrr',
+         model %in% c('multivariate_fnz_mup', 'multivariate_mup_fnz'),
+         term != '(Intercept)') %>%
+  mutate(second_anova_term=str_extract(model, '(mup|fnz)$')) %>%
+  filter(term == second_anova_term) %>%
+  select(bug, drug_group, term, anova.p.value) %>%
+  spread(term, anova.p.value) %>%
   kable
 ```
 
-I contrast this situation against *E. coli* and quinolones. In that case, adding terms to the regression doesn't drastically alter $\beta_{f_>}$.
+At the HRR level, we see that:
 
-```{r fnz_mu_ecoliquin}
+- For CoNS/FQ and *E. cloacae*/FQ, neither $f$ nor $\nu$ gives information beyond the other
+- For *E. coli*/FQ and *S. pneumonia*/macrolides, $f$ gives informatio beyond $\nu$
+- For *P. mirabilis*/quinolones, $\nu$ gives information beyond $f$
+- For *E. coli*/Bactrim, $f$ and $\nu$ each give information beyond the other
+
+And at the state level:
+
+```{r double_sig_state}
+double_sig = results %>%
+  filter(model %in% c('univariate_fnz', 'univariate_mup'),
+         term != '(Intercept)',
+         unit_type == 'state') %>%
+  group_by(model) %>%
+  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
+  ungroup() %>%
+  filter(p.value < 0.05) %>%
+  group_by(bug, drug_group) %>%
+  summarize(n=n()) %>%
+  filter(n == 2) %>%
+  select(-n)
+
 results %>%
-  filter(unit_type=='hrr', model %in% c('univariate_fnz', 'multivariate_fnz_mean', 'multivariate_fnz_mup'), term != '(Intercept)') %>%
-  filter(bug=='E. coli', drug_group=='quinolone') %>%
-  mutate(model=str_replace(model, '^multivariate_', '')) %>%
-  select(bug, drug_group, model, term, estimate) %>%
-  spread(term, estimate) %>%
+  semi_join(double_sig, by=c('bug', 'drug_group')) %>%
+  filter(unit_type == 'state',
+         model %in% c('multivariate_fnz_mup', 'multivariate_mup_fnz'),
+         term != '(Intercept)') %>%
+  mutate(second_anova_term=str_extract(model, '(mup|fnz)$')) %>%
+  filter(term == second_anova_term) %>%
+  select(bug, drug_group, term, anova.p.value) %>%
+  spread(term, anova.p.value) %>%
   kable
 ```
 
-For *E. faecium* with $\beta$-lactams, the univariate regression with $f_>$ gives a slightly negative slope but is not significant. The univariate regression with $\mu$ gives a slightly positive slope and is not significant. In the multiple regression, the signs stay the same but the coefficients are very different. Thus, we can't trust that $\mu$ provides data in addition to $f_>$ when it's not clear that either provides the information on its own.
-
-For *S. pneumoniae* and tetracyclines, the regression with $f_>$ and the regression with $\mu$ give negative slopes, but neither are significant. In the multiple regression, the $f_>$ coefficient becomes positive. Again, I'm not sure I can trust this.
-
-For *E. coli* and Bactrim, the univariate regression with $f_>$ is positive and signficant. The regression with $\mu$ is positive and not significant. Then, in the multiple regression, $\mu$ flips signs and becomes highly significant (different from zero), and it's significant in an ANOVA where $f_>$ comes first, but it's not significant in an ANOVA where it ($\mu$) comes first.
+There are only two bug/drug combinations that are double-significant, and in those cases, neither metric gives information beyond the other.
 
 ### E. coli and Bactrim
 
 This negative relationship is the most tricky.
 
-From the Spearman and univariate models, Bactrim resistance in *E. coli* is correlated with increased resistance (black line). When breaking that apart by region, however, there are different relationship (colored lines). This makes it seem like there is something strange going on.
-
-It's the L-shape!
+Increased fraction consuming $f$ is correlated with increased resistance:
 
 ```{r ecoli_bactrim_fnz_hrr}
 ineq %>%
@@ -399,34 +400,16 @@ ineq %>%
   filter(bug=='E. coli', drug_group=='tmp_smx') %>%
   filter(percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
   ggplot(aes(x=fnz, y=percent_nonsusceptible, color=region)) +
-  geom_abline(intercept=16.86, slope=114.8, color='pink') +
+  #geom_abline(intercept=16.86, slope=114.8, color='pink') +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
   geom_point() +
   xlab('fraction who consumed Bactrim') +
   ylab('Bactrim-resistance E. coli') +
-  ggtitle('E. coli & Bactrim across HRRs')
+  ggtitle('E. coli & Bactrim, f, HRRs')
 ```
 
-These internal trends are a lot weaker when looking at the state level:
-
-```{r ecoli_bactrim_fnz_state}
-ineq %>%
-  filter(unit_type=='state') %>%
-  rename(state=unit) %>%
-  left_join(regions, by='state') %>%
-  right_join(state_abg, by=c('state', 'drug_group')) %>%
-  filter(bug=='E. coli', drug_group=='tmp_smx') %>%
-  ggplot(aes(x=fnz, y=percent_nonsusceptible, color=region)) +
-  geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
-  geom_smooth(method='lm', se=F) +
-  geom_point() +
-  xlab('fraction who consumed Bactrim') +
-  ylab('Bactrim resistance E. coli') +
-  ggtitle('E. coli & Bactrim across states')
-```
-
-But the same patterns are visible when looking at $\mu_>$ across HRRs:
+But increased consumption among consumers $\nu$ is anticorrelated resistance, both within and across regions:
 
 ```{r ecoli_bactrim_mup}
 ineq %>%
@@ -435,13 +418,13 @@ ineq %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   filter(bug=='E. coli', drug_group=='tmp_smx') %>%
   filter(percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
-  ggplot(aes(x=mean, y=percent_nonsusceptible, color=region)) +
+  ggplot(aes(x=mup, y=percent_nonsusceptible, color=region)) +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
   geom_point() +
   xlab('mean Bactrim cons. among Bactrim-eaters') +
   ylab('Bactrim-resistance E. coli') +
-  ggtitle('E. coli & Bactrim, mu>, HRRs')
+  ggtitle('E. coli & Bactrim, nu, HRRs')
 ```
 
 ### E. faecium and beta-lactams
@@ -487,28 +470,25 @@ ineq %>%
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
   geom_point() +
-  xlab('fraction who consumed tetra') +
+  xlab('f') +
   ylab('tetra resistance pneumo') +
-  ggtitle('pneumo & tetra across HRRs')
+  ggtitle('pneumo & tetra, f, HRRs')
 
 ineq %>%
-  filter(unit_type=='state') %>%
-  rename(state=unit) %>%
-  left_join(regions, by='state') %>%
-  right_join(state_abg, by=c('state', 'drug_group')) %>%
+  filter(unit_type=='hrr') %>%
+  rename(hrr=unit) %>% left_join(hrr_regions, by='hrr') %>%
+  right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   filter(bug=='S. pneumoniae', drug_group=='tetracycline') %>%
-  ggplot(aes(x=fnz, y=percent_nonsusceptible, color=region)) +
+  ggplot(aes(x=mup, y=percent_nonsusceptible, color=region)) +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
   geom_point() +
-  xlab('fraction who consumed tetra') +
-  ylab('tetra resistance pneumo') +
-  ggtitle('pneumo & tetra across states')
+  xlab('nu') +
+  ylab('R') +
+  ggtitle('pneumo & tetra, nu, HRRs')
 ```
 
 ### E. coli and beta-lactams
-
-This negative relationship was significant only for HRRs, not states. Not surprisingly, there is something weird going on with the HRRs: the Southern HRRs are all above the $R \sim f_>$ line, suggesting that the relationship with the mean is just a predictor about region.
 
 ```{r ecoli_betalactam}
 ineq %>%
@@ -521,51 +501,24 @@ ineq %>%
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
   geom_point() +
-  xlab('fraction who consumed beta-lactams') +
+  xlab('f') +
   ylab('Beta-lactam resistance in E. coli') +
-  ggtitle('E. coli & beta-lactams across HRRs')
+  ggtitle('E. coli & beta-lactams, f, HRRs')
 
 ineq %>%
-  filter(unit_type=='state') %>%
-  rename(state=unit) %>%
-  left_join(regions, by='state') %>%
-  right_join(state_abg, by=c('state', 'drug_group')) %>%
+  filter(unit_type=='hrr') %>%
+  rename(hrr=unit) %>% left_join(hrr_regions, by='hrr') %>%
+  right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   filter(bug=='E. coli', drug_group=='beta_lactam') %>%
-  filter(percent_nonsusceptible < 50) %>% # filter one crazy point
-  ggplot(aes(x=mean, y=percent_nonsusceptible, color=region)) +
+  filter(percent_nonsusceptible < 50) %>% # filter one crazy Nevada point
+  ggplot(aes(x=mup, y=percent_nonsusceptible, color=region)) +
   geom_smooth(method='lm', se=F, aes(color=NULL), color='black') +
   geom_smooth(method='lm', se=F) +
   geom_point() +
-  xlab('fraction who consumed beta-lactams') +
-  ylab('Beta-lactam resistance E. coli') +
-  ggtitle('E. coli & beta-lactams across states')
+  xlab('nu') +
+  ylab('Beta-lactam resistance in E. coli') +
+  ggtitle('E. coli & beta-lactams, nu, HRRs')
 ```
-
-## Comparing the predictive power of mean consumption and fraction nonzero
-
-How do the regressions $R \sim f_>$ compare to $R \sim \mu$? Here I look at the correlation between the coefficients $\beta_\mu$ and $\beta_{f_>}$ across bug/drug combinations. Not surprisingly, $\beta_\mu$ and $\beta_{f_>}$ are highly correlated: because $\mu$ and $f_>$ are correlated, you can guess the result of the one regression from the other. However, $\beta_{\mu_>}$ is not as well correlated with $\beta_{f_>}$, indicating that there might be some extra information there.
-
-The column titles are `metric1_metric2`, and the value shows the correlation between the univariate models' coefficients for predicting resistance to that drug across bugs.
-
-```{r univariate_result_correlation, eval=FALSE}
-results %>%
-  filter(str_detect(model, '^uni'), term != '(Intercept)') %>%
-  select(unit_type, bug, drug_group, term, estimate) %>%
-  spread(term, estimate) %>%
-  group_by(unit_type, drug_group) %>%
-  filter(n() > 2) %>%
-  do(tidy(cor(select(., -unit_type, -bug, -drug_group)))) %>%
-  ungroup() %>%
-  rename(x=.rownames) %>%
-  gather('y', 'value', fnz:nb_mu) %>%
-  filter(x > y) %>%
-  mutate(key=str_c(x, '_', y)) %>%
-  select(-x, -y) %>%
-  spread(key, value) %>%
-  kable
-```
-
-In other words, if you do the regression with $f_>$, you can predict with very high accuracy the coefficient from the univariate regression on $\mu$.
 
 ## Specific plots
 
@@ -603,97 +556,7 @@ show(state_cons_res_plot('E. coli', 'quinolone'))
 show(state_cons_res_plot('S. pneumoniae', 'macrolide'))
 ```
 
-- *E. cloacae* and quinolone
-- *S. aureus* and clindamycin
-
 # Supplementary results
-
-## Collinearity
-
-This shows why it's a bad idea to do a multiple regression with $f_>$ and $\mu$. It confirms that we're mostly getting bad results due to multicollinearity.
-
-The gray lines link the coefficients from a univariate model and a multivariate model (i.e., with $f_>$ and $\mu$) for a certain bug/drug combination.
-
-From a previous plot, we know that $\mu \approx \alpha f_>$, where $\alpha \approx 3/2$. Then if $R \approx \beta_0 + \beta_{f_>}$, then we should guess that $\beta_\mu = \beta_{f_>} / \alpha$.
-
-Furthermore, in doing a multivariate regression, using the same math, we find that we expect
-$$
-\beta_\mu^{(2)} = \frac{1}{\alpha} \left( \beta_{f_>}^{(1)} - \beta_{f_>}^{(2)} \right),
-$$
-where the superscripts indicate that the coefficients are from the univariate ("1") and multivariate ("2") regressions. Thus, for $\beta_{f_>}^{(1)} \approx 0$, we expect the multivariate regression coefficients be related by a slope of $-1/\alpha$.
-
-On this plot, the pink lines show $\pm 1/\alpha$, which lines up very nicely with the data (especially considering that I picked $\alpha=3/2$ just by eyeballing that other plot).
-
-```{r uni_multi}
-results %>%
-  filter(unit_type=='hrr', term != '(Intercept)',
-         model %in% c('univariate_fnz', 'univariate_mean', 'multivariate_fnz_mean')) %>%
-  mutate(model=str_extract(model, '(uni|multi)'),
-         bug_drug=interaction(bug, drug_group)) %>%
-  select(bug_drug, model, term, estimate) %>%
-  spread(term, estimate) %>%
-  ggplot(aes(x=fnz, y=mean, color=model, group=bug_drug)) +
-  geom_abline(slope=2/3, color='pink') +
-  geom_abline(slope=-2/3, intercept=0, color='pink') +
-  geom_line(color='gray') +
-  geom_point() +
-  xlab(expression(beta[f['>']])) +
-  ylab(expression(beta[mu])) +
-  ggtitle('Relationship between model coefficients (f>, mean), HRR')
-```
-
-But the result is not so pronounced for $f_>$ and $\mu_>$:
-
-```{r uni_multi_mup}
-results %>%
-  filter(unit_type=='hrr', term != '(Intercept)',
-         model %in% c('univariate_fnz', 'univariate_mup', 'multivariate_fnz_mup')) %>%
-  mutate(model=str_extract(model, '(uni|multi)'),
-        bug_drug=str_c(bug, drug_group)) %>%
-  select(bug_drug, model, term, estimate) %>%
-  spread(term, estimate) %>%
-  ggplot(aes(x=fnz, y=mup, color=model, group=bug_drug, label=bug_drug)) +
-  #geom_text(size=2) +
-  geom_line(color='gray') +
-  geom_point() +
-  xlab(expression(beta[f['>']])) +
-  ylab(expression(beta[mu['>']])) +
-  ggtitle('Relationship between model coefficients (f>, mu>) , HRR')
-```
-
-## Using logistic models
-
-We don't expect that, over a large range, the consumption/resistance relationship will be linear. We expect it would be something more like a logistic function. To evaluate the difference between these two approaches, I performed quasibinomial regressions $R \sim f_>$. If $\bar{f}$ is the midpoint of the $f_>$ values (i.e., the weighted mean) and $\hat{y}$ is the predicted resistance from the model, then the slope at the midpoint is $\beta_f \hat{y}(\bar{x}) \left[ 1- \hat{y}(\bar{x}) \right]$. I compare the $p$-values and slopes in the linear and quasibinomial regressions:
-
-```{r linear_quasibin}
-results %>%
-  filter(unit_type=='hrr', model %in% c('univariate_fnz', 'univariate_fnz_log'), term=='fnz') %>%
-  select(bug, drug_group, model, estimate, p.value) %>%
-  group_by(model) %>%
-  mutate(p.value = p.adjust(p.value, method='BH')) %>%
-  ungroup() %>%
-  ggplot(aes(x=estimate, y=-log10(p.value), color=model, group=interaction(bug, drug_group))) +
-  geom_hline(yintercept = -log10(0.05)) +
-  geom_point() +
-  geom_line(color='gray')
-```
-
-Points above the black line are significant. Note that the $p$-values in the two cases are really similar (i.e., most dumbbells are on the same horizontal line) but they can differ somewhat in their slope. The right-most pink dot is pneumococcus/macrolides, and the next is *P. mirabilis*/Bactrim.
-
-I also tried doing beta regressions, which get similar-sized changes in the slope but really significant $p$-values. Not sure what to make of those.
-
-```{r linear_beta}
-results %>%
-  filter(unit_type=='hrr', model %in% c('univariate_fnz', 'univariate_fnz_beta'), term=='fnz') %>%
-  select(bug, drug_group, model, estimate, p.value) %>%
-  group_by(model) %>%
-  mutate(p.value = p.adjust(p.value, method='BH')) %>%
-  ungroup() %>%
-  ggplot(aes(x=estimate, y=-log10(p.value), color=model, group=interaction(bug, drug_group))) +
-  geom_hline(yintercept = -log10(0.05)) +
-  geom_point() +
-  geom_line(color='gray')
-```
 
 ## Correlations between the metrics
 
