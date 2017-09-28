@@ -224,6 +224,45 @@ Adjusted changes were computed using a Poisson regression predicting claims per 
 
 ## By drug
 
+```{r approp_changes}
+# read in the raw and trend data
+pde_approp_table = read_tsv('tables/pde_approp_table.tsv') %>%
+  (function(df) bind_rows(
+    df,
+    df %>% group_by(year, tier) %>%
+      summarize(n=sum(n)) %>%
+      mutate(antibiotic='overall')
+  )) %>%
+  filter(antibiotic %in% c(top_abx, 'overall')) %>%
+  group_by(year, antibiotic) %>%
+  mutate(f=n/sum(n)) %>%
+  ungroup()
+
+pde_approp_risk_2011 = pde_approp_table %>%
+  # add up tiers 1 and 2
+  filter(year==2011, tier <= 2) %>%
+  group_by(antibiotic) %>%
+  summarize(risk_2011=sum(f))
+
+risk_ratio_f = function(odr, p) odr / (1 + p * (odr - 1))
+
+# compute risk ratios
+pde_approp_trends = read_tsv('tables/pde_approp_trends.tsv') %>%
+  filter(term=='year') %>%
+  mutate(estimate=exp(3*estimate), # odds ratio over the whole time period
+         std.error=sqrt(3)*std.error,
+         adj.p=p.adjust(p.value, method='BH'),
+         ci=1.96*std.error,
+         ci_low=estimate-ci,
+         ci_high=estimate+ci) %>%
+  left_join(pde_approp_risk_2011, by='antibiotic') %>%
+  # convert OR to RR (i.e., adjusted change)
+  mutate_at(vars(estimate, ci_low, ci_high), function(x) risk_ratio_f(x, .$risk_2011 - 1)) %>%
+  # convert to percents, and reverse direction (to make it *inapprop*)
+  mutate_at(vars(estimate, ci_low, ci_high), function(x) -(x - 1)*100) %>%
+  select(antibiotic, pct_change=estimate, ci_low, ci_high, adj.p) # now estimate is adjusted change
+```
+
 ```{r adjusted_changes}
 adjusted_changes = read_tsv('tables/model_abx.tsv') %>%
   rename(antibiotic=name) %>%
@@ -244,6 +283,21 @@ unadjusted_changes = bind_rows(claims_by_abx, claims_overall) %>%
          fold_change=change/`2011`,
          pct_change=100*fold_change) %>%
   select(antibiotic, pct_change)
+  
+ggplot(adjusted_changes, aes(x=antibiotic, y=pct_change, ymin=ci_low, ymax=ci_high)) +
+  geom_hline(yintercept=0) +
+  geom_bar(dat=adjusted_changes, stat='identity', fill=NA, color='black') +
+  geom_errorbar(dat=adjusted_changes, width=0.5) +
+  geom_point(dat=unadjusted_changes, aes(ymin=NULL, ymax=NULL), shape=1) +
+  geom_point(dat=pde_approp_trends, color='blue', shape=1) +
+  geom_errorbar(dat=pde_approp_trends, width=0.25, color='blue') +
+  coord_flip() +
+  xlab('') +
+  ylab('adjusted change from 2011 to 2014 (%)') +
+  scale_y_continuous(limits=c(-22, 32), breaks=c(-20, -10, 0, 10, 20, 30)) +
+  theme_classic() +
+  theme(axis.title.x = element_text(size=16),
+        axis.text = element_text(size=16))
 
 adjusted_changes %>%
   ggplot(aes(x=antibiotic, y=pct_change, ymin=ci_low, ymax=ci_high)) +
@@ -258,6 +312,10 @@ adjusted_changes %>%
   theme(axis.title.x = element_text(size=16),
         axis.text = element_text(size=16))
 ```
+
+The bars show the adjusted change in consumption. Black circles show unadjusted change in consumption. Blue shows the adjusted change in inappropriate prescribing.
+
+### Adjusted changes in usage
 
 ```{r adjusted_changes_table}
 adjusted_changes %>% arrange(desc(antibiotic)) %>% kable
@@ -274,6 +332,12 @@ adjusted_levo_increase = adjusted_changes %>%
 ```
 
 Consumption of azithromycin fell by `r adjusted_az_decrease`% over the entire study period. Levofloxacin consumption increased by `r adjusted_levo_increase`% over the entire study period.
+
+### Adjusted changes in inappropriate prescribing
+
+```{r pde_approp_trends_table}
+pde_approp_trends %>% kable
+```
 
 ## Fluoroquinolones
 
@@ -331,21 +395,8 @@ To compute appropriateness, I classified each PDE with the maximum appropriatene
 Just by eye, it looks like the changes in appropriateness are small.
 
 ```{r approp_graph}
-pde_approp_table = read_tsv('tables/pde_approp_table.tsv') %>%
-  #filter(year %in% c(2011, 2014)) %>%
-  (function(df) bind_rows(
-    df,
-    df %>% group_by(year, tier, refill) %>%
-      summarize(n=sum(n)) %>%
-      mutate(antibiotic='overall')
-  )) %>%
-  filter(antibiotic %in% c(top_abx, 'overall')) %>%
-  group_by(year, antibiotic) %>%
-  mutate(f=n/sum(n)) %>%
-  ungroup()
-
 pde_approp_table %>%
-  filter(year %in% c(2011, 2014)) %>%
+  #filter(year %in% c(2011, 2014)) %>%
   ggplot(aes(x=factor(year), y=f, fill=factor(tier))) +
   geom_bar(stat='identity') +
   facet_grid(~antibiotic) +
@@ -359,28 +410,7 @@ If a drug declined by $X$, then the optimal change in the high tier fraction wou
 I'm not sure what to make of these results, because they depend strongly on how you define the tiers. If you use only tier 1 to describe "appropriate", then levofloxacin has the biggest decline in appropriateness, but if you use tiers 1 and 2, then it's change isn't significant.
 
 ```{r pre_approp_table}
-pde_approp_trends = read_tsv('tables/pde_approp_trends.tsv') %>%
-  filter(term=='year') %>%
-  mutate(or=exp(3*estimate), adj.p=p.adjust(p.value, method='BH')) %>%
-  select(antibiotic, or, adj.p)
 
-risk_ratio_f = function(odr, p) odr / (1 + p * (odr - 1))
-
-pde_approp_table %>%
-  filter(tier <= 2) %>%
-  select(antibiotic, year, f) %>%
-  group_by(antibiotic, year) %>%
-  summarize(f=sum(f)) %>%
-  ungroup() %>%
-  spread(year, f) %>%
-  left_join(pde_approp_trends, by='antibiotic') %>%
-  mutate(raw_pct_change=(`2014`-`2011`)/`2011`,
-         adj_pct_change=risk_ratio_f(or, `2011`) - 1) %>%
-  mutate_at(vars(`2011`, `2014`, raw_pct_change, adj_pct_change),
-            function(x) round(x*100, 2)) %>%
-  select(antibiotic, `2011`, `2014`, raw_pct_change, adj_pct_change, adj.p) %>%
-  arrange(raw_pct_change) %>%
-  kable
 ```
 
 And, to be more careful, I show the answer to a similar question but using a regression to correct for covariates:
