@@ -10,18 +10,22 @@ sum_1yr_cc = paste0(names_1yr_ccs, collapse=' + ')
 regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
   select(state, region)
 
-# window of days that you can look ahead from an rx to a dx
-rxdx_window = 3
-
 load_data = function(year) {
   # pde data
   pde = read_tsv(sprintf('../pde_%i.tsv', year)) %>%
-    select(bene_id, pde_date, antibiotic) %>%
-    distinct() %>%
+    select(bene_id, pde_date, antibiotic, fill_num) %>%
+    # for each bene, date, and drug, keep only one record. give preference to first fills.
+    group_by(bene_id, pde_date, antibiotic) %>%
+    summarize(fill_num=min(fill_num)) %>%
+    ungroup() %>%
     mutate(year=year, pde_id=1:n())
 
   # total numbers of PDEs
   n_claims = count(pde, bene_id) %>% rename(n_claims=n)
+  n_claims_firstfill = pde %>%
+    filter(fill_num==0) %>%
+    count(bene_id) %>%
+    rename(n_claims_firstfill=n)
 
   # count chronic conditions. 'n_cc' means one-year cc's
   cc = read_feather(sprintf('../cc_%i.feather', year)) %>%
@@ -35,7 +39,8 @@ load_data = function(year) {
     left_join(regions, by='state') %>%
     left_join(cc, by='bene_id') %>%
     left_join(n_claims, by='bene_id') %>%
-    replace_na(list(n_claims=0))
+    left_join(n_claims_firstfill, by='bene_id') %>%
+    replace_na(list(n_claims=0, n_claims_firstfill=0))
 
   # take the bene, pde (with diagnoses) and diagnoses (separately)
   list(bene=bene, pde=pde)

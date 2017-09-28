@@ -224,6 +224,51 @@ Adjusted changes were computed using a Poisson regression predicting claims per 
 
 ## By drug
 
+### All fills
+
+Bars show adjusted trends in usage, including refills. The dots shows unadjusted trends.
+
+```{r adjusted_changes}
+adjusted_changes = read_tsv('tables/model_abx.tsv') %>%
+  rename(antibiotic=name) %>%
+  filter(term=='year') %>%
+  mutate(estimate=3*estimate,
+         std.error=sqrt(3)*std.error) %>%
+  model_ci() %>%
+  select(antibiotic, pct_change, ci_low, ci_high) %>%
+  arrange(pct_change) %>%
+  mutate(antibiotic=fct_inorder(antibiotic),
+         antibiotic=fct_relevel(antibiotic, 'overall', after=Inf))
+
+unadjusted_changes = bind_rows(claims_by_abx, claims_overall) %>%
+  filter(antibiotic %in% c('overall', top_abx), year %in% c(2011, 2014)) %>%
+  select(antibiotic, year, cpkp) %>%
+  spread(year, cpkp) %>%
+  mutate(change=`2014`-`2011`,
+         fold_change=change/`2011`,
+         pct_change=100*fold_change) %>%
+  select(antibiotic, pct_change)
+
+adjusted_changes %>%
+  ggplot(aes(x=antibiotic, y=pct_change, ymin=ci_low, ymax=ci_high)) +
+  geom_bar(stat='identity', fill=NA, color='black') +
+  geom_errorbar(width=0.5) +
+  geom_point(dat=unadjusted_changes, aes(x=antibiotic, y=pct_change, ymin=NULL, ymax=NULL), shape=1) +
+  coord_flip() +
+  xlab('') +
+  ylab('adjusted change in consumption 2011 to 2014 (%)') +
+  scale_y_continuous(limits=c(-22, 32), breaks=c(-20, -10, 0, 10, 20, 30)) +
+  theme_minimal() +
+  theme(axis.title.x = element_text(size=16),
+        axis.text = element_text(size=16))
+```
+
+The bars show the adjusted change in consumption. Black circles show unadjusted change in consumption. Blue shows the adjusted change in inappropriate prescribing.
+
+### First fills
+
+Bars show the adjusted change in prescribing, considering only first fills. The blue dots show the change in inappropriate prescribing (which only includes first fills).
+
 ```{r approp_changes}
 # read in the raw and trend data
 pde_approp_table = read_tsv('tables/pde_approp_table.tsv') %>%
@@ -260,11 +305,10 @@ pde_approp_trends = read_tsv('tables/pde_approp_trends.tsv') %>%
   mutate_at(vars(estimate, ci_low, ci_high), function(x) risk_ratio_f(x, .$risk_2011 - 1)) %>%
   # convert to percents, and reverse direction (to make it *inapprop*)
   mutate_at(vars(estimate, ci_low, ci_high), function(x) -(x - 1)*100) %>%
-  select(antibiotic, pct_change=estimate, ci_low, ci_high, adj.p) # now estimate is adjusted change
-```
+  select(antibiotic, pct_change=estimate, ci_low, ci_high, adj.p)
+  # now estimate is adjusted change in INappropriate prescribing
 
-```{r adjusted_changes}
-adjusted_changes = read_tsv('tables/model_abx.tsv') %>%
+adjusted_changes_firstfill = read_tsv('tables/model_abx_firstfill.tsv') %>%
   rename(antibiotic=name) %>%
   filter(term=='year') %>%
   mutate(estimate=3*estimate,
@@ -274,48 +318,23 @@ adjusted_changes = read_tsv('tables/model_abx.tsv') %>%
   arrange(pct_change) %>%
   mutate(antibiotic=fct_inorder(antibiotic),
          antibiotic=fct_relevel(antibiotic, 'overall', after=Inf))
-
-unadjusted_changes = bind_rows(claims_by_abx, claims_overall) %>%
-  filter(antibiotic %in% c('overall', top_abx), year %in% c(2011, 2014)) %>%
-  select(antibiotic, year, cpkp) %>%
-  spread(year, cpkp) %>%
-  mutate(change=`2014`-`2011`,
-         fold_change=change/`2011`,
-         pct_change=100*fold_change) %>%
-  select(antibiotic, pct_change)
   
-ggplot(adjusted_changes, aes(x=antibiotic, y=pct_change, ymin=ci_low, ymax=ci_high)) +
+ggplot(adjusted_changes_firstfill, aes(x=antibiotic, y=pct_change, ymin=ci_low, ymax=ci_high)) +
   geom_hline(yintercept=0) +
-  geom_bar(dat=adjusted_changes, stat='identity', fill=NA, color='black') +
-  geom_errorbar(dat=adjusted_changes, width=0.5) +
-  geom_point(dat=unadjusted_changes, aes(ymin=NULL, ymax=NULL), shape=1) +
+  geom_bar(stat='identity', fill=NA, color='black') +
+  geom_errorbar(width=0.5) +
   geom_point(dat=pde_approp_trends, color='blue', shape=1) +
   geom_errorbar(dat=pde_approp_trends, width=0.25, color='blue') +
   coord_flip() +
   xlab('') +
   ylab('adjusted change from 2011 to 2014 (%)') +
-  scale_y_continuous(limits=c(-22, 32), breaks=c(-20, -10, 0, 10, 20, 30)) +
+  scale_y_continuous(limits=c(-22, 35), breaks=c(-20, -10, 0, 10, 20, 30)) +
   theme_classic() +
-  theme(axis.title.x = element_text(size=16),
-        axis.text = element_text(size=16))
-
-adjusted_changes %>%
-  ggplot(aes(x=antibiotic, y=pct_change, ymin=ci_low, ymax=ci_high)) +
-  geom_bar(stat='identity', fill=NA, color='black') +
-  geom_errorbar(width=0.5) +
-  geom_point(dat=unadjusted_changes, aes(x=antibiotic, y=pct_change, ymin=NULL, ymax=NULL), shape=1) +
-  coord_flip() +
-  xlab('') +
-  ylab('adjusted change in consumption 2011 to 2014 (%)') +
-  scale_y_continuous(limits=c(-22, 32), breaks=c(-20, -10, 0, 10, 20, 30)) +
-  theme_minimal() +
   theme(axis.title.x = element_text(size=16),
         axis.text = element_text(size=16))
 ```
 
-The bars show the adjusted change in consumption. Black circles show unadjusted change in consumption. Blue shows the adjusted change in inappropriate prescribing.
-
-### Adjusted changes in usage
+### Adjusted changes in usage table
 
 ```{r adjusted_changes_table}
 adjusted_changes %>% arrange(desc(antibiotic)) %>% kable

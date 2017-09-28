@@ -44,6 +44,8 @@ n_unique_bene = bene$bene_id %>%
 pde = read_tsv('data/pde.tsv') %>%
   left_join(bene, by=c('year', 'bene_id'))
 
+pde_firstfill = pde %>% filter(fill_num==0)
+
 # the top few inidividual antibiotics
 claims_by_abx = pde %>%
   count(year, antibiotic) %>% ungroup() %>%
@@ -91,6 +93,10 @@ overall_model = bene %>%
   rename(y=n_claims) %>%
   model_f(abx_frmla, 'overall')
 
+overall_model_firstfill = bene %>%
+  rename(y=n_claims_firstfill) %>%
+  model_f(abx_frmla, 'overall')
+
 # model overall consumption, but look at individual populations
 covariates = c('age', 'sex', 'race', 'dual', 'region')
 reduced_model = function(df, missing_term, name) {
@@ -120,7 +126,7 @@ bind_rows(
   output_table('model_overall_demography')
 
 # get models for individual abx
-single_f = function(abx, frmla) {
+single_f = function(pde, abx, frmla) {
   pde %>%
     filter(antibiotic==abx) %>%
     count(year, bene_id) %>% ungroup() %>% rename(y=n) %>%
@@ -129,11 +135,15 @@ single_f = function(abx, frmla) {
     model_f(frmla, abx)
 }
 
-single_models = lapply(top_abx, function(a) single_f(a, abx_frmla))
+single_models = lapply(top_abx, function(a) single_f(pde, a, abx_frmla))
+single_models_firstfill = lapply(top_abx, function(a) single_f(pde_firstfill, a, abx_frmla))
 
 # report the model parameters
 bind_rows(overall_model, single_models) %>%
   output_table('model_abx')
+
+bind_rows(overall_model_firstfill, single_models_firstfill) %>%
+  output_table('model_abx_firstfill')
 
 # trends in all fluoroquinolones
 model_fq = pde %>%
