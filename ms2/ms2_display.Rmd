@@ -556,6 +556,84 @@ show(state_cons_res_plot('E. coli', 'quinolone'))
 show(state_cons_res_plot('S. pneumoniae', 'macrolide'))
 ```
 
+# Appropriateness at the margins
+
+Stewardship should also be motivated by whether consumption is more appropriate along the extensive or intensive margin.
+
+For each drug, take all claims made by beneficiaries who had $N$ claims for that drug. Of those $N$ claims, what fraction were associated with appropriate diagnoses? I exclude re-fills, since we don't expect them to be associated with diagnoses.
+
+I also do logistic regressions predicting inappropriate prescribing from the number of claims. (In other words, we predict whether a claim is appropriate using the number of claims for that drug its beneficiary had.) I used all the data, rather than truncating at 9 claims like for the figure. Where inappropriate prescribing increases (significantly, after multiple hypothesis correction), I put "+" after the name; where it decreases, "-".
+
+```{r approp_margin}
+top_abx = c('azithromycin', 'ciprofloxacin', 'amoxicillin',
+            'cephalexin', 'trimethoprim/sulfamethoxazole',
+            'levofloxacin', 'amoxicillin/clavulanate',
+            'doxycycline', 'nitrofurantoin', 'clindamycin')
+
+approp = read_tsv('../ms1/tables/pde_approp_margin.tsv') %>%
+  filter(year==2014, antibiotic %in% top_abx) %>%
+  select(-year, -f_app) %>%
+  complete(antibiotic, n_abx_claims, app, fill=list(n_abx_app_claims=0)) %>%
+  spread(app, n_abx_app_claims) %>%
+  rename(n_app=`TRUE`, n_inapp=`FALSE`) %>%
+  mutate(n_total=n_app+n_inapp)
+
+approp_trends = approp %>%
+  mutate(y=n_inapp / n_total) %>%
+  group_by(antibiotic) %>%
+  do(tidy(glm(y ~ n_abx_claims, data=., weights=n_total, family='quasibinomial'))) %>%
+  filter(term=='n_abx_claims') %>%
+  mutate(p.adj=p.adjust(p.value, method='BH')) %>%
+  filter(p.adj < 0.05) %>%
+  select(antibiotic, estimate, std.error, p.adj)
+
+top_abx_short = c('azithromycin', 'ciprofloxacin', 'amoxicillin',
+                  'cephalexin', 'TMP/SMX', 'levofloxacin',
+                  'amox/clav', 'doxycycline', 'nitrofurantoin',
+                  'clindamycin')
+
+approp_abx_labels = data_frame(antibiotic=top_abx,
+                               short_antibiotic=top_abx_short) %>%
+  left_join(approp_trends, by='antibiotic') %>%
+  mutate(sig=case_when(is.na(.$estimate) ~ '',
+                       estimate > 0 ~ ' (+)',
+                       estimate < 0 ~ ' (-)')) %>%
+  mutate(short_antibiotic=str_c(short_antibiotic, sig)) %>%
+  pull(short_antibiotic)
+
+approp %>%
+  filter(n_total > 0) %>%
+  group_by(antibiotic, n_abx_claims) %>%
+  do((function (x, n) {
+    m = binom.test(x, n)
+    data_frame(estimate=m$estimate,
+               ci_low=m$conf.int[1],
+               ci_high=m$conf.int[2])
+  })(.$n_inapp, .$n_total)) %>%
+  ungroup() %>%
+  # throw out the messy end margins
+  filter(n_abx_claims <= 9) %>%
+  # order the antibiotics
+  mutate(antibiotic=factor(antibiotic,
+                           levels=top_abx,
+                           labels=approp_abx_labels)) %>%
+  ggplot(aes(x=n_abx_claims, y=estimate, ymin=ci_low, ymax=ci_high)) +
+  geom_point() +
+  geom_line() +
+  geom_errorbar() +
+  facet_wrap(~antibiotic) +
+  ylab('fraction inappropriate') +
+  scale_x_continuous(breaks=c(1, 3, 5, 7, 9))
+```
+
+This table has the data from the tests: the estimate is the odds ratio for each additional claim. Positive estimates mean that inappropriate increases with more intensive usage; negative means that inappropriate prescribing decreases. I only show the drugs that has significant results after multiple hypothesis correction.
+
+```{r approp_trends}
+approp_trends %>% kable
+```
+
+Thus, amoxicillin is the only drug that is more inappropriate among high intensity users. All the other drugs are either the same across intensiveness or actually more appropriate among intensive users. This is another argument for, in general, focusing on the extensive margin.
+
 # Supplementary results
 
 ## Correlations between the metrics
@@ -596,4 +674,36 @@ results %>%
   geom_hline(yintercept=-log10(0.05)) +
   geom_point() +
   xlab("Spearman's rho")
+```
+
+## Comparing state and HRR univariate $f$ models
+
+For univariate models on $f$, HRRs have better $p$-values but similar estimates.
+
+```{r compare_uni_f}
+results %>%
+  filter(model=='univariate_fnz', term=='fnz') %>%
+  mutate(group=interaction(bug, drug_group),
+         adj.p=p.adjust(p.value, method='BH')) %>%
+  ggplot(aes(x=estimate, y=-log10(adj.p), color=unit_type, group=group)) +
+  geom_line(color='gray') +
+  geom_hline(yintercept=-log10(0.05)) +
+  geom_point() +
+  xlab(expression(beta[f]))
+```
+
+## Comparing state and HRR univariate $\nu$ models
+
+For univariate models on $\nu$, the two negative-estimate results follow the same pattern: HRRs have better $p$-values but similar estimates. *Proteus* is way up in the corner. For the other positive-estimate results, it's a little more muddy.
+
+```{r compare_uni_nu}
+results %>%
+  filter(model=='univariate_mup', term=='mup') %>%
+  mutate(group=interaction(bug, drug_group),
+         adj.p=p.adjust(p.value, method='BH')) %>%
+  ggplot(aes(x=estimate, y=-log10(adj.p), color=unit_type, group=group)) +
+  geom_line(color='gray') +
+  geom_hline(yintercept=-log10(0.05)) +
+  geom_point() +
+  xlab(expression(beta[nu]))
 ```
