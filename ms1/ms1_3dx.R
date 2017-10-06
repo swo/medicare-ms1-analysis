@@ -23,6 +23,22 @@ read_years = function(years, template) {
 glm_f = function(df, frmla, ...) eval(substitute(function(df2) glm(frmla, data=df2, ...)))(df)
 frmla = y ~ year + age + n_cc + sex + race + dual + region
 
+# count total dx's and hcpcs counts
+read_years(2011:2014, '../../data/dx_hcpcs_count_%i.tsv') %>%
+  output_table('hcpcs_count')
+
+# count dx by categories
+read_years(2011:2014, '../../data/dx_cat_count_%i.tsv') %>%
+  rename(dx_cat=diagnosis_category) %>%
+  left_join(bene %>% count(year) %>% rename(n_bene=n), by='year') %>%
+  output_table('dx_cat_counts')
+
+# count many PDEs have any dx or E&M dx upstream
+read_years(2011:2014, '../../data/dx_any_pde_%i.tsv') %>%
+  mutate_at(vars(has_dx, has_em_dx), as.logical) %>%
+  count(year, has_dx, has_em_dx) %>%
+  output_table('pde_with_dx_upstream')
+
 # which dx's contribute to each abx?
 dx_from_pde = read_years(2011:2014, '../../data/dx_from_pde_%i.tsv') %>%
   rename(bene_id=BENE_ID, pde_id=PDE_ID, dx_cat=diagnosis_category)
@@ -72,8 +88,6 @@ pde_approp_table = pde_approp %>%
 # logistic regression
 # two ways to do this: either keep the "not infectious" diagnoses in the
 # denominator, or leave them out (i.e., filter tier != 4)
-# swo: i think this formula is repeated
-frmla = y ~ year + age + n_cc + sex + race + dual + region
 approp_trends_f = function(df) {
   df %>%
     mutate(y=tier <= 2) %>%

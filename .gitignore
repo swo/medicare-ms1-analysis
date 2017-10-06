@@ -12,3 +12,4 @@ fig/
 .Rhistory
 *.RData
 *.feather
+.Rproj.user

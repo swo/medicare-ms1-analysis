@@ -5,11 +5,10 @@ output: html_document
 ---
 
 ```{r global_options, include=FALSE}
-knitr::opts_chunk$set(fig.width=7, fig.height=4, fig.path='fig/', dev=c('png', 'pdf'),
-                      pdf.options(useDingbats=FALSE),
-                      echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, autodep=TRUE)
+knitr::opts_chunk$set    
 import::from(tools, md5sum)
 library(forcats)
+BH = function(x) p.adjust(x, method='BH')
 ```
 
 ```{r load_data, cache.extra=c(md5sum('ineq.tsv'), md5sum('results.tsv'))}
@@ -21,7 +20,7 @@ ineq = ineq_table %>%
             fnz=sum(n_bene[n_claims > 0]) / sum(n_bene),
             mup=mean/fnz) %>%
   group_by(unit_type, unit, drug_group) %>%
-  summarize_at(vars(mean, fnz,mup), mean) %>% 
+  summarize_at(vars(mean, fnz, mup), mean) %>% 
   ungroup()
 
 results = read_tsv('results.tsv')
@@ -152,6 +151,15 @@ results %>%
   geom_hline(yintercept=1, col='gray') +
   ylab(expression(beta[f])) +
   ggtitle("Linear univariate, HRR")
+```
+
+```{r hrr_linear_fnz_table}
+results %>%
+  filter(model=='univariate_fnz', unit_type=='hrr', term=='fnz') %>%
+  select(bug, drug_group, estimate, anova.p.value) %>%
+  filter(anova.p.value < 0.05) %>%
+  arrange(desc(estimate)) %>%
+  kable
 ```
 
 ```{r state_linear}
@@ -317,6 +325,15 @@ results %>%
   interval_plot() +
   ylab(expression(beta[nu])) +
   ggtitle("Linear univariate, HRR")
+```
+
+```{r hrr_linear_mup_table}
+results %>%
+  filter(model=='univariate_mup', unit_type=='hrr', term=='mup') %>%
+  select(bug, drug_group, estimate, anova.p.value) %>%
+  filter(anova.p.value < 0.05) %>%
+  arrange(desc(estimate)) %>%
+  kable
 ```
 
 ### Effect of $f$ beyond $\nu$, or vice versa
@@ -539,7 +556,8 @@ state_cons_res_plot = function(b, d) {
     geom_smooth(method='lm', se=F) +
     geom_smooth(method='lm', se=F, col='gray') +
     geom_point() +
-    geom_text() +
+    #geom_text() +
+    ggrepel::geom_text_repel() +
     xlab(str_interp('mean ${d} claims per beneficiary')) +
     ylab(str_interp('mean percent nonsusceptible ${b} isolates')) +
     ggtitle(str_interp('${b} & ${d}, state'))
@@ -554,6 +572,26 @@ show(state_cons_res_plot('E. coli', 'quinolone'))
 
 ```{r pneumo_macro_state}
 show(state_cons_res_plot('S. pneumoniae', 'macrolide'))
+```
+
+```{r pneumo_macro_minimal}
+inner_join(
+  ineq %>%
+    filter(unit_type=='state', drug_group=='macrolide') %>%
+    select(state=unit, fnz),
+  state_abg %>%
+    filter(bug=='S. pneumoniae', drug_group=='macrolide') %>%
+    select(state, percent_nonsusceptible),
+by='state') %>%
+  left_join(regions, by='state') %>%
+  ggplot(aes(x=fnz, y=percent_nonsusceptible, label=state, color=region)) +
+  geom_smooth(method='lm', se=F, col='gray') +
+  geom_point() +
+  #geom_text() +
+  ggrepel::geom_text_repel() +
+  xlab(str_interp('fraction f of beneficiaries with a macrolide claim')) +
+  ylab(str_interp('percent nonsusceptible pneumococcus isolates')) +
+  theme_classic()
 ```
 
 # Appropriateness at the margins
