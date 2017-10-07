@@ -88,9 +88,9 @@ pde_approp_table = pde_approp %>%
 # logistic regression
 # two ways to do this: either keep the "not infectious" diagnoses in the
 # denominator, or leave them out (i.e., filter tier != 4)
-approp_trends_f = function(df) {
+inapprop_trends_f = function(df) {
   df %>%
-    mutate(y=tier <= 2) %>%
+    mutate(y=tier > 2) %>%
     (function(df) {
       bind_rows(
         glm_f(df, frmla, family='binomial') %>% tidy %>% mutate(antibiotic='overall'),
@@ -103,9 +103,9 @@ approp_trends_f = function(df) {
     })
 }
 
-pde_approp_trends = pde_approp %>%
-  approp_trends_f() %T>%
-  output_table('pde_approp_trends')
+pde_inapprop_trends = pde_approp %>%
+  inapprop_trends_f() %T>%
+  output_table('pde_inapprop_trends')
 
 # what are trends in prescribing practice?
 # swo: test this part

@@ -38,9 +38,11 @@ n_pde = sum(claims_by_abx$n)
 n_million_pde = round(n_pde / 1e6, 2)
 
 est2pct = function(x) (exp(x) - 1)*100
+
 mult_est = function(df, m) {
   mutate(df, estimate=m*estimate, std.error=sqrt(m)*std.error)
 }
+
 model_ci = function(df) {
   df %>%
     mutate(pct_change=est2pct(estimate),
@@ -295,16 +297,16 @@ pde_approp_table = read_tsv('tables/pde_approp_table.tsv') %>%
   mutate(f=n/sum(n)) %>%
   ungroup()
 
-pde_approp_risk_2011 = pde_approp_table %>%
-  # add up tiers 1 and 2
-  filter(year==2011, tier <= 2) %>%
+pde_inapprop_risk_2011 = pde_approp_table %>%
+  # add up tiers 3 and 4
+  filter(year==2011, tier > 2) %>%
   group_by(antibiotic) %>%
   summarize(risk_2011=sum(f))
 
 risk_ratio_f = function(odr, p) odr / (1 + p * (odr - 1))
 
 # compute risk ratios
-pde_approp_trends = read_tsv('tables/pde_approp_trends.tsv') %>%
+pde_inapprop_trends = read_tsv('tables/pde_inapprop_trends.tsv') %>%
   filter(term=='year') %>%
   mutate(estimate=exp(3*estimate), # odds ratio over the whole time period
          std.error=sqrt(3)*std.error,
@@ -312,7 +314,7 @@ pde_approp_trends = read_tsv('tables/pde_approp_trends.tsv') %>%
          ci=1.96*std.error,
          ci_low=estimate-ci,
          ci_high=estimate+ci) %>%
-  left_join(pde_approp_risk_2011, by='antibiotic') %>%
+  left_join(pde_inapprop_risk_2011, by='antibiotic') %>%
   # convert OR to RR (i.e., adjusted change)
   mutate_at(vars(estimate, ci_low, ci_high), function(x) risk_ratio_f(x, .$risk_2011 - 1)) %>%
   # convert to percents, and reverse direction (to make it *inapprop*)
@@ -426,12 +428,15 @@ To compute appropriateness, I classified each PDE with the maximum appropriatene
 The fraction of diagnoses that have E&M HCPCS codes:
 
 ```{r hcpcs_count}
-read_tsv('tables/hcpcs_count.tsv') %>%
+hcpcs_count = read_tsv('tables/hcpcs_count.tsv') %>%
   group_by(hcpcs_flag) %>%
   summarize(n_dx=sum(n_dx)) %>%
-  mutate(f=n_dx/sum(n_dx)) %>%
-  kable
+  mutate(f=n_dx/sum(n_dx))
+
+hcpcs_count %>% kable
 ```
+
+This equals a total of `r prettyNum(sum(hcpcs_count$n_dx), big.mark=',')` diagnoses.
 
 The fraction of first-fill PDEs that have upstream:
 
@@ -440,7 +445,7 @@ read_tsv('tables/pde_with_dx_upstream.tsv') %>%
   group_by(has_dx, has_em_dx) %>%
   summarize(n=sum(n)) %>%
   ungroup() %>%
-  mutate(f=n/sum(n), cumf=cumsum(f)) %>%
+  mutate(f=n/sum(n), cumf=cumsum(f), cumf1=1-cumf) %>%
   kable
 ```
 
@@ -457,6 +462,15 @@ pde_approp_table %>%
   theme_classic()
 ```
 
+```{r pde_approp_table}
+pde_approp_table %>%
+  mutate(approp=tier <= 2) %>%
+  group_by(approp) %>%
+  summarize(n=sum(n)) %>%
+  mutate(f=n/sum(n)) %>%
+  kable
+```
+
 I'll focus on tier 1 and 2 because the SSTI drugs don't have common tier 1 uses. I'll call this "high tier" prescribign. If prescribing had changed in an optimal way, only low-tier prescribing would have declined, or only high-tier prescribing would have been added.
 
 If a drug declined by $X$, then the optimal change in the high tier fraction would be $1/(1-X) = 1+X + \mathcal{O}(X^2)$. For example, overall prescribing fell by about 5%, and high-tier prescribing increased by 2.5%. Azithromycin prescribing fell by about 20%, and high-tier azithro prescribing rose by only 6%.
@@ -468,9 +482,12 @@ And, to be more careful, I show the answer to a similar question but using a reg
 ```{r pde_approp_trends}
 read_tsv('tables/pde_approp_trends.tsv') %>%
   filter(term=='year') %>%
-  select(antibiotic, estimate, p.value) %>%
+  #select(antibiotic, estimate, p.value) %>%
+  mult_est(3) %>%
+  model_ci() %>%
   mutate(antibiotic=factor(antibiotic, levels=c('overall', top_abx))) %>%
   arrange(antibiotic) %>%
+  select(antibiotic, pct_change, ci_low, ci_high, p.value) %>%
   kable
 ```
 
