@@ -23,6 +23,12 @@ ineq = ineq_table %>%
   summarize_at(vars(mean, fnz, mup), mean) %>% 
   ungroup()
 
+ineq_hrr_mean = ineq %>%
+  filter(unit_type=='hrr') %>%
+  group_by(drug_group) %>%
+  summarize_at(vars(mean, fnz, mup), mean)
+
+
 results = read_tsv('results.tsv')
 
 consumption_groups = read_tsv('consumption_groups.tsv')
@@ -100,7 +106,10 @@ When running regressions, I weight the states/HRRs by the inverse square of the 
 
 ## Spearman
 
-The plot shows the Spearman correlation coefficient $\rho$ between resistance $R$ and mean consumption $\mu$. Two stars after the bug/drug combination indicates that the adjusted $p < 0.05$, and one star means the unadjusted $p < 0.05$. Intervals show 95% confidence intervals. 
+The plot shows the Spearman correlation coefficient $\rho$ between resistance
+$R$ and mean consumption $\mu$. Two stars after the bug/drug combination
+indicates that the adjusted $p < 0.05$, and one star means the unadjusted $p <
+0.05$. Intervals show 95% confidence intervals.
 
 ```{r hrr_spearman}
 interval_plot = function(df) {
@@ -109,7 +118,7 @@ interval_plot = function(df) {
   mutate(sig=case_when(.$p.adj < 0.05 ~ '**',
                        .$p.value < 0.05 ~ '*',
                        TRUE ~ ''),
-         bug_drug=fct_inorder(str_c(bug, drug_group, sig, sep=' '))) %>% 
+         bug_drug=fct_inorder(str_c(bug, drug_group, sig, sep=' '))) %>%
     ggplot(aes(x=bug_drug, y=estimate, ymin=ci_low, ymax=ci_high, color=drug_group)) +
     geom_point() +
     geom_errorbar(width=0.5) +
@@ -154,6 +163,13 @@ results %>%
 ```
 
 ```{r hrr_linear_fnz_table}
+results %>%
+  filter(model=='univariate_fnz', unit_type=='hrr', term=='fnz') %>%
+  select(bug, drug_group, estimate, anova.p.value) %>%
+  filter(anova.p.value < 0.05) %>%
+  arrange(desc(estimate)) %>%
+  kable
+
 results %>%
   filter(model=='univariate_fnz', unit_type=='hrr', term=='fnz') %>%
   select(bug, drug_group, estimate, anova.p.value) %>%
@@ -333,6 +349,11 @@ results %>%
   select(bug, drug_group, estimate, anova.p.value) %>%
   filter(anova.p.value < 0.05) %>%
   arrange(desc(estimate)) %>%
+  # swo: fanciful now
+  left_join(ineq_hrr_mean, by='drug_group') %>%
+  mutate(dR_nu_ext=-(mup-1)/fnz*estimate,
+         dR_nu_int=estimate/fnz) %>%
+  select(bug, drug_group, estimate, anova.p.value, dR_nu_ext, dR_nu_int) %>%
   kable
 ```
 
@@ -402,6 +423,20 @@ results %>%
 ```
 
 There are only two bug/drug combinations that are double-significant, and in those cases, neither metric gives information beyond the other.
+
+### Effect of both together
+
+```{r both_effects}
+results %>%
+  filter(unit_type=='hrr', model=='multivariate_fnz_mup', term != '(Intercept)') %>%
+  select(bug, drug_group, term, estimate) %>%
+  spread(term, estimate) %>%
+  rename(beta_fnz=fnz, beta_mup=mup) %>%
+  left_join(ineq_hrr_mean, by='drug_group') %>%
+  mutate(dR_ext=beta_fnz - (mup - 1)/fnz * beta_mup,
+         dR_int=beta_mup / fnz) %>%
+  kable
+```
 
 ### E. coli and Bactrim
 
