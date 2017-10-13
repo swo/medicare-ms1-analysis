@@ -34,11 +34,11 @@ hrr_region = hrr %>%
   summarize(region=first(region))
 
 abg = read_tsv('../../../antibiogram/data/abg.tsv', col_types=cols(zipcode='c')) %>%
-  mutate(drug=tolower(drug), percent_nonsusceptible=100-percent_susceptible) %>%
+  mutate(drug=tolower(drug), f_nonsusceptible=1-percent_susceptible/100) %>%
   left_join(hrr, by=c('zipcode', 'state')) %>%
   right_join(resistance_groups, by='drug') %>%
   right_join(bug_names, by='bug') %>%
-  select(bug=bug_short, drug_group, state, hrr, percent_nonsusceptible, n_isolates, has_inpatient) %>%
+  select(bug=bug_short, drug_group, state, hrr, f_nonsusceptible, n_isolates, has_inpatient, standard) %>%
   # filter for only the "good" combinations
   semi_join(possible_bug_drug, by=c('bug', 'drug_group')) %>%
   # compute the median number of isolates for each bug/drug combo
@@ -69,25 +69,35 @@ summarize_abg = function(df, place) {
     mutate(regression_weight=n_place_antibiograms)
 }
 
-# summarize antibiograms by correcting for in- vs. outpatient
+# summarize antibiograms by correcting for IP/OP and lab standard.
 # regression weight goes like the inverse square of the standard error
 # (i.e., it's easier to estimate outpatient for some states)
 summarize_abg = function(df, place_name) {
   place_name_var = enquo(place_name)
   place_name_str = quo_name(place_name_var)
   
-  frmla = str_interp("percent_nonsusceptible ~ ${place_name_str} + has_inpatient + 0") %>% as.formula
-  place_name_regex = str_c('^', place_name_str)
+  frmla = str_interp("f_nonsusceptible ~ ${place_name_str} + has_inpatient + standard") %>% as.formula
   
   models = df %>%
+    group_by(bug, drug_group, !!place_name_var, has_inpatient, standard) %>%
+    summarize(f_nonsusceptible=weighted.mean(f_nonsusceptible, w=n_isolates),
+              n_isolates=sum(n_isolates)) %>%
     group_by(bug, drug_group) %>%
-    do(tidy(lm(frmla, data=., weights=n_isolates))) %>%
-    ungroup() %>%
-    filter(str_detect(term, place_name_regex)) %>%
-    mutate(!!place_name_str := str_replace(term, place_name_regex, '')) %>%
-    rename(percent_nonsusceptible=estimate) %>%
-    select(-term) %>%
-    mutate(regression_weight=std.error ** (-2))
+    do((function (df) {
+      new_data = df %>%
+        select(bug, drug_group, !!place_name_var) %>%
+        distinct() %>%
+        mutate(has_inpatient=FALSE, standard='Clinical and Laboratory Standards Institute (CLSI)')
+    
+      m = glm(frmla, data=df, family=quasibinomial)
+      pred = predict(m, type='response', newdata=new_data, se.fit=TRUE)
+    
+      new_data %>%
+        mutate(f_nonsusceptible=pred$fit,
+               std.error=pred$se.fit,
+               regression_weight=std.error ** (-2)) %>%
+        select(-has_inpatient, -standard)
+    })(.))
   
   abg_counts = df %>%
     group_by(bug, drug_group, !!place_name_var) %>%
@@ -101,8 +111,8 @@ hrr_abg = summarize_abg(abg, hrr) %T>% write_tsv('abg_hrr.tsv')
 
 linear_model = function(df, y, xs) {
   frmla = as.formula(str_interp("${y} ~ ${str_c(xs, collapse=' + ')}"))
-  #m = lm(formula=frmla, weights=n_place_antibiograms, data=df)
-  m = lm(frmla, weights=std.error ** (-2), data=df)
+  m = lm(frmla, weights=n_place_antibiograms, data=df)
+  #m = lm(frmla, weights=std.error ** (-2), data=df)
 
   anova_res = anova(m) %>%
     tidy %>%
@@ -139,12 +149,12 @@ spearman_model = function(df, y_name, x_name) {
 
 models = function(df) {
   bind_rows(
-    spearman_model(df, 'y', 'mean') %>% mutate(model='spearman'),
-    linear_model(df, 'y', 'mean') %>% mutate(model='univariate_mean'),
-    linear_model(df, 'y', 'fnz') %>% mutate(model='univariate_fnz'),
-    linear_model(df, 'y', 'mup') %>% mutate(model='univariate_mup'),
-    linear_model(df, 'y', c('fnz', 'mup')) %>% mutate(model='multivariate_fnz_mup'),
-    linear_model(df, 'y', c('mup', 'fnz')) %>% mutate(model='multivariate_mup_fnz')
+    spearman_model(df, 'f_nonsusceptible', 'mean') %>% mutate(model='spearman'),
+    linear_model(df, 'f_nonsusceptible', 'mean') %>% mutate(model='univariate_mean'),
+    linear_model(df, 'f_nonsusceptible', 'fnz') %>% mutate(model='univariate_fnz'),
+    linear_model(df, 'f_nonsusceptible', 'mup') %>% mutate(model='univariate_mup'),
+    linear_model(df, 'f_nonsusceptible', c('fnz', 'mup')) %>% mutate(model='multivariate_fnz_mup'),
+    linear_model(df, 'f_nonsusceptible', c('mup', 'fnz')) %>% mutate(model='multivariate_mup_fnz')
   ) %>%
     mutate(n_data=nrow(df))
 }
@@ -154,7 +164,6 @@ hrr_results = ineq %>%
   rename(hrr=unit) %>%
   right_join(hrr_abg, by=c('hrr', 'drug_group')) %>%
   left_join(hrr_region, by='hrr') %>%
-  mutate(y=percent_nonsusceptible/100) %>%
   group_by(bug, drug_group) %>%
   do(models(.)) %>%
   ungroup()
@@ -164,9 +173,25 @@ state_results = ineq %>%
   rename(state=unit) %>%
   left_join(regions, by='state') %>%
   right_join(state_abg, by=c('state', 'drug_group')) %>%
-  mutate(y=percent_nonsusceptible/100) %>%
   group_by(bug, drug_group) %>%
   do(models(.)) %>%
+  ungroup()
+
+ims = read_tsv('../../db/ims/ims.tsv') %>%
+  filter(age=='all', !is.na(drug_group), state != 'all') %>%
+  select(state, drug_group, rate)
+
+ims_results = ims %>%
+  right_join(state_abg, by=c('state', 'drug_group')) %>%
+  mutate(y=percent_nonsusceptible/100) %>%
+  group_by(bug, drug_group) %>%
+  do((function (df) {
+    bind_rows(
+      spearman_model(df, 'y', 'rate') %>% mutate(model='spearman'),
+      linear_model(df, 'y', 'rate') %>% mutate(model='univariate_mean')
+    ) %>%
+      mutate(n_data=nrow(df))
+  })(.)) %>%
   ungroup()
 
 results = bind_rows(
