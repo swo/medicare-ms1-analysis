@@ -71,13 +71,17 @@ dx_from_pde_table = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
 
 # appropriateness
 fd = read_tsv('../../db/fd_icd/fd_categories.tsv') %>%
-  select(dx_cat=diagnosis_category, tier)
+  select(dx_cat=diagnosis_category, tier, t3_acute_respiratory) %>%
+  mutate(t3_acute_respiratory=t3_acute_respiratory=='Y')
 
 pde_approp = dx_from_pde %>%
   left_join(fd, by='dx_cat') %>%
-  replace_na(list(tier=4)) %>%
+  # "Remaining codes not listed elsewhere" are tier 3
+  replace_na(list(tier=3)) %>%
   group_by(year, bene_id, pde_id) %>%
-  summarize(antibiotic=unique(antibiotic), tier=min(tier)) %>%
+  summarize(antibiotic=unique(antibiotic),
+            tier=min(tier),
+            t3_acute_respiratory=all(t3_acute_respiratory)) %>%
   ungroup() %>%
   left_join(bene, by=c('year', 'bene_id'))
 
@@ -85,17 +89,18 @@ pde_approp_table = pde_approp %>%
   count(year, antibiotic, tier) %T>%
   output_table('pde_approp_table')
 
+pde_t3_acute_resp_table = pde_approp %>%
+  count(year, antibiotic, t3_acute_respiratory) %T>%
+  output_table('pde_t3_acute_resp_table')
+
 # logistic regression
-# two ways to do this: either keep the "not infectious" diagnoses in the
-# denominator, or leave them out (i.e., filter tier != 4)
-inapprop_trends_f = function(df) {
+inapprop_trends_model_f = function(df) {
   df %>%
-    mutate(y=tier > 2) %>%
     (function(df) {
       bind_rows(
         glm_f(df, frmla, family='binomial') %>% tidy %>% mutate(antibiotic='overall'),
         df %>%
-          filter(antibiotic %in% top_abx) %>%
+          mutate(antibiotic=fct_other(factor(antibiotic), keep=top_abx)) %>%
           group_by(antibiotic) %>%
           do(tidy(glm_f(., frmla, family='binomial'))) %>%
           ungroup()
@@ -103,19 +108,22 @@ inapprop_trends_f = function(df) {
     })
 }
 
+inapprop_trends_f = function(df) {
+  bind_rows(
+    df %>% mutate(y=tier==3) %>% inapprop_trends_model_f() %>% mutate(model='12/3'),
+    df %>% mutate(y=t3_acute_respiratory) %>% inapprop_trends_model_f() %>% mutate(model='t3_acute_resp_only')
+  )
+}
+
 pde_inapprop_trends = pde_approp %>%
   inapprop_trends_f() %T>%
   output_table('pde_inapprop_trends')
 
 # what are trends in prescribing practice?
-# swo: test this part
 dx_to_pde = read_years(2011:2014, '../../data/dx_to_pde_%i.tsv') %>%
   rename(bene_id=BENE_ID, dx_cat=diagnosis_category) %>%
-  replace_na(list(antibiotic='no_abx')) %>%
-  # drop no infection and no abx, since we won't look at those
-  filter(!(dx_cat=='not_infectious' & antibiotic=='no_abx')) %>%
   # lump abx outside of top 10 into "other"
-  mutate(antibiotic=fct_other(factor(antibiotic), keep=c(top_abx, 'no_abx'))) %>%
+  mutate(antibiotic=fct_other(factor(antibiotic), keep=top_abx)) %>%
   count(year, bene_id, dx_cat, antibiotic) %>%
   left_join(bene, by=c('year', 'bene_id'))
 
@@ -140,7 +148,7 @@ dx_rx_trends = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
 
 # pde appropriateness at the margins
 pde_approp_margin = pde_approp %>%
-  mutate(app=tier <= 2) %>%
+  mutate(app=tier!=3) %>%
   group_by(year, bene_id, antibiotic, app) %>%
   summarize(n_abx_app_claims=n()) %>%
   group_by(year, bene_id, antibiotic) %>%
