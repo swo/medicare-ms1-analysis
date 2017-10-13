@@ -76,10 +76,10 @@ summarize_abg = function(df, place_name) {
   place_name_var = enquo(place_name)
   place_name_str = quo_name(place_name_var)
   
-  frmla = str_interp("f_nonsusceptible ~ ${place_name_str} + has_inpatient + standard") %>% as.formula
+  frmla = str_interp("f_nonsusceptible ~ ${place_name_str} + has_inpatient") %>% as.formula
   
   models = df %>%
-    group_by(bug, drug_group, !!place_name_var, has_inpatient, standard) %>%
+    group_by(bug, drug_group, !!place_name_var, has_inpatient) %>%
     summarize(f_nonsusceptible=weighted.mean(f_nonsusceptible, w=n_isolates),
               n_isolates=sum(n_isolates)) %>%
     group_by(bug, drug_group) %>%
@@ -87,7 +87,7 @@ summarize_abg = function(df, place_name) {
       new_data = df %>%
         select(bug, drug_group, !!place_name_var) %>%
         distinct() %>%
-        mutate(has_inpatient=FALSE, standard='Clinical and Laboratory Standards Institute (CLSI)')
+        mutate(has_inpatient=FALSE)
     
       m = glm(frmla, data=df, family=quasibinomial)
       pred = predict(m, type='response', newdata=new_data, se.fit=TRUE)
