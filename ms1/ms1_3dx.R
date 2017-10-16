@@ -1,5 +1,3 @@
-library(forcats)
-
 # load data
 # NB: I put DC into the South
 

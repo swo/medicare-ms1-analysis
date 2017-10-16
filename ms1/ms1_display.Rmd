@@ -486,8 +486,9 @@ dx_from_pde = read_tsv('tables/dx_from_pde.tsv') %>%
   spread(present, n) %>%
   mutate(pct=`TRUE`/(`TRUE` + `FALSE`)*100 %>% round(2)) %>%
   select(antibiotic, dx_cat, pct) %>%
-  spread(dx_cat, pct) %T>%
-  kable
+  spread(dx_cat, pct)
+
+dx_from_pde %>% kable
 ```
 
 ## Trends in prescribing practice
