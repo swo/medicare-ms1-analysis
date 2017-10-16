@@ -64,9 +64,9 @@ summarize_abg = function(df, place) {
   df %>%
     group_by(bug, drug_group, !!place_var) %>%
     summarize(n_place_antibiograms=n(),
-              percent_nonsusceptible=weighted.mean(percent_nonsusceptible, w=n_isolates)) %>%
-    ungroup() %>%
-    mutate(regression_weight=n_place_antibiograms)
+              f_nonsusceptible=weighted.mean(f_nonsusceptible, w=n_isolates),
+              n_isolates=sum(n_isolates)) %>%
+    ungroup()
 }
 
 # summarize antibiograms by correcting for IP/OP and lab standard.
@@ -96,7 +96,7 @@ summarize_abg = function(df, place_name) {
         mutate(f_nonsusceptible=pred$fit,
                std.error=pred$se.fit,
                regression_weight=std.error ** (-2)) %>%
-        select(-has_inpatient, -standard)
+        select(-has_inpatient)
     })(.))
   
   abg_counts = df %>%
@@ -111,8 +111,8 @@ hrr_abg = summarize_abg(abg, hrr) %T>% write_tsv('abg_hrr.tsv')
 
 linear_model = function(df, y, xs) {
   frmla = as.formula(str_interp("${y} ~ ${str_c(xs, collapse=' + ')}"))
-  m = lm(frmla, weights=n_place_antibiograms, data=df)
-  #m = lm(frmla, weights=std.error ** (-2), data=df)
+  #m = lm(frmla, weights=n_place_antibiograms, data=df)
+  m = lm(frmla, weights=std.error ** (-2), data=df)
 
   anova_res = anova(m) %>%
     tidy %>%
@@ -137,7 +137,7 @@ spearman_model = function(df, y_name, x_name) {
   if (length(y) > 3) {
     cis = mada::CIrho(m$estimate, length(y), level=0.95)
   } else {
-    cis = c(0, 0, 1)
+    cis = c(NA, 0, 1)
   }
 
   data_frame(term=x_name,
@@ -182,13 +182,12 @@ ims = read_tsv('../../db/ims/ims.tsv') %>%
   select(state, drug_group, rate)
 
 ims_results = ims %>%
-  right_join(state_abg, by=c('state', 'drug_group')) %>%
-  mutate(y=percent_nonsusceptible/100) %>%
+  inner_join(state_abg, by=c('state', 'drug_group')) %>%
   group_by(bug, drug_group) %>%
   do((function (df) {
     bind_rows(
-      spearman_model(df, 'y', 'rate') %>% mutate(model='spearman'),
-      linear_model(df, 'y', 'rate') %>% mutate(model='univariate_mean')
+      spearman_model(df, 'f_nonsusceptible', 'rate') %>% mutate(model='spearman'),
+      linear_model(df, 'f_nonsusceptible', 'rate') %>% mutate(model='univariate_mean')
     ) %>%
       mutate(n_data=nrow(df))
   })(.)) %>%
