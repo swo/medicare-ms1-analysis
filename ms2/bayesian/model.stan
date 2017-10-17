@@ -1,11 +1,10 @@
 data {
   int<lower=0> S; // number of states
   int<lower=0> A; // number of antibiograms (total)
-  int<lower=0> NC; // maximum number of claims
   int<lower=0> Size[S]; // number of antibiograms in each state
   int<lower=0> Iso[A]; // number of isolates in each antibiogram
   int<lower=0> Res[A]; // number of resistant isolates in each antibiogram
-  matrix<lower=0>[S, NC] Fmat; // matrix of fractions of benes in each consumption category
+  vector<lower=0>[S] Cons; // consumption in each state
 }
 
 parameters {
@@ -16,14 +15,8 @@ parameters {
 }
 
 transformed parameters {
-  vector[NC] eta;
   vector[S] theta; // linear predictor
-
-  for (n in 1:NC) {
-    // eta[n] = inv_logit(beta0 + beta1 * n);
-    eta[n] = beta0 + beta1 * n;
-  }
-  theta = Fmat * eta;
+  theta = beta0 + beta1 * Cons;
 }
 
 model {
