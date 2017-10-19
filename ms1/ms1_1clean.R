@@ -1,3 +1,5 @@
+#!/usr/bin/env Rscript
+
 # Process the bene, pde, and dx data
 # so it's ready for analysis
 
@@ -40,7 +42,8 @@ load_data = function(year) {
     left_join(cc, by='bene_id') %>%
     left_join(n_claims, by='bene_id') %>%
     left_join(n_claims_firstfill, by='bene_id') %>%
-    replace_na(list(n_claims=0, n_claims_firstfill=0))
+    replace_na(list(n_claims=0, n_claims_firstfill=0)) %>%
+    select(bene_id, year, age, sex, race, dual, n_cc, region, n_claims, n_claims_firstfill)
 
   # take the bene, pde (with diagnoses) and diagnoses (separately)
   list(bene=bene, pde=pde)

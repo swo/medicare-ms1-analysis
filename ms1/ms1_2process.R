@@ -9,6 +9,7 @@ bene = read_tsv('data/bene.tsv') %>%
   mutate(age=age-1)
 
 output_table = function(x, base) write_tsv(x, sprintf('tables/%s.tsv', base))
+sandwich_tidy = function(m) lmtest::coeftest(m, vcov=sandwich::vcovHC(m, type='HC3'))
 sem = function(x) sd(x) / sqrt(length(x))
 
 summarize_totals = function(df) {
@@ -78,9 +79,16 @@ summarize_by(bene, 'age')
 
 # run a model and tidy
 glm_f = function(df, frmla, ...) eval(substitute(function(df2) glm(frmla, data=df2, ...)))(df)
+sandwich_tidy = function(m) tidy(lmtest::coeftest(m, vcov=sandwich::vcovHC(m, type='HC3')))
+tidy2 = function(m) {
+  bind_rows(
+    tidy(m) %>% mutate(estimator='naive'),
+    sandwich_tidy(m) %>% mutate(estimator='sandwich')
+  )
+}
 model_f = function(df, frmla, name) {
   glm_f(df, frmla, family='poisson') %>%
-    tidy %>%
+    tidy2() %>%
     mutate(name=name)
 }
 

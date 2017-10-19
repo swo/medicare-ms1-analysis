@@ -19,6 +19,15 @@ read_years = function(years, template) {
 }
 
 glm_f = function(df, frmla, ...) eval(substitute(function(df2) glm(frmla, data=df2, ...)))(df)
+sandwich_tidy = function(m) tidy(lmtest::coeftest(m, vcov=sandwich::vcovHC(m, type='HC3')))
+
+tidy2 = function(m) {
+  bind_rows(
+    tidy(m) %>% mutate(estimator='naive'),
+    sandwich_tidy(m) %>% mutate(estimator='sandwich')
+  )
+}
+  
 frmla = y ~ year + age + n_cc + sex + race + dual + region
 
 # count total dx's and hcpcs counts
@@ -69,8 +78,7 @@ dx_from_pde_table = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
 
 # appropriateness
 fd = read_tsv('../../db/fd_icd/fd_categories.tsv') %>%
-  select(dx_cat=diagnosis_category, tier, t3_acute_respiratory) %>%
-  mutate(t3_acute_respiratory=t3_acute_respiratory=='Y')
+  select(dx_cat=diagnosis_category, tier)
 
 pde_approp = dx_from_pde %>%
   left_join(fd, by='dx_cat') %>%
@@ -87,35 +95,12 @@ pde_approp_table = pde_approp %>%
   count(year, antibiotic, tier) %T>%
   output_table('pde_approp_table')
 
-pde_t3_acute_resp_table = pde_approp %>%
-  count(year, antibiotic, t3_acute_respiratory) %T>%
-  output_table('pde_t3_acute_resp_table')
-
-# logistic regression
-inapprop_trends_model_f = function(df) {
-  df %>%
-    (function(df) {
-      bind_rows(
-        glm_f(df, frmla, family='binomial') %>% tidy %>% mutate(antibiotic='overall'),
-        df %>%
-          mutate(antibiotic=fct_other(factor(antibiotic), keep=top_abx)) %>%
-          group_by(antibiotic) %>%
-          do(tidy(glm_f(., frmla, family='binomial'))) %>%
-          ungroup()
-      )
-    })
-}
-
-inapprop_trends_f = function(df) {
-  bind_rows(
-    df %>% mutate(y=tier==3) %>% inapprop_trends_model_f() %>% mutate(model='12/3'),
-    df %>% mutate(y=t3_acute_respiratory) %>% inapprop_trends_model_f() %>% mutate(model='t3_acute_resp_only')
-  )
-}
-
-pde_inapprop_trends = pde_approp %>%
-  inapprop_trends_f() %T>%
-  output_table('pde_inapprop_trends')
+# appropriateness (logistic) regression
+inapprop_trend = pde_approp %>%
+  mutate(inapp=tier==3) %>%
+  glm_f(frmla, family='binomial') %>%
+  sandwich_tidy %T>%
+  output_table('pde_inapprop_trend')
 
 # what are trends in prescribing practice?
 dx_to_pde = read_years(2011:2014, '../../data/dx_to_pde_%i.tsv') %>%
@@ -139,7 +124,7 @@ dx_rx_trends = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
       filter(dx_cat==dx) %>%
       mutate(y=antibiotic==a) %>%
       glm_f(frmla, family='binomial', weights=n) %>%
-      tidy
+      sandwich_tidy
   })(.$antibiotic, .$dx_cat)) %>%
   ungroup() %T>%
   output_table('dx_to_pde_trends')
