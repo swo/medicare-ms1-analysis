@@ -1,3 +1,5 @@
+#!/usr/bin/env Rscript
+
 # load data
 # NB: I put DC into the South
 
@@ -86,8 +88,7 @@ pde_approp = dx_from_pde %>%
   replace_na(list(tier=3)) %>%
   group_by(year, bene_id, pde_id) %>%
   summarize(antibiotic=unique(antibiotic),
-            tier=min(tier),
-            t3_acute_respiratory=all(t3_acute_respiratory)) %>%
+            tier=min(tier)) %>%
   ungroup() %>%
   left_join(bene, by=c('year', 'bene_id'))
 

@@ -150,11 +150,3 @@ bind_rows(overall_model, single_models) %>%
 
 bind_rows(overall_model_firstfill, single_models_firstfill) %>%
   output_table('model_abx_firstfill')
-
-# trends in all fluoroquinolones
-model_fq = pde %>%
-  filter(str_detect(antibiotic, 'floxacin')) %>%
-  count(year, bene_id) %>% ungroup() %>% rename(y=n) %>%
-  right_join(bene, by=c('year', 'bene_id')) %>% replace_na(list(y=0)) %>%
-  model_f(abx_frmla, 'fluoroquinolone') %T>%
-  output_table('model_fq')
