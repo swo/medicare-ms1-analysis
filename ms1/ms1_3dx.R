@@ -22,13 +22,6 @@ read_years = function(years, template) {
 
 glm_f = function(df, frmla, ...) eval(substitute(function(df2) glm(frmla, data=df2, ...)))(df)
 sandwich_tidy = function(m) tidy(lmtest::coeftest(m, vcov=sandwich::vcovHC(m, type='HC3')))
-
-tidy2 = function(m) {
-  bind_rows(
-    tidy(m) %>% mutate(estimator='naive'),
-    sandwich_tidy(m) %>% mutate(estimator='sandwich')
-  )
-}
   
 frmla = y ~ year + age + n_cc + sex + race + dual + region
 
@@ -96,9 +89,10 @@ pde_approp_table = pde_approp %>%
   count(year, antibiotic, tier) %T>%
   output_table('pde_approp_table')
 
-# appropriateness (logistic) regression
+# inappropriateness (logistic) regression
 inapprop_trend = pde_approp %>%
-  mutate(inapp=tier==3) %>%
+  # outcome is inappropriate
+  mutate(y=tier==3) %>%
   glm_f(frmla, family='binomial') %>%
   sandwich_tidy %T>%
   output_table('pde_inapprop_trend')
@@ -118,15 +112,20 @@ dx_to_pde_table = dx_to_pde %>%
   ungroup() %T>%
   output_table('dx_to_pde_table')
 
+dx_to_pde_trend_f = function (a, dx) {
+  dx_to_pde %>%
+    filter(dx_cat==dx) %>%
+    group_by(year, bene_id, encounter_id) %>%
+    summarize(age=unique(age), sex=unique(sex), race=unique(race), dual=unique(dual), n_cc=unique(n_cc), region=unique(region),
+              y=a %in% antibiotic) %>%
+    ungroup() %>%
+    glm_f(frmla, family='binomial') %>%
+    sandwich_tidy
+}
+
 dx_rx_trends = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
-  group_by(antibiotic, dx_cat) %>%
-  do((function(a, dx) {
-    dx_to_pde %>%
-      filter(dx_cat==dx) %>%
-      mutate(y=antibiotic==a) %>%
-      glm_f(frmla, family='binomial', weights=n) %>%
-      sandwich_tidy
-  })(.$antibiotic, .$dx_cat)) %>%
+  group_by_all() %>%
+  do(dx_to_pde_trend_f(.$antibiotic, .$dx_cat)) %>%
   ungroup() %T>%
   output_table('dx_to_pde_trends')
 
