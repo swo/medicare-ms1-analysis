@@ -102,28 +102,38 @@ dx_to_pde = read_years(2011:2014, '../../data/dx_to_pde_%i.tsv') %>%
   rename(bene_id=BENE_ID, dx_cat=diagnosis_category) %>%
   # lump abx outside of top 10 into "other"
   mutate(antibiotic=fct_other(factor(antibiotic), keep=top_abx)) %>%
-  count(year, bene_id, dx_cat, antibiotic) %>%
   left_join(bene, by=c('year', 'bene_id'))
 
+# count how many of each encounter type there are in a year
+dx_denom = dx_to_pde %>%
+  select(year, encounter_id, dx_cat) %>%
+  distinct() %>%
+  count(year, dx_cat) %>% ungroup() %>%
+  rename(n_dx=n)
+
 dx_to_pde_table = dx_to_pde %>%
-  group_by(year, dx_cat, antibiotic) %>%
-  summarize(n=sum(n)) %>%
-  mutate(f=n/sum(n)) %>%
-  ungroup() %T>%
+  count(year, dx_cat, antibiotic) %>% ungroup() %>%
+  rename(n_dx_with_abx=n) %>%
+  left_join(dx_denom, by=c('year', 'dx_cat')) %>%
+  mutate(f_dx_with_abx=n_dx_with_abx/n_dx) %T>%
   output_table('dx_to_pde_table')
+
+encounter = dx_to_pde %>%
+  select(year, bene_id, encounter_id, dx_cat) %>%
+  distinct()
 
 dx_to_pde_trend_f = function (a, dx) {
   dx_to_pde %>%
     filter(dx_cat==dx) %>%
-    group_by(year, bene_id, encounter_id) %>%
-    summarize(age=unique(age), sex=unique(sex), race=unique(race), dual=unique(dual), n_cc=unique(n_cc), region=unique(region),
+    group_by(year, encounter_id) %>%
+    summarize(bene_id=unique(bene_id), age=unique(age), sex=unique(sex), race=unique(race), dual=unique(dual), n_cc=unique(n_cc), region=unique(region),
               y=a %in% antibiotic) %>%
     ungroup() %>%
     glm_f(frmla, family='binomial') %>%
     sandwich_tidy
 }
 
-dx_rx_trends = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
+dx_to_pde_trends = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
   group_by_all() %>%
   do(dx_to_pde_trend_f(.$antibiotic, .$dx_cat)) %>%
   ungroup() %T>%

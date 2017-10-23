@@ -161,29 +161,6 @@ claims_by_top_abx %>%
   ggtitle('Unadjusted consumption, next 5')
 ```
 
-```{r claims_by_top_abx_facet, eval=FALSE}
-claims_by_top_abx %>%
-  filter(antibiotic %in% c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin', 'trimethoprim/sulfamethoxazole')) %>%
-  ggplot(aes(x=year, y=cpkp, color=antibiotic)) +
-  #ggplot(aes(x=year, y=cpkp)) +
-  facet_wrap(~antibiotic, ncol=5) +
-  geom_point() + geom_line() +
-  scale_y_continuous(limits=c(0, 250), breaks=c(0, 50, 100, 150, 200, 250)) +
-  theme_minimal() +
-  ggtitle('Unadjusted consumption, top 5')
-
-claims_by_top_abx %>%
-  filter(antibiotic %in% c('levofloxacin', 'amoxicillin/clavulanate', 'doxycycline', 'nitrofurantoin', 'clindamycin')) %>%
-  ggplot(aes(x=year, y=cpkp, color=antibiotic)) +
-  #ggplot(aes(x=year, y=cpkp)) +
-  facet_wrap(~antibiotic, ncol=5) +
-  geom_point() + geom_line() +
-  scale_y_continuous(limits=c(0, 150), breaks=c(0, 50, 100)) +
-  #ylim(0, 140) +
-  theme_minimal() +
-  ggtitle('Unadjusted consumption, next 5')
-```
-
 ## Claims by age group
 
 ```{r claims_by_age}
