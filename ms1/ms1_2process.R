@@ -1,3 +1,5 @@
+#!/usr/bin/env Rscript
+
 # load data
 # NB: I put DC into the South
 

@@ -45,7 +45,9 @@ read_years(2011:2014, '../../data/dx_any_pde_%i.tsv') %>%
 dx_from_pde = read_years(2011:2014, '../../data/dx_from_pde_%i.tsv') %>%
   rename(bene_id=BENE_ID, pde_id=PDE_ID, dx_cat=diagnosis_category)
 
-dxs = unique(dx_from_pde$dx_cat)
+dxs = c('gi_t3', 'uti_t3', 'not_infectious', 'uri', 'other_resp', 'gi', 'asthma',
+        'ssti_t3', 'uti', 'ssti', 'bronchitis', 'misc_t3', 'om', 'pharyngitis',
+        'pneumonia', 'misc_bacterial', 'sinusitis', 'flu', 'om_t3', 'acne', 'viral_flu')
 
 top_abx = c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin',
             'trimethoprim/sulfamethoxazole', 'levofloxacin', 'amoxicillin/clavulanate',
@@ -98,10 +100,14 @@ inapprop_trend = pde_approp %>%
   output_table('pde_inapprop_trend')
 
 # what are trends in prescribing practice?
+dup_run = function(x) c(FALSE, x[-1] == x[-length(x)]) | c(x[-1] == x[-length(x)], FALSE)
 dx_to_pde = read_years(2011:2014, '../../data/dx_to_pde_%i.tsv') %>%
+  replace_na(list(antibiotic='no_abx')) %>%
   rename(bene_id=BENE_ID, dx_cat=diagnosis_category) %>%
   # lump abx outside of top 10 into "other"
-  mutate(antibiotic=fct_other(factor(antibiotic), keep=top_abx)) %>%
+  # look for the (few) encounters with more than one drug
+  mutate(antibiotic=fct_other(factor(antibiotic), keep=c('no_abx', top_abx)),
+         multidrug=dup_run(encounter_id)) %>%
   left_join(bene, by=c('year', 'bene_id'))
 
 # count how many of each encounter type there are in a year
@@ -122,15 +128,40 @@ encounter = dx_to_pde %>%
   select(year, bene_id, encounter_id, dx_cat) %>%
   distinct()
 
+dx_to_pde_single = dx_to_pde %>% filter(!multidrug)
+dx_to_pde_multi = dx_to_pde %>%
+  filter(multidrug) %>%
+  distinct() %>%
+  mutate(dummy=TRUE) %>%
+  spread(antibiotic, dummy, fill=FALSE)
+
 dx_to_pde_trend_f = function (a, dx) {
-  dx_to_pde %>%
-    filter(dx_cat==dx) %>%
-    group_by(year, encounter_id) %>%
-    summarize(bene_id=unique(bene_id), age=unique(age), sex=unique(sex), race=unique(race), dual=unique(dual), n_cc=unique(n_cc), region=unique(region),
-              y=a %in% antibiotic) %>%
-    ungroup() %>%
+  bind_rows(
+    dx_to_pde_single %>% filter(dx_cat==dx) %>% mutate(y=antibiotic==a),
+    dx_to_pde_multi %>% filter(dx_cat==dx) %>% rename(y = !!a)
+  ) %>%
     glm_f(frmla, family='binomial') %>%
     sandwich_tidy
+}
+
+dxs = c('gi_t3', 'uti_t3', 'uri', 'other_resp', 'gi', 'asthma',
+        'ssti_t3', 'uti', 'ssti', 'bronchitis', 'misc_t3', 'om', 'pharyngitis',
+        'pneumonia', 'misc_bacterial', 'sinusitis', 'flu', 'om_t3', 'acne', 'viral_flu')
+
+for (dx in dxs) {
+  cat(str_interp("${dx}\n"))
+  this_single = dx_to_pde_single %>% filter(dx_cat==dx)
+  this_multi = dx_to_pde_multi %>% filter(dx_cat==dx)
+  for (abx in top_abx) {
+    cat(str_interp(" : ${abx}\n"))
+    bind_rows(
+      this_single %>% mutate(y=antibiotic==a),
+      this_multi %>% rename(y=!!a)
+    ) %>%
+      glm_f(frmla, family='binomial') %>%
+      sandwich_tidy() %>%
+      write_tsv(str_interp('tables2/model-${abx}-${dx}.tsv'))
+  }
 }
 
 dx_to_pde_trends = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
