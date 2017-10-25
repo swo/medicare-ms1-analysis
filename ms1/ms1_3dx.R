@@ -128,27 +128,33 @@ encounter = dx_to_pde %>%
   select(year, bene_id, encounter_id, dx_cat) %>%
   distinct()
 
-dx_to_pde_single = dx_to_pde %>% filter(!multidrug)
+dxs = c('gi_t3', 'uti_t3', 'uri', 'other_resp', 'gi', 'asthma',
+        'ssti_t3', 'uti', 'ssti', 'bronchitis', 'misc_t3', 'om', 'pharyngitis',
+        'pneumonia', 'misc_bacterial', 'sinusitis', 'flu', 'om_t3', 'acne', 'viral_flu')
+
+dx_to_pde_single = dx_to_pde %>%
+  filter(!multidrug, dx_cat %in% dxs) %>%
+  select(dx_cat, antibiotic, year, age, n_cc, sex, race, dual, region)
 dx_to_pde_multi = dx_to_pde %>%
-  filter(multidrug) %>%
+  filter(multidrug, dx_cat %in% dxs) %>%
   group_by(encounter_id) %>%
   mutate(antibiotic_id=1:n()) %>%
   ungroup() %>%
+  select(dx_cat, antibiotic_id, antibiotic, year, age, n_cc, sex, race, dual, region) %>%
   mutate(dummy=TRUE) %>%
-  spread(antibiotic, dummy, fill=FALSE)
+  spread(antibiotic, dummy, fill=FALSE) %>%
+  select(-antibiotic_id)
+
+select_covariates = function(df) select(df, year, age, n_cc, sex, race, dual, region, y)
 
 dx_to_pde_trend_f = function (a, dx) {
   bind_rows(
-    dx_to_pde_single %>% filter(dx_cat==dx) %>% mutate(y=antibiotic==a),
-    dx_to_pde_multi %>% filter(dx_cat==dx) %>% rename(y = !!a)
+    dx_to_pde_single %>% filter(dx_cat==dx) %>% mutate(y=antibiotic==a) %>% select_covariates(),
+    dx_to_pde_multi %>% filter(dx_cat==dx) %>% rename(y = !!a) %>% select_covariates()
   ) %>%
     glm_f(frmla, family='binomial') %>%
     sandwich_tidy
 }
-
-dxs = c('gi_t3', 'uti_t3', 'uri', 'other_resp', 'gi', 'asthma',
-        'ssti_t3', 'uti', 'ssti', 'bronchitis', 'misc_t3', 'om', 'pharyngitis',
-        'pneumonia', 'misc_bacterial', 'sinusitis', 'flu', 'om_t3', 'acne', 'viral_flu')
 
 for (dx in dxs) {
   cat(str_interp("${dx}\n"))
@@ -157,8 +163,8 @@ for (dx in dxs) {
   for (abx in top_abx) {
     cat(str_interp(" : ${abx}\n"))
     bind_rows(
-      this_single %>% mutate(y=antibiotic==a),
-      this_multi %>% rename(y=!!a)
+      dx_to_pde_single %>% filter(dx_cat==dx) %>% mutate(y=antibiotic==abx) %>% select_covariates(),
+      dx_to_pde_multi %>% filter(dx_cat==dx) %>% rename(y=!!abx) %>% select_covariates()
     ) %>%
       glm_f(frmla, family='binomial') %>%
       sandwich_tidy() %>%
