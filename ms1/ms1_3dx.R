@@ -26,23 +26,23 @@ sandwich_tidy = function(m) tidy(lmtest::coeftest(m, vcov=sandwich::vcovHC(m, ty
 frmla = y ~ year + age + n_cc + sex + race + dual + region
 
 # count total dx's and hcpcs counts
-read_years(2011:2014, '../../data/dx_hcpcs_count_%i.tsv') %>%
+read_years(2011:2014, 'raw_data/dx_hcpcs_count_%i.tsv') %>%
   output_table('hcpcs_count')
 
 # count dx by categories
-read_years(2011:2014, '../../data/dx_cat_count_%i.tsv') %>%
+read_years(2011:2014, 'raw_data/dx_cat_count_%i.tsv') %>%
   rename(dx_cat=diagnosis_category) %>%
   left_join(bene %>% count(year) %>% rename(n_bene=n), by='year') %>%
   output_table('dx_cat_counts')
 
 # count many PDEs have any dx or E&M dx upstream
-read_years(2011:2014, '../../data/dx_any_pde_%i.tsv') %>%
+read_years(2011:2014, 'raw_data/dx_any_pde_%i.tsv') %>%
   mutate_at(vars(has_dx, has_em_dx), as.logical) %>%
   count(year, has_dx, has_em_dx) %>%
   output_table('pde_with_dx_upstream')
 
 # which dx's contribute to each abx?
-dx_from_pde = read_years(2011:2014, '../../data/dx_from_pde_%i.tsv') %>%
+dx_from_pde = read_years(2011:2014, 'raw_data/dx_from_pde_%i.tsv') %>%
   rename(bene_id=BENE_ID, pde_id=PDE_ID, dx_cat=diagnosis_category)
 
 dxs = c('gi_t3', 'uti_t3', 'not_infectious', 'uri', 'other_resp', 'gi', 'asthma',
@@ -74,7 +74,7 @@ dx_from_pde_table = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
   output_table('dx_from_pde')
 
 # appropriateness
-fd = read_tsv('../../db/fd_icd/fd_categories.tsv') %>%
+fd = read_tsv('db/fd_categories.tsv') %>%
   select(dx_cat=diagnosis_category, tier)
 
 pde_approp = dx_from_pde %>%
@@ -101,13 +101,13 @@ inapprop_trend = pde_approp %>%
 
 # what are trends in prescribing practice?
 dup_run = function(x) c(FALSE, x[-1] == x[-length(x)]) | c(x[-1] == x[-length(x)], FALSE)
-dx_to_pde = read_years(2011:2014, '../../data/dx_to_pde_%i.tsv') %>%
+dx_to_pde = read_years(2011:2014, 'raw_data/dx_to_pde_%i.tsv') %>%
   replace_na(list(antibiotic='no_abx')) %>%
   rename(bene_id=BENE_ID, dx_cat=diagnosis_category) %>%
   # lump abx outside of top 10 into "other"
   # look for the (few) encounters with more than one drug
-  mutate(antibiotic=fct_other(factor(antibiotic), keep=c('no_abx', top_abx)),
-         multidrug=dup_run(encounter_id)) %>%
+  mutate(antibiotic=fct_other(factor(antibiotic), keep=c('no_abx', top_abx))) %>%
+  mutate(multidrug=dup_run(encounter_id)) %>%
   left_join(bene, by=c('year', 'bene_id'))
 
 # count how many of each encounter type there are in a year
@@ -131,7 +131,9 @@ encounter = dx_to_pde %>%
 dx_to_pde_single = dx_to_pde %>% filter(!multidrug)
 dx_to_pde_multi = dx_to_pde %>%
   filter(multidrug) %>%
-  distinct() %>%
+  group_by(encounter_id) %>%
+  mutate(antibiotic_id=1:n()) %>%
+  ungroup() %>%
   mutate(dummy=TRUE) %>%
   spread(antibiotic, dummy, fill=FALSE)
 

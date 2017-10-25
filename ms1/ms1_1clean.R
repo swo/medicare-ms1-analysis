@@ -13,7 +13,7 @@ regions = read_tsv('db/census-regions/census-regions.tsv') %>%
 
 load_data = function(year) {
   # pde data
-  pde = read_tsv(sprintf('../../data/pde_%i.tsv', year)) %>%
+  pde = read_tsv(sprintf('raw_data/pde_%i.tsv', year)) %>%
     lower_names() %>%
     mutate(pde_date=dmy(pde_date)) %>%
     select(bene_id, pde_id, pde_date, antibiotic, fill_num) %>%
@@ -32,7 +32,7 @@ load_data = function(year) {
     rename(n_claims_firstfill=n)
 
   # join the summary PDE
-  bene = read_tsv(sprintf('../../data/bene_%i.tsv', year)) %>%
+  bene = read_tsv(sprintf('raw_data/bene_%i.tsv', year)) %>%
     lower_names() %>%
     left_join(regions, by='state') %>%
     left_join(n_claims, by='bene_id') %>%
