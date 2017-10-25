@@ -8,7 +8,7 @@ lower_names = function(df) {
   rename(df, !!!setNames(as.list(ns), sapply(ns, tolower)))
 }
 
-regions = read_tsv('../../db/census-regions/census-regions.tsv') %>%
+regions = read_tsv('db/census-regions/census-regions.tsv') %>%
   select(state, region)
 
 load_data = function(year) {
