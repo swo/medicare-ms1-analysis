@@ -42,13 +42,18 @@ n_unique_bene = bene$bene_id %>%
 
 # pde
 pde = read_tsv('data/pde.tsv') %>%
+  mutate(first_fill=fill_num==0) %>%
   left_join(bene, by=c('year', 'bene_id'))
 
-pde_firstfill = pde %>% filter(fill_num==0)
+pde_firstfill = pde %>% filter(first_fill)
 
-# the top few inidividual antibiotics
+# count first fills vs. refills
+pde %>%
+  count(first_fill) %>%
+  output_table('claims_by_fill')
+
 claims_by_abx = pde %>%
-  count(year, antibiotic) %>% ungroup() %>%
+  count(year, antibiotic) %>%
   left_join(select(totals, year, n_bene), by='year') %>%
   mutate(cpkp=n*1000/n_bene) %T>%
   output_table('claims_by_abx')
@@ -113,6 +118,7 @@ bind_rows(
   bene %>% filter(between(age, 65, 75)) %>% reduced_model('age', 'age65_75'),
   bene %>% filter(between(age, 76, 85)) %>% reduced_model('age', 'age76_85'),
   bene %>% filter(between(age, 86, 95)) %>% reduced_model('age', 'age86_95'),
+  bene %>% filter(age >= 96) %>% reduced_model('age', 'age96_'),
   bene %>% filter(sex=='female') %>% reduced_model('sex', 'female'),
   bene %>% filter(sex=='male') %>% reduced_model('sex', 'male'),
   bene %>% filter(race=='white') %>% reduced_model('race', 'white'),
