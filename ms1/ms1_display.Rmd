@@ -32,11 +32,6 @@ totals = read_tsv('tables/totals.tsv') %>%
 
 claims_by_abx = read_tsv('tables/claims_by_abx.tsv')
 
-n_unique_bene = scan('tables/n_unique_bene.tsv')
-n_million_unique_bene = round(scan('tables/n_unique_bene.tsv') / 1e6, 2)
-n_pde = sum(claims_by_abx$n)
-n_million_pde = round(n_pde / 1e6, 2)
-
 est2pct = function(x) (exp(x) - 1)*100
 
 mult_est = function(df, m) {
@@ -66,11 +61,20 @@ bind_rows(claims_by_abx, claims_overall) %>%
   kable
 ```
 
-There are `r n_million_unique_bene` million unique beneficiaries and `r n_million_pde` million PDEs across all study years.
-
 # Beneficiary characteristics
 
-There were `r prettyNum(n_unique_bene, big.mark=',')` unique beneficiaries and `r prettyNum(n_pde, big.mark=',')` PDEs.
+```{r unique_bene_pde}
+round_millions = function(x) round(x / 1e6, 2)
+pn = function(x) prettyNum(x, big.mark=',')
+
+n_unique_bene = scan('tables/n_unique_bene.tsv')
+
+claims_by_fill = read_tsv('tables/claims_by_fill.tsv')
+n_pde = sum(claims_by_fill$n)
+n_refills = claims_by_fill %>% filter(!first_fill) %$% n
+```
+
+There were `r round_millions(n_unique_bene)` million unique beneficiaries. They had `r round_millions(n_pde)` million PDEs, of which `r round_millions(n_refills)` million were refills.
 
 A star indicates that the trend (*t*-test for mean difference between years equal to zero) is significant after multiple hypothesis correction. A dot indicates significance ($p < 0.05$) before multiple hypothesis correction. Mean age decreased during the study.
 
@@ -161,9 +165,9 @@ claims_by_top_abx %>%
   ggtitle('Unadjusted consumption, next 5')
 ```
 
-## Claims by age group
+## Claims by demography
 
-```{r claims_by_age}
+```{r claims_by_demography}
 change_demog = read_tsv('tables/model_overall_demography.tsv') %>%
   mutate(estimate=3*estimate,
          std.error=sqrt(3)*std.error) %>%
@@ -188,7 +192,8 @@ claims_by_age = read_tsv('tables/claims_by_age.tsv') %>%
   filter(year %in% c(2011, 2014)) %>%
   mutate(name=case_when(between(.$age, 65, 75) ~ 'age65_75',
                         between(.$age, 76, 85) ~ 'age76_85',
-                        between(.$age, 86, 95) ~ 'age86_95')) %>%
+                        between(.$age, 86, 95) ~ 'age86_95',
+                        .$age >= 96 ~ 'age96_')) %>%
   group_by(year, name) %>%
   summarize_at(vars(n_bene, n_claims), sum) %>%
   ungroup() %>%
@@ -209,83 +214,111 @@ bind_rows(claims_by_age,
   kable
 ```
 
+That last table could also use an "overall" row:
+
+```{r}
+claims_overall %>%
+  filter(year %in% c(2011, 2014)) %>%
+  mutate(cpkp=round(cpkp)) %>%
+  kable
+```
+
 # Adjusted consumption changes by drug
 
 Adjusted changes were computed using a Poisson regression predicting claims per capita. The unit of analysis were individual beneficiaries in each year. The covariates in the regression were age, number of chronic conditions, dual eligibility, sex, race (white or not), and region.
 
 ## By drug
 
-### All fills
+### Trends in appropriateness
 
-Bars show adjusted trends in usage, including refills. The dots shows unadjusted trends.
+Just by eye, it looks like the changes in appropriateness are small.
 
-```{r approp_changes}
-# read in the raw and trend data
-pde_approp_table = read_tsv('tables/pde_approp_table.tsv') %>%
-  (function(df) bind_rows(
-    df,
-    df %>% group_by(year, tier) %>%
-      summarize(n=sum(n)) %>%
-      mutate(antibiotic='overall')
-  )) %>%
-  filter(antibiotic %in% c(top_abx, 'overall')) %>%
+```{r tier_graph}
+pde_tier_table = read_tsv('tables/pde_approp_table.tsv') %>%
   group_by(year, antibiotic) %>%
   mutate(f=n/sum(n)) %>%
   ungroup()
 
-pde_inapprop_risk_2011 = pde_approp_table %>%
-  # add up tiers 3 and 4
-  filter(year==2011, tier > 2) %>%
-  group_by(antibiotic) %>%
-  summarize(risk_2011=sum(f))
+pde_tier_table %>%
+  filter(antibiotic %in% top_abx) %>%
+  ggplot(aes(x=factor(year), y=f, fill=factor(tier))) +
+  geom_bar(stat='identity') +
+  facet_grid(~antibiotic) +
+  theme_classic()
+```
+
+```{r approp_trends}
+raw_adjusted_changes = read_tsv('tables/model_abx.tsv') %>%
+  rename(antibiotic=name) %>%
+  filter(term=='year') %>%
+  mutate(estimate=3*estimate,
+         std.error=sqrt(3)*std.error)
+
+# fraction inappropriate in 2011
+f_i = pde_tier_table %>%
+  filter(year==2011) %>%
+  mutate(inapp=tier==3) %>%
+  group_by(inapp) %>%
+  summarize(n=sum(n)) %>%
+  mutate(f=n/sum(n)) %>%
+  filter(inapp) %$%
+  f
+
+# fold change in consumption
+pde_trend = raw_adjusted_changes %>%
+  filter(antibiotic=='overall') %>%
+  # multiplications by 3 done above
+  mutate(ci=1.96*std.error,
+         rr=exp(estimate),
+         rr_lo=exp(estimate-ci),
+         rr_hi=exp(estimate+ci))
+
+d_c = pde_trend$rr
+d_c_lo = pde_trend$rr_lo
+d_c_hi = pde_trend$rr_hi
 
 risk_ratio_f = function(odr, p) odr / (1 + p * (odr - 1))
 
-adjusted_changes_firstfill = read_tsv('tables/model_abx_firstfill.tsv') %>%
-  rename(antibiotic=name) %>%
+pde_inapprop_trend = read_tsv('tables/pde_inapprop_trend.tsv') %>%
   filter(term=='year') %>%
   mutate(estimate=3*estimate,
-         std.error=sqrt(3)*std.error) %>%
-  model_ci() %>%
-  select(antibiotic, pct_change, ci_low, ci_high) %>%
-  arrange(pct_change) %>%
-  mutate(antibiotic=fct_relevel(fct_inorder(factor(antibiotic)), 'overall', after=Inf))
-
-# compute risk ratios
-pde_inapprop_trends = read_tsv('tables/pde_inapprop_trends.tsv') %>%
-  filter(term=='year', antibiotic != 'Other') %>%
-  mutate(estimate=exp(3*estimate), # odds ratio over the whole time period
          std.error=sqrt(3)*std.error,
-         adj.p=p.adjust(p.value, method='BH'),
          ci=1.96*std.error,
-         ci_low=estimate-ci,
-         ci_high=estimate+ci) %>%
-  left_join(pde_inapprop_risk_2011, by='antibiotic') %>%
-  # convert OR to RR (i.e., adjusted change)
-  mutate_at(vars(estimate, ci_low, ci_high), function(x) risk_ratio_f(x, .$risk_2011 - 1)) %>%
-  # convert to percents
-  mutate_at(vars(estimate, ci_low, ci_high), function(x) (x - 1)*100) %>%
-  select(antibiotic, model, pct_change=estimate, ci_low, ci_high, adj.p) %>%
-  # now estimate is adjusted change in INappropriate prescribing
-  mutate(antibiotic=factor(antibiotic, levels=levels(adjusted_changes_firstfill$antibiotic), ordered=TRUE))
+         or=exp(estimate),
+         or_lo=exp(estimate-ci),
+         or_hi=exp(estimate+ci))
+
+d_f = risk_ratio_f(pde_inapprop_trend$or, f_i)
+d_f_lo = risk_ratio_f(pde_inapprop_trend$or_lo, f_i)
+d_f_hi = risk_ratio_f(pde_inapprop_trend$or_hi, f_i)
+
+rr2pct = function(x) round((x - 1) * 100, 2)
+
+inapprop_changes = data_frame(
+  antibiotic=c('overall_inapp', 'overall_app'),
+  pct_change=c(d_c * d_f, (1.0 - d_f * f_i) / (1.0 - f_i) * d_c),
+  ci_low=c(d_c_lo * d_f_lo, (1.0 - d_f_hi * f_i) / (1.0 - f_i) * d_c_lo),
+  ci_high=c(d_c_hi * d_f_hi, (1.0 - d_f_lo * f_i) / (1.0 - f_i) * d_c_hi)
+) %>%
+  mutate_if(is.numeric, rr2pct)
 ```
 
+Inappropriate prescribing changed by `r rr2pct(d_c * d_f)`% (95% CI `r rr2pct(d_c_lo * d_f_lo)` -- `r rr2pct(d_c_hi * d_f_hi)`). Appropriate prescribing changed by `r rr2pct((1.0 - d_f * f_i) / (1.0 - f_i) * d_c)`% (95% CI `r rr2pct((1.0 - d_f_hi * f_i) / (1.0 - f_i) * d_c_lo)` -- `r rr2pct((1.0 - d_f_lo * f_i) / (1.0 - f_i) * d_c_hi)`).
+
+### All fills
+
+Bars show adjusted trends in usage, including refills. The dots shows unadjusted trends.
+
 ```{r adjusted_changes}
-adjusted_changes = read_tsv('tables/model_abx.tsv') %>%
-  rename(antibiotic=name) %>%
-  filter(term=='year') %>%
-  mutate(estimate=3*estimate,
-         std.error=sqrt(3)*std.error) %>%
+adjusted_changes = raw_adjusted_changes %>%
   model_ci() %>%
-  select(antibiotic, pct_change, ci_low, ci_high) %>%
-  arrange(pct_change) %>%
-  mutate(antibiotic=fct_inorder(antibiotic),
-         antibiotic=fct_relevel(antibiotic, 'overall', after=Inf))
+  arrange(desc(pct_change)) %>%
+  select(antibiotic, pct_change, ci_low, ci_high)
 
 adjusted_change_levels = adjusted_changes %>%
-  filter(antibiotic != 'overall') %>%
-  pull(antibiotic) %>%
-  as.character
+  filter(antibiotic != 'overall') %$%
+  { c('overall', 'overall_app', 'overall_inapp', antibiotic) } %>%
+  rev
 
 unadjusted_changes = bind_rows(claims_by_abx, claims_overall) %>%
   filter(antibiotic %in% c('overall', top_abx), year %in% c(2011, 2014)) %>%
@@ -297,11 +330,9 @@ unadjusted_changes = bind_rows(claims_by_abx, claims_overall) %>%
   select(antibiotic, pct_change)
 
 adjusted_changes %>%
+  bind_rows(inapprop_changes) %>%
   mutate(antibiotic=as.character(antibiotic)) %>%
-  bind_rows(pde_inapprop_trends %>%
-              filter(antibiotic=='overall', model=='12/3') %>%
-              mutate(antibiotic='overall_inapp')) %>%
-  mutate(antibiotic=factor(antibiotic, levels=c(adjusted_change_levels, 'overall_inapp', 'overall'))) %>%
+  mutate(antibiotic=factor(antibiotic, levels=adjusted_change_levels)) %>%
   ggplot(aes(x=antibiotic, y=pct_change, ymin=ci_low, ymax=ci_high)) +
   geom_bar(stat='identity', fill=NA, color='black') +
   geom_errorbar(width=0.5) +
@@ -315,42 +346,6 @@ adjusted_changes %>%
 ```
 
 The bars show the adjusted change in consumption. Black circles show unadjusted change in consumption. Blue shows the adjusted change in inappropriate prescribing.
-
-### First fills
-
-Bars show the adjusted change in prescribing, considering only first fills. The blue dots show the change in inappropriate prescribing (which only includes first fills).
-
-```{r}
-ggplot(adjusted_changes_firstfill, aes(x=antibiotic, y=pct_change, ymin=ci_low, ymax=ci_high, color=model)) +
-  geom_hline(yintercept=0) + 
-  geom_bar(aes(color=NULL), stat='identity', fill=NA, color='black') +
-  geom_errorbar(aes(color=NULL), width=0.5) +
-  geom_point(dat=pde_inapprop_trends, shape=1) +
-  geom_errorbar(dat=pde_inapprop_trends, width=0.25) +
-  coord_flip() +
-  xlab('') +
-  ylab('adjusted change from 2011 to 2014 (%)') +
-  scale_y_continuous(limits=c(-22, 35), breaks=c(-20, -10, 0, 10, 20, 30)) +
-  theme_classic() +
-  theme(axis.title.x = element_text(size=16),
-        axis.text = element_text(size=16))
-```
-
-```{r}
-bind_rows(
-  unadjusted_changes %>% mutate(src='unadjusted, all fills'),
-  adjusted_changes %>% mutate(src='adjusted, all fills'),
-  adjusted_changes_firstfill %>% mutate(src='adjusted, first fills')
-) %>%
-  mutate(antibiotic=factor(antibiotic, levels=c(adjusted_change_levels, 'overall'))) %>%
-  ggplot(aes(x=antibiotic, y=pct_change, ymin=ci_low, ymax=ci_high, color=src)) +
-  geom_hline(yintercept=0, color='black') +
-  geom_point(shape=1) +
-  geom_errorbar(width=0.5) +
-  coord_flip() +
-  xlab('') + ylab('change from 2011 to 2014 (%)') +
-  theme_minimal()
-```
 
 ### Adjusted changes in usage table
 
@@ -369,49 +364,6 @@ adjusted_levo_increase = adjusted_changes %>%
 ```
 
 Consumption of azithromycin fell by `r adjusted_az_decrease`% over the entire study period. Levofloxacin consumption increased by `r adjusted_levo_increase`% over the entire study period.
-
-### Adjusted changes in inappropriate prescribing
-
-```{r pde_approp_trends_table}
-pde_inapprop_trends %>% kable
-```
-
-## Fluoroquinolones
-
-Consumption of ciprofloxacin is slightly decreasing, and consumption of levofloxacin is increasing. How does fluoroquinolone consumption overall change?
-
-```{r fq_table}
-fq_names = claims_by_abx %>%
-  filter(str_detect(antibiotic, 'floxacin')) %>%
-  group_by(antibiotic) %>%
-  summarize(n=sum(n)) %>%
-  arrange(desc(n)) %$%
-  antibiotic
-
-fq_table = claims_by_abx %>%
-  filter(antibiotic %in% fq_names) %>%
-  group_by(year) %>%
-  summarize(cpkp=sum(cpkp))
-
-fq_change_pct_unadj = fq_table %>%
-  spread(year, cpkp) %$%
-  { (`2014`-`2011`)/`2011` } %>%
-  { round(100*., 2) }
-```
-
-```{r fq_trends}
-fq_trends = read_tsv('tables/model_fq.tsv') %>%
-  mult_est(3) %>%
-  model_ci() %>%
-  select(term, pct_change, ci_low, ci_high, p.value)
-
-fq_change_adj = fq_trends %>%
-  filter(term=='year') %>% 
-  mutate_at(vars(pct_change, ci_low, ci_high), function(x) round(x, 2)) %$%
-  str_interp("${pct_change}% (${ci_low}% -- ${ci_high}%)")
-```
-
-Overall, fluoroquinolones changed by a tiny amount, `r fq_change_pct_unadj`% (unadjusted). The adjusted change is `r fq_change_adj` (%) over this period. This included `r fq_names`.
 
 # Prescribing practice
 
@@ -453,37 +405,9 @@ read_tsv('tables/pde_with_dx_upstream.tsv') %>%
   kable
 ```
 
-## Trends in appropriateness
-
-Just by eye, it looks like the changes in appropriateness are small.
-
-```{r approp_graph}
-pde_approp_table %>%
-  #filter(year %in% c(2011, 2014)) %>%
-  ggplot(aes(x=factor(year), y=f, fill=factor(tier))) +
-  geom_bar(stat='identity') +
-  facet_grid(~antibiotic) +
-  theme_classic()
-```
-
-```{r pde_approp_table}
-pde_approp_table %>%
-  mutate(approp=tier <= 2) %>%
-  group_by(approp) %>%
-  summarize(n=sum(n)) %>%
-  mutate(f=n/sum(n)) %>%
-  kable
-```
-
-I'll focus on tier 1 and 2 because the SSTI drugs don't have common tier 1 uses. I'll call this "high tier" prescribign. If prescribing had changed in an optimal way, only low-tier prescribing would have declined, or only high-tier prescribing would have been added.
-
-If a drug declined by $X$, then the optimal change in the high tier fraction would be $1/(1-X) = 1+X + \mathcal{O}(X^2)$. For example, overall prescribing fell by about 5%, and high-tier prescribing increased by 2.5%. Azithromycin prescribing fell by about 20%, and high-tier azithro prescribing rose by only 6%.
-
-I'm not sure what to make of these results, because they depend strongly on how you define the tiers. If you use only tier 1 to describe "appropriate", then levofloxacin has the biggest decline in appropriateness, but if you use tiers 1 and 2, then it's change isn't significant.
-
 ## Common diagnoses by drug
 
-For each drug, I asked what fraction of PDEs are associated with each diagnosis. This gives you a sense that, say, the diagnoses that give rise to azithromycin are bronchitis, URI, etc. The values are percents in 2011.
+For each drug, I asked what fraction of PDEs are associated with each diagnosis. This gives you a sense that, say, the diagnoses that give rise to azithromycin are bronchitis, URI, etc. The values are percents in 2011. A row can add up to more than 100% because one PDE can be associated with multiple diagnoses.
 
 ```{r dx_from_pde}
 dx_from_pde = read_tsv('tables/dx_from_pde.tsv') %>% 
@@ -504,7 +428,7 @@ Second, I do logistic regressions. The unit of analysis is the diagnosis. The ou
 ```{r dx_to_pde}
 dx_to_pde_unadj = read_tsv('tables/dx_to_pde_table.tsv') %>%
   filter(year %in% c(2011, 2014)) %>%
-  select(dx_cat, antibiotic, year, f) %>%
+  select(dx_cat, antibiotic, year, f=f_encounters_with_abx) %>%
   spread(year, f)
 
 dx_to_pde_adj = read_tsv('tables/dx_to_pde_trends.tsv') %>%
@@ -515,8 +439,6 @@ dx_to_pde_adj = read_tsv('tables/dx_to_pde_trends.tsv') %>%
          ci_high=estimate+ci) %>%
   select(dx_cat, antibiotic, estimate, ci_low, ci_high) %>%
   arrange(dx_cat, antibiotic)
-
-risk_ratio_f = function(odr, p) odr / (1 + p * (odr - 1))
 
 dx_to_pde = inner_join(dx_to_pde_unadj,
                        dx_to_pde_adj,
