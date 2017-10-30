@@ -303,8 +303,6 @@ inapprop_changes = data_frame(
   mutate_if(is.numeric, rr2pct)
 ```
 
-Inappropriate prescribing changed by `r rr2pct(d_c * d_f)`% (95% CI `r rr2pct(d_c_lo * d_f_lo)` -- `r rr2pct(d_c_hi * d_f_hi)`). Appropriate prescribing changed by `r rr2pct((1.0 - d_f * f_i) / (1.0 - f_i) * d_c)`% (95% CI `r rr2pct((1.0 - d_f_hi * f_i) / (1.0 - f_i) * d_c_lo)` -- `r rr2pct((1.0 - d_f_lo * f_i) / (1.0 - f_i) * d_c_hi)`).
-
 ### All fills
 
 Bars show adjusted trends in usage, including refills. The dots shows unadjusted trends.
@@ -317,8 +315,7 @@ adjusted_changes = raw_adjusted_changes %>%
 
 adjusted_change_levels = adjusted_changes %>%
   filter(antibiotic != 'overall') %$%
-  { c('overall', 'overall_app', 'overall_inapp', antibiotic) } %>%
-  rev
+  { c('overall', 'overall_app', 'overall_inapp', antibiotic) }
 
 unadjusted_changes = bind_rows(claims_by_abx, claims_overall) %>%
   filter(antibiotic %in% c('overall', top_abx), year %in% c(2011, 2014)) %>%
@@ -332,9 +329,9 @@ unadjusted_changes = bind_rows(claims_by_abx, claims_overall) %>%
 adjusted_changes %>%
   bind_rows(inapprop_changes) %>%
   mutate(antibiotic=as.character(antibiotic)) %>%
-  mutate(antibiotic=factor(antibiotic, levels=adjusted_change_levels)) %>%
+  mutate(antibiotic=factor(antibiotic, levels=rev(adjusted_change_levels))) %>%
   ggplot(aes(x=antibiotic, y=pct_change, ymin=ci_low, ymax=ci_high)) +
-  geom_bar(stat='identity', fill=NA, color='black') +
+  geom_bar(stat='identity', fill='white', color='black') +
   geom_errorbar(width=0.5) +
   coord_flip() +
   xlab('') +
@@ -345,12 +342,16 @@ adjusted_changes %>%
         axis.text = element_text(size=16))
 ```
 
-The bars show the adjusted change in consumption. Black circles show unadjusted change in consumption. Blue shows the adjusted change in inappropriate prescribing.
+The bars show the adjusted change in consumption.
 
 ### Adjusted changes in usage table
 
 ```{r adjusted_changes_table}
-adjusted_changes %>% arrange(desc(antibiotic)) %>% kable
+adjusted_changes %>%
+  bind_rows(inapprop_changes) %>%
+  mutate(antibiotic=factor(antibiotic, levels=adjusted_change_levels)) %>%
+  arrange(antibiotic) %>%
+  kable
 
 adjusted_az_decrease = adjusted_changes %>%
   filter(antibiotic=='azithromycin') %>%
