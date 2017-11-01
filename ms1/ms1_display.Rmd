@@ -9,334 +9,163 @@ knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='fig/', dev=c('png', 
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE,
                       error=FALSE, autodep=TRUE)
 import::from(knitr, kable)
-import::from(tools, md5sum)
-library(forcats)
 ```
 
-# Abstract
+# Population characteristics
 
-```{r abstract, cache.extra=md5sum('tables/model_abx.tsv')}
-pctize = function(df, denom_name) {
-  for (n_name in Filter(function(x) str_detect(x, '^n_'), names(df))) {
-    pct_name = str_replace(n_name, '^n_', 'pct_')
-    df[[pct_name]] = df[[n_name]] / df[[denom_name]] * 100
-  }
-  df
-}
+```{r pop_chars}
+pop_chars = read_tsv('tables/pop_chars.tsv') %>%
+  select(-sem_age, -sem_n_cc) %>%
+  mutate_at(vars(n_female:n_region_midwest), function(x) x / .$n_bene * 100)
 
-totals = read_tsv('tables/totals.tsv') %>%
-  pctize('n_bene') %>%
-  select(year, n_bene, mean_age, sd_age, mean_n_cc, sd_n_cc,
-         pct_female, pct_white, pct_dual,
-         pct_region_south, pct_region_midwest, pct_region_northeast, pct_region_west)
-
-claims_by_abx = read_tsv('tables/claims_by_abx.tsv')
-
-est2pct = function(x) (exp(x) - 1)*100
-
-mult_est = function(df, m) {
-  mutate(df, estimate=m*estimate, std.error=sqrt(m)*std.error)
-}
-
-model_ci = function(df) {
-  df %>%
-    mutate(pct_change=est2pct(estimate),
-           ci=1.96*std.error,
-           ci_low=est2pct(estimate - ci),
-           ci_high=est2pct(estimate + ci),
-           change_str=sprintf('%.2f (%.2f -- %.2f)', pct_change, ci_low, ci_high))
-}
-
-claims_overall = claims_by_abx %>%
-  select(-n_bene) %>%
-  group_by(year) %>%
-  summarize_at(vars(n, cpkp), sum) %>%
-  mutate(antibiotic='overall')
-
-bind_rows(claims_by_abx, claims_overall) %>%
-  filter(antibiotic %in% c('overall', 'azithromycin', 'levofloxacin'), year %in% c(2011, 2014)) %>%
-  select(antibiotic, year, cpkp) %>%
-  spread(year, cpkp) %>%
-  mutate(pct_change=round(100*(`2014`-`2011`)/`2011`, 2)) %>%
-  kable
-```
-
-# Beneficiary characteristics
-
-```{r unique_bene_pde}
-round_millions = function(x) round(x / 1e6, 2)
-pn = function(x) prettyNum(x, big.mark=',')
-
-n_unique_bene = scan('tables/n_unique_bene.tsv')
-
-claims_by_fill = read_tsv('tables/claims_by_fill.tsv')
-n_pde = sum(claims_by_fill$n)
-n_refills = claims_by_fill %>% filter(!first_fill) %$% n
-```
-
-There were `r round_millions(n_unique_bene)` million unique beneficiaries. They had `r round_millions(n_pde)` million PDEs, of which `r round_millions(n_refills)` million were refills.
-
-A star indicates that the trend (*t*-test for mean difference between years equal to zero) is significant after multiple hypothesis correction. A dot indicates significance ($p < 0.05$) before multiple hypothesis correction. Mean age decreased during the study.
-
-```{r bene_char_table}
 trend_p = function(x) tidy(t.test(diff(x)))$p.value
-totals_trends = totals %>%
-  gather('var', 'val', -year) %>%
-  arrange(var, year, val) %>%
-  group_by(var) %>%
-  summarize(p=trend_p(val)) %>%
-  mutate(adj.p=p.adjust(p, method='BH')) %>%
-  mutate(sig=case_when(.$adj.p < 0.05 ~ '*',
-                       .$p < 0.05 ~ '.',
-                       TRUE ~ ''))
 
-totals %>%
-  pctize('n_bene') %>%
-  select(year, n_bene, mean_age, sd_age, mean_n_cc, sd_n_cc,
-         pct_female, pct_white, pct_dual,
-         pct_region_south, pct_region_midwest, pct_region_northeast, pct_region_west) %>%
-  mutate_at(vars(starts_with('pct_')), function(x) round(x, digits=1)) %>%
-  mutate(n_bene=prettyNum(n_bene, big.mark=','),
-         mean_age=round(mean_age, digits=1)) %>%
-  mutate_at(vars(mean_n_cc, sd_age, sd_n_cc),
-            function(x) round(x, digits=2)) %>% 
-  gather('var', 'val', -year) %>% spread(year, val) %>% # transpose
-  left_join(totals_trends %>% select(var, sig), by='var') %>%
-  kable
+pop_char_trends = pop_chars %>%
+  select(year, n_bene, mean_age, mean_n_cc, n_female:n_region_midwest) %>%
+  gather('key', 'value', -year) %>%
+  arrange(key, year) %>%
+  group_by(key) %>%
+  summarize(p=trend_p(value)) %>%
+  mutate(adj.p=p.adjust(p, method='BH'))
+
+pop_chars %>%
+  mutate(n_bene=prettyNum(n_bene, big.mark=',')) %>%
+  mutate_at(vars(mean_age, sd_age, n_female:n_region_midwest), function(x) format(x, digits=1, nsmall=1)) %>%
+  mutate_at(vars(mean_n_cc, sd_n_cc), function(x) format(x, digits=2, nsmall=2)) %>%
+  gather('key', 'value', -year) %>%
+  spread(year, value) %>%
+  mutate(key=factor(key, levels=names(pop_chars))) %>%
+  arrange(key) %>%
+  kable(caption='Population characteristics')
+
+pop_char_trends %>%
+  kable(caption='Trends in population characteristics')
 ```
 
-# Patterns of consumption
+There are `r scan('tables/n_unique_bene.txt') %>% prettyNum(big.mark=',')` unique beneficiaries.
 
-All consumption rates are reported as claims per thousand people per year (CPKP).
+**swo**: Double-check that number.
 
-## Claims by abx
+There are **swo: PDES** and first fills.
 
-The top 10 antibiotics account for most of the claims:
+# Trends in drug usage
 
-```{r top_10_fraction}
+## Raw trends
+
+```{r raw_drug_trends}
+claims_by_abx = read_tsv('tables/claims_by_abx.tsv') %>%
+  mutate(abx=fct_inorder(factor(abx)))
+
+abx_levels = levels(claims_by_abx$abx)
+
 claims_by_abx %>%
-  group_by(antibiotic) %>%
-  summarize(n=sum(n)) %>%
-  arrange(desc(n)) %>%
-  mutate(f=n/sum(n), cumf=cumsum(f)) %>%
-  head(10) %>%
-  kable
-```
-
-```{r claims_by_abx}
-top_abx = claims_by_abx %>%
-  group_by(antibiotic) %>%
-  summarize(cpkp=mean(cpkp)) %>%
-  arrange(desc(cpkp)) %$%
-  head(antibiotic, 10)
-
-claims_by_top_abx = claims_by_abx %>%
-  bind_rows(claims_overall) %>%
-  mutate(antibiotic=fct_relevel(fct_other(antibiotic, keep=c('overall', top_abx)),
-                                c('overall', top_abx, 'Other'))) %>%
-  group_by(year, antibiotic) %>%
-  summarize_at(vars(n, cpkp), sum) %>% ungroup()
-```
-
-```{r claims_by_top_abx_figs}
-claims_by_top_abx %>%
-  filter(antibiotic=='overall') %>%
+  filter(abx=='overall') %>%
   ggplot(aes(x=year, y=cpkp)) +
   geom_point() + geom_line() +
   scale_y_continuous(limits=c(975, 1525), breaks=c(1000, 1125, 1250, 1375, 1500)) +
   theme_minimal() +
   ggtitle('Unadjusted consumption, all abx')
 
-claims_by_top_abx %>%
-  filter(antibiotic %in% c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin', 'trimethoprim/sulfamethoxazole', 'levofloxacin')) %>%
-  ggplot(aes(x=year, y=cpkp, color=antibiotic)) +
+claims_by_abx %>%
+  filter(abx %in% c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin', 'tmpsmx', 'levofloxacin')) %>%
+  ggplot(aes(x=year, y=cpkp, color=abx)) +
   geom_point() + geom_line() +
   scale_y_continuous(limits=c(0, 250), breaks=c(0, 50, 100, 150, 200, 250)) +
   theme_minimal() +
   ggtitle('Unadjusted consumption, top 5')
 
-claims_by_top_abx %>%
-  filter(antibiotic %in% c('amoxicillin/clavulanate', 'doxycycline', 'nitrofurantoin', 'clindamycin')) %>%
-  ggplot(aes(x=year, y=cpkp, color=antibiotic)) +
+claims_by_abx %>%
+  filter(abx %in% c('amoxclav', 'doxycycline', 'nitrofurantoin', 'clindamycin')) %>%
+  ggplot(aes(x=year, y=cpkp, color=abx)) +
   geom_point() + geom_line() +
   scale_y_continuous(limits=c(0, 100), breaks=c(0, 50, 100)) +
-  #ylim(0, 140) +
   theme_minimal() +
   ggtitle('Unadjusted consumption, next 5')
 ```
 
-## Claims by demography
-
-```{r claims_by_demography}
-change_demog = read_tsv('tables/model_overall_demography.tsv') %>%
-  mutate(estimate=3*estimate,
-         std.error=sqrt(3)*std.error) %>%
-  model_ci() %>%
-  filter(term=='year') %>%
-  select(name, adj_change=change_str)
-
-claims_by = function(x) {
-  read_tsv(str_interp("tables/claims_by_${x}.tsv")) %>%
-    rename_(.dots=list(name=x)) %>%
-    select(name, year, cpkp) %>%
-    filter(year %in% c(2011, 2014)) %>%
-    spread(year, cpkp) %>%
-    mutate(pct_change=round((`2014`-`2011`)/`2011`*100, 2)) %>%
-    mutate_at(vars(`2011`, `2014`), round) %>%
-    mutate(group=x)
-}
-
-# do claims by age group separate
-# this could be baked into the analysis step
-claims_by_age = read_tsv('tables/claims_by_age.tsv') %>%
-  filter(year %in% c(2011, 2014)) %>%
-  mutate(name=case_when(between(.$age, 65, 75) ~ 'age65_75',
-                        between(.$age, 76, 85) ~ 'age76_85',
-                        between(.$age, 86, 95) ~ 'age86_95',
-                        .$age >= 96 ~ 'age96_')) %>%
-  group_by(year, name) %>%
-  summarize_at(vars(n_bene, n_claims), sum) %>%
-  ungroup() %>%
-  mutate(cpkp=1000*n_claims/n_bene) %>%
-  select(year, name, cpkp) %>%
-  spread(year, cpkp) %>%
-  mutate(pct_change=round((`2014`-`2011`)/`2011`*100, 2)) %>%
-  mutate_at(vars(`2011`, `2014`), round) %>%
-  mutate(group='age')
-
-# use a common interface for all the others
-bind_rows(claims_by_age,
-          claims_by('sex'),
-          claims_by('race'),
-          claims_by('region')) %>%
-  left_join(change_demog, by='name') %>%
-  select(group, name, `2011`, `2014`, pct_change, adj_change) %>%
-  kable
-```
-
-That last table could also use an "overall" row:
-
-```{r}
-claims_overall %>%
-  filter(year %in% c(2011, 2014)) %>%
-  mutate(cpkp=round(cpkp)) %>%
-  kable
-```
-
-# Adjusted consumption changes by drug
-
-Adjusted changes were computed using a Poisson regression predicting claims per capita. The unit of analysis were individual beneficiaries in each year. The covariates in the regression were age, number of chronic conditions, dual eligibility, sex, race (white or not), and region.
-
-## By drug
-
-### Trends in appropriateness
-
-Just by eye, it looks like the changes in appropriateness are small.
-
-```{r tier_graph}
-pde_tier_table = dx_pde_counts %>%
-  filter(has_dx_em) %>%
-  
-pde_tier_table = read_tsv('raw_data/dx_pde_counts.tsv') %>%
-  group_by(year, 
-
-pde_tier_table = read_tsv('tables/pde_approp_table.tsv') %>%
-  group_by(year, antibiotic) %>%
-  mutate(f=n/sum(n)) %>%
-  ungroup()
-
-pde_tier_table %>%
-  filter(antibiotic %in% top_abx) %>%
-  ggplot(aes(x=factor(year), y=f, fill=factor(tier))) +
-  geom_bar(stat='identity') +
-  facet_grid(~antibiotic) +
-  theme_classic()
-```
+## Trends in appropriateness
 
 ```{r approp_trends}
-raw_adjusted_changes = read_tsv('tables/model_abx.tsv') %>%
-  rename(antibiotic=name) %>%
-  filter(term=='year') %>%
-  mutate(estimate=3*estimate,
-         std.error=sqrt(3)*std.error)
-
-# fraction inappropriate in 2011
-f_i = pde_tier_table %>%
-  filter(year==2011) %>%
-  mutate(inapp=tier==3) %>%
-  group_by(inapp) %>%
-  summarize(n=sum(n)) %>%
-  mutate(f=n/sum(n)) %>%
-  filter(inapp) %$%
-  f
-
 # fold change in consumption
-pde_trend = raw_adjusted_changes %>%
-  filter(antibiotic=='overall') %>%
-  # multiplications by 3 done above
-  mutate(ci=1.96*std.error,
-         rr=exp(estimate),
-         rr_lo=exp(estimate-ci),
-         rr_hi=exp(estimate+ci))
+pde_trend = drug_trends %>%
+  filter(abx=='overall') %>%
+  mutate(rr=exp(estimate),
+         rr_lo=exp(ci_lo),
+         rr_hi=exp(ci_hi))
 
 d_c = pde_trend$rr
 d_c_lo = pde_trend$rr_lo
 d_c_hi = pde_trend$rr_hi
 
-risk_ratio_f = function(odr, p) odr / (1 + p * (odr - 1))
+# fraction inappropriate in 2011
+risk_ratio_f = function(or, p) or / (1 + p * (or - 1))
+f_i = scan('tables/inapprop_risk_2011.txt')
 
-pde_inapprop_trend = read_tsv('tables/pde_inapprop_trend.tsv') %>%
+inapprop_trend = read_tsv('tables/inapprop_trend.tsv') %>%
   filter(term=='year') %>%
   mutate(estimate=3*estimate,
-         std.error=sqrt(3)*std.error,
-         ci=1.96*std.error,
-         or=exp(estimate),
-         or_lo=exp(estimate-ci),
-         or_hi=exp(estimate+ci))
+         std.error=sqrt(3)*std.error) %>%
+  mutate(ci=1.96*std.error,
+         ci_lo=estimate-ci,
+         ci_hi=estimate+ci) %>%
+  mutate(or   =exp(estimate),
+         or_lo=exp(ci_lo),
+         or_hi=exp(ci_hi)) %>%
+  mutate(rr   =risk_ratio_f(or, f_i),
+         rr_lo=risk_ratio_f(or_lo, f_i),
+         rr_hi=risk_ratio_f(or_hi, f_i))
 
-d_f = risk_ratio_f(pde_inapprop_trend$or, f_i)
-d_f_lo = risk_ratio_f(pde_inapprop_trend$or_lo, f_i)
-d_f_hi = risk_ratio_f(pde_inapprop_trend$or_hi, f_i)
-
+d_f = inapprop_trend$rr
+d_f_lo = inapprop_trend$rr_lo
+d_f_hi = inapprop_trend$rr_hi
+  
 rr2pct = function(x) round((x - 1) * 100, 2)
 
-inapprop_changes = data_frame(
-  antibiotic=c('overall_inapp', 'overall_app'),
-  pct_change=c(d_c * d_f, (1.0 - d_f * f_i) / (1.0 - f_i) * d_c),
-  ci_low=c(d_c_lo * d_f_lo, (1.0 - d_f_hi * f_i) / (1.0 - f_i) * d_c_lo),
-  ci_high=c(d_c_hi * d_f_hi, (1.0 - d_f_lo * f_i) / (1.0 - f_i) * d_c_hi)
+inapprop_trends = data_frame(
+  abx=c('overall_inapp', 'overall_app'),
+  y   =c(d_c    * d_f,    (1.0 - d_f    * f_i) / (1.0 - f_i) * d_c),
+  ymin=c(d_c_lo * d_f_lo, (1.0 - d_f_hi * f_i) / (1.0 - f_i) * d_c_lo),
+  ymax=c(d_c_hi * d_f_hi, (1.0 - d_f_lo * f_i) / (1.0 - f_i) * d_c_hi)
 ) %>%
   mutate_if(is.numeric, rr2pct)
+
+kable(inapprop_changes)
 ```
 
-### All fills
+## Adjusted trends
 
-Bars show adjusted trends in usage, including refills. The dots shows unadjusted trends.
+```{r drug_trends}
+est2pct = function(x) (exp(x) - 1)*100
 
-```{r adjusted_changes}
-adjusted_changes = raw_adjusted_changes %>%
-  model_ci() %>%
-  arrange(desc(pct_change)) %>%
-  select(antibiotic, pct_change, ci_low, ci_high)
+drug_trends = read_tsv('tables/trend_models.tsv') %>%
+  filter(term=='year') %>%
+  arrange(estimate) %>%
+  mutate(estimate=3*estimate,
+         std.error=sqrt(3)*std.error) %>%
+  mutate(ci=1.96*std.error,
+         ci_lo=estimate-ci,
+         ci_hi=estimate+ci) %>%
+  mutate(y=est2pct(estimate),
+         ymin=est2pct(ci_lo),
+         ymax=est2pct(ci_hi)) %>%
+  mutate(change=sprintf('%.2f (%.2f -- %.2f)', y, ymin, ymax))
 
-adjusted_change_levels = adjusted_changes %>%
-  filter(antibiotic != 'overall') %$%
-  { c('overall', 'overall_app', 'overall_inapp', antibiotic) }
+drug_trends %>%
+  select(abx, y, ymin, ymax) %>%
+  mutate_if(is.numeric, function(x) format(x, digits=2, nsmall=2)) %>%
+  kable(caption='Drug trends: Percent change from 2011 to 2014')
 
-unadjusted_changes = bind_rows(claims_by_abx, claims_overall) %>%
-  filter(antibiotic %in% c('overall', top_abx), year %in% c(2011, 2014)) %>%
-  select(antibiotic, year, cpkp) %>%
-  spread(year, cpkp) %>%
-  mutate(change=`2014`-`2011`,
-         fold_change=change/`2011`,
-         pct_change=100*fold_change) %>%
-  select(antibiotic, pct_change)
+abx_trends_levels = drug_trends %>%
+  filter(abx != 'overall') %$%
+  { c('overall', 'overall_app', 'overall_inapp', rev(abx)) }
 
-adjusted_changes %>%
-  bind_rows(inapprop_changes) %>%
-  mutate(antibiotic=as.character(antibiotic)) %>%
-  mutate(antibiotic=factor(antibiotic, levels=rev(adjusted_change_levels))) %>%
-  ggplot(aes(x=antibiotic, y=pct_change, ymin=ci_low, ymax=ci_high)) +
+drug_and_inapprop_trends = drug_trends %>%
+  select(abx, y, ymin, ymax) %>%
+  bind_rows(inapprop_trends) %>%
+  mutate(abx=factor(abx, levels=rev(abx_trends_levels)))
+
+drug_and_inapprop_trends %>%
+  ggplot(aes(x=abx, y=y, ymin=ymin, ymax=ymax)) +
   geom_bar(stat='identity', fill='white', color='black') +
   geom_errorbar(width=0.5) +
   coord_flip() +
@@ -346,31 +175,67 @@ adjusted_changes %>%
   theme_minimal() +
   theme(axis.title.x = element_text(size=16),
         axis.text = element_text(size=16))
+
+drug_and_inapprop_trends %>%
+  arrange(desc(abx)) %>%
+  kable(caption='Percent changes; same data as in figure')
 ```
 
-The bars show the adjusted change in consumption.
+# Supplement
 
-### Adjusted changes in usage table
+## Claims by demography
 
-```{r adjusted_changes_table}
-adjusted_changes %>%
-  bind_rows(inapprop_changes) %>%
-  mutate(antibiotic=factor(antibiotic, levels=adjusted_change_levels)) %>%
-  arrange(antibiotic) %>%
+```{r claims_by_demography}
+claims_by = function(by) {
+  read_tsv(str_interp("tables/claims_by_${by}.tsv")) %>%
+    mutate(group_type=by) %>%
+    rename(group=!!rlang::sym(by)) %>%
+    filter(year %in% c(2011, 2014)) %>%
+    select(group_type, group, year, cpkp) %>%
+    spread(year, cpkp) %>%
+    mutate_at(vars(`2011`, `2014`), round)
+}
+
+trends_by_demography = read_tsv('tables/demography_models.tsv') %>%
+  filter(term=='year') %>%
+  mutate(estimate=3*estimate,
+         std.error=sqrt(3)*std.error) %>%
+  mutate(ci=1.96*std.error,
+         ci_lo=estimate-ci,
+         ci_hi=estimate+ci) %>%
+  mutate(y=est2pct(estimate),
+         ymin=est2pct(ci_lo),
+         ymax=est2pct(ci_hi)) %>%
+  mutate(change=sprintf('%.2f (%.2f -- %.2f)', y, ymin, ymax)) %>%
+  select(group_type, group, change)
+
+# overall trend row
+overall_change = drug_trends %>% filter(abx=='overall') %>% pull(change)
+overall_row = claims_by_abx %>%
+  filter(abx=='overall', year %in% c(2011, 2014)) %>%
+  mutate(cpkp=round(cpkp)) %>%
+  spread(year, cpkp) %>%
+  mutate(group_type='overall', group='overall', change=overall_change) %>%
+  select(group_type, group, `2011`, `2014`, change)
+
+bind_rows(
+  claims_by('age_group'),
+  claims_by('sex'),
+  claims_by('race'),
+  claims_by('region')
+) %>%
+  left_join(trends_by_demography, by=c('group', 'group_type')) %>%
+  bind_rows(overall_row, .) %>%
   kable
-
-adjusted_az_decrease = adjusted_changes %>%
-  filter(antibiotic=='azithromycin') %>%
-  pull(pct_change) %>%
-  round(2)
-
-adjusted_levo_increase = adjusted_changes %>%
-  filter(antibiotic=='levofloxacin') %>%
-  pull(pct_change) %>%
-  round(2)
 ```
 
-Consumption of azithromycin fell by `r adjusted_az_decrease`% over the entire study period. Levofloxacin consumption increased by `r adjusted_levo_increase`% over the entire study period.
+
+
+# ***Earlier content
+
+
+
+### All fills
 
 # Prescribing practice
 
