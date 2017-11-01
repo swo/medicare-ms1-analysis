@@ -10,6 +10,9 @@ bene = read_tsv('raw_data/bene.tsv') %>%
   rename(bene_id=BENE_ID) %>%
   left_join(regions, by='state')
 
+n_unique_bene = length(unique(bene$bene_id)) %T>%
+  write('tables/n_unique_bene.txt')
+
 pde = read_tsv('raw_data/bene_pde.tsv') %>%
   rename(bene_id=BENE_ID) %>%
   rename(overall=n_pde) %>%
@@ -37,9 +40,6 @@ pop_chars = bene %>%
             n_region_northeast=sum(region=='Northeast'),
             n_region_midwest=sum(region=='Midwest')) %T>%
   output_table('pop_chars')
-
-n_unique_bene = length(unique(bene$bene_id)) %T>%
-  write('tables/n_unique_bene.txt')
 
 claims_by_abx = pde %>%
   select(year, overall:clindamycin) %>%
