@@ -91,25 +91,24 @@ trend_models = lapply(top_abx, drug_trend_f) %>%
   output_table('trend_models')
 
 # model overall consumption, but look at individual populations
-population_models = function(term, drop_term=NULL) {
+population_models = function(group_type, covariate=NULL) {
   # prepare the regression formula without that term
   covariates=c('age', 'sex', 'race', 'region')
-  if (is.null(drop_term)) drop_term = term
-  remaining_covariates = covariates[-which(covariates == drop_term)] %>% str_c(collapse=' + ')
+  if (is.null(covariate)) covariate = group_type
+  remaining_covariates = covariates[-which(covariates == covariate)] %>% str_c(collapse=' + ')
   frmla = str_interp("overall ~ year + n_cc + dual + ${remaining_covariates}") %>% as.formula
   
   # get the populations
-  term_values = unique(pde[[term]])
-  
-  lapply(term_values, function(value) {
-    pde[pde[[term]]==value, ] %>%
-      model_f(frmla) %>%
-      mutate(population=str_c(term, '_', value))
-  }) %>% bind_rows()
+  pde %>%
+    rename(group=!!rlang::sym(group_type)) %>%
+    group_by(group) %>%
+    do(model_f(., frmla)) %>%
+    ungroup() %>%
+    mutate(group_type=group_type)
 }
 
 bind_rows(
-  population_models('age_group', drop_term='age'),
+  population_models('age_group', covariate='age'),
   population_models('sex'),
   population_models('race'),
   population_models('region')
