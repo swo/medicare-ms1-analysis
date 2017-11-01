@@ -3,12 +3,8 @@
 # load data
 # NB: I put DC into the South
 
-# bene
-bene = read_tsv('data/bene.tsv') %>%
-  mutate(region=factor(region, levels=c('Northeast', 'West', 'Midwest', 'South')),
-         sex=factor(sex, levels=c('male', 'female')),
-         race=factor(race, levels=c('white', 'black', 'Hispanic', 'other'))) %>%
-  mutate(age=age-1)
+bene = readRDS('data/bene.rds')
+pde = readRDS('data/pde.rds')
 
 output_table = function(x, base) write_tsv(x, sprintf('tables/%s.tsv', base))
 sem = function(x) sd(x) / sqrt(length(x))
@@ -39,13 +35,6 @@ totals = bene %>%
 n_unique_bene = bene$bene_id %>%
   unique %>% length %T>%
   write('tables/n_unique_bene.tsv')
-
-# pde
-pde = read_tsv('data/pde.tsv') %>%
-  mutate(first_fill=fill_num==0) %>%
-  left_join(bene, by=c('year', 'bene_id'))
-
-pde_firstfill = pde %>% filter(first_fill)
 
 # count first fills vs. refills
 pde %>%

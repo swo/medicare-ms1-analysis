@@ -14,11 +14,7 @@ top_abx = c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin',
 output_table = function(x, base) write_tsv(x, sprintf('tables/%s.tsv', base))
 
 # bene
-bene = read_tsv('data/bene.tsv') %>%
-  mutate(region=factor(region, levels=c('Northeast', 'West', 'Midwest', 'South')),
-         sex=factor(sex, levels=c('male', 'female')),
-         race=factor(race, levels=c('white', 'black', 'Hispanic', 'other'))) %>%
-  mutate(age=age-1)
+bene = readRSD('data/bene.rsd')
 
 read_years = function(years, template) {
   lapply(years, function(y) {
@@ -30,41 +26,24 @@ read_years = function(years, template) {
 
 glm_f = function(df, frmla, ...) eval(substitute(function(df2) glm(frmla, data=df2, ...)))(df)
 sandwich_tidy = function(m) tidy(lmtest::coeftest(m, vcov=sandwich::vcovHC(m, type='HC3')))
-  
+
 frmla = y ~ year + age + n_cc + sex + race + dual + region
 
-# count total dx's and hcpcs counts
-read_years(2011:2014, 'raw_data/dx_hcpcs_count_%i.tsv') %>%
-  output_table('hcpcs_count')
+# swo:
+# need to be able to count E&M here
+dx_from_pde = read_tsv('raw_data/dx_from_pde.tsv')
 
-# count many PDEs have any dx or E&M dx upstream
-read_years(2011:2014, 'raw_data/dx_any_pde_%i.tsv') %>%
-  mutate_at(vars(has_dx, has_em_dx), as.logical) %>%
-  count(year, has_dx, has_em_dx) %>%
+dx_from_pde %>%
+  group_by(year, has_encounter, has_em_encounter) %>%
+  summarize(n_pde=sum(n_pde)) %>% ungroup() %>%
   output_table('pde_with_dx_upstream')
 
 # which dx's contribute to each abx?
-dx_from_pde = read_years(2011:2014, 'raw_data/dx_from_pde_%i.tsv') %>%
-  rename(bene_id=BENE_ID, pde_id=PDE_ID, dx_cat=diagnosis_category)
-
-# get a denominator for total number of PDEs
-pde_denom_2011 = dx_from_pde %>%
-  filter(year==2011) %>%
-  filter(antibiotic %in% top_abx) %>%
-  select(pde_id, antibiotic) %>%
-  distinct()
-
-# compute the table just from 2011
-dx_from_pde_table = crossing(antibiotic=top_abx, dx_cat=dxs) %>%
-  group_by(antibiotic, dx_cat) %>%
-  do((function(a, dx) {
-    # how what fraction of PDEs for this abx had this dx upstream?
-    pde_denom_2011 %>%
-      filter(antibiotic==a) %>%
-      left_join(filter(dx_from_pde, antibiotic==a, dx_cat==dx), by='pde_id') %>%
-      mutate(present=!is.na(dx_cat)) %>%
-      count(present)
-  })(.$antibiotic, .$dx_cat)) %T>%
+dx_from_pde %>%
+  group_by(year, antibiotic, dx_cat, has_em_encounter) %>%
+  summarize(n_pde=sum(n_pde),
+            n_pde_with_em_encounter=sum(n_pde[has_em_encounter])) %>%
+  ungroup() %>%
   output_table('dx_from_pde')
 
 # appropriateness

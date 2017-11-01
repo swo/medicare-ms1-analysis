@@ -234,6 +234,12 @@ Adjusted changes were computed using a Poisson regression predicting claims per 
 Just by eye, it looks like the changes in appropriateness are small.
 
 ```{r tier_graph}
+pde_tier_table = dx_pde_counts %>%
+  filter(has_dx_em) %>%
+  
+pde_tier_table = read_tsv('raw_data/dx_pde_counts.tsv') %>%
+  group_by(year, 
+
 pde_tier_table = read_tsv('tables/pde_approp_table.tsv') %>%
   group_by(year, antibiotic) %>%
   mutate(f=n/sum(n)) %>%
@@ -385,15 +391,15 @@ To compute appropriateness, I classified each PDE with the maximum appropriatene
 The fraction of diagnoses that have E&M HCPCS codes:
 
 ```{r hcpcs_count}
-hcpcs_count = read_tsv('tables/hcpcs_count.tsv') %>%
-  group_by(hcpcs_flag) %>%
-  summarize(n_dx=sum(n_dx)) %>%
-  mutate(f=n_dx/sum(n_dx))
+encounter_counts = read_tsv('raw_data/dx_cat_count.tsv') %>%
+  summarize(n_encounters=sum(n_encounters),
+            n_em_encounters=sum(n_encounters[hcpcs_em]),
+            f_em_encounters=weighted.mean(hcpcs_em, weights=n_encounters))
 
 hcpcs_count %>% kable
 ```
 
-This equals a total of `r prettyNum(sum(hcpcs_count$n_dx), big.mark=',')` diagnoses.
+This equals a total of `r prettyNum(sum(encounter_counts$n_encounters), big.mark=',')` encounters.
 
 The fraction of first-fill PDEs that have upstream:
 
