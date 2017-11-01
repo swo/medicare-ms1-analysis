@@ -1,16 +1,28 @@
 #!/usr/bin/env Rscript
 
-# load data
-# NB: I put DC into the South
-
-bene = readRDS('data/bene.rds')
-pde = readRDS('data/pde.rds')
-
 output_table = function(x, base) write_tsv(x, sprintf('tables/%s.tsv', base))
 sem = function(x) sd(x) / sqrt(length(x))
 
-summarize_totals = function(df) {
-  summarize(df, n_bene=n(),
+regions = read_tsv('db/census-regions.tsv') %>%
+  select(state, region)
+
+bene = read_tsv('raw_data/bene.tsv') %>%
+  rename(bene_id=BENE_ID) %>%
+  left_join(regions, by='state')
+
+pde = read_tsv('raw_data/bene_pde.tsv') %>%
+  rename(bene_id=BENE_ID) %>%
+  rename(overall=n_pde) %>%
+  left_join(bene, by=c('year', 'bene_id')) %>%
+  mutate(age_group=case_when(between(.$age, 65, 75) ~ 'age65_75',
+                             between(.$age, 76, 85) ~ 'age76_85',
+                             between(.$age, 86, 95) ~ 'age86_95',
+                             .$age > 95 ~ 'age96_'))
+
+# summary characteristics
+pop_chars = bene %>%
+  group_by(year) %>%
+  summarize(n_bene=n(),
             mean_age=mean(age),
             sd_age=sd(age),
             sem_age=sem(age),
@@ -23,120 +35,82 @@ summarize_totals = function(df) {
             n_region_south=sum(region=='South'),
             n_region_west=sum(region=='West'),
             n_region_northeast=sum(region=='Northeast'),
-            n_region_midwest=sum(region=='Midwest'))
-}
+            n_region_midwest=sum(region=='Midwest')) %T>%
+  output_table('pop_chars')
 
-# summary characteristics
-totals = bene %>%
-  group_by(year) %>%
-  summarize_totals() %T>%
-  output_table('totals')
-
-n_unique_bene = bene$bene_id %>%
-  unique %>% length %T>%
-  write('tables/n_unique_bene.tsv')
-
-# count first fills vs. refills
-pde %>%
-  count(first_fill) %>%
-  output_table('claims_by_fill')
+n_unique_bene = length(unique(bene$bene_id)) %T>%
+  write('tables/n_unique_bene.txt')
 
 claims_by_abx = pde %>%
-  count(year, antibiotic) %>%
-  left_join(select(totals, year, n_bene), by='year') %>%
-  mutate(cpkp=n*1000/n_bene) %T>%
+  select(year, overall:clindamycin) %>%
+  mutate(n_bene=1) %>%
+  group_by(year) %>%
+  summarize_if(is.numeric, sum) %>%
+  mutate_at(vars(overall:clindamycin), function(x) x/.$n_bene*1000) %>%
+  select(-n_bene) %>%
+  gather('abx', 'cpkp', -year) %T>%
   output_table('claims_by_abx')
-
-# keep track of which are the top 10 abx
-top_abx = pde %>%
-  count(antibiotic) %>%
-  arrange(desc(n)) %$%
-  head(antibiotic, 10)
-
-top_abx = c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin',
-            'trimethoprim/sulfamethoxazole', 'levofloxacin', 'amoxicillin/clavulanate',
-            'doxycycline', 'nitrofurantoin', 'clindamycin')
 
 # from here on, the denominators are taken from the beneficiary data grouped
 # in the same way as the consumption data, so we can use the summarize_by function
-summarize_by = function(bene, by) {
-  group_by_(bene, 'year', by) %>%
-    summarize(n_bene=n(), n_claims=sum(n_claims)) %>%
+summarize_by = function(df, by) {
+  group_by(df, year, !!(rlang::sym(by))) %>%
+    summarize(n_bene=n(), overall=sum(overall)) %>%
     ungroup() %>%
-    mutate(cpkp=n_claims*1000/n_bene) %>%
+    mutate(cpkp=overall*1000/n_bene) %>%
     output_table(paste0('claims_by_', by))
 }
 
-summarize_by(bene, 'sex')
-summarize_by(bene, 'region')
-summarize_by(bene, 'race')
-summarize_by(bene, 'age')
+summarize_by(pde, 'sex')
+summarize_by(pde, 'region')
+summarize_by(pde, 'race')
+summarize_by(pde, 'age_group')
 
 # run a model and tidy
-glm_f = function(df, frmla, ...) eval(substitute(function(df2) glm(frmla, data=df2, ...)))(df)
 sandwich_tidy = function(m) tidy(lmtest::coeftest(m, vcov=sandwich::vcovHC(m, type='HC3')))
-model_f = function(df, frmla, name) {
-  glm_f(df, frmla, family='poisson') %>%
-    sandwich_tidy() %>%
-    mutate(name=name)
+model_f = function(df, frmla) {
+  glm(frmla, family='poisson', data=df) %>%
+    sandwich_tidy()
 }
 
-abx_frmla = y ~ year + age + n_cc + sex + race + dual + region
+# trends by drug
+drug_trend_f = function(abx) {
+  frmla = str_interp("${abx} ~ year + age + n_cc + sex + race + dual + region") %>%
+    as.formula
+  model_f(pde, frmla) %>%
+    mutate(abx=abx)
+}
 
-# get models and predictions for all drugs combined
-overall_model = bene %>%
-  rename(y=n_claims) %>%
-  model_f(abx_frmla, 'overall')
+top_abx = c('overall', 'azithromycin', 'ciprofloxacin', 'amoxicillin',
+            'cephalexin', 'tmpsmx', 'levofloxacin', 'amoxclav',
+            'doxycycline', 'nitrofurantoin', 'clindamycin')
 
-overall_model_firstfill = bene %>%
-  rename(y=n_claims_firstfill) %>%
-  model_f(abx_frmla, 'overall')
+trend_models = lapply(top_abx, drug_trend_f) %>%
+  bind_rows() %T>%
+  output_table('trend_models')
 
 # model overall consumption, but look at individual populations
-covariates = c('age', 'sex', 'race', 'dual', 'region')
-reduced_model = function(df, missing_term, name) {
-  remaining_covariates = covariates[-which(covariates == missing_term)] %>% str_c(collapse=' + ')
-  frmla = str_interp("y ~ year + n_cc + ${remaining_covariates}") %>% as.formula
-
-  df %>%
-    rename(y=n_claims) %>%
-    model_f(frmla, name)
+population_models = function(term, drop_term=NULL) {
+  # prepare the regression formula without that term
+  covariates=c('age', 'sex', 'race', 'region')
+  if (is.null(drop_term)) drop_term = term
+  remaining_covariates = covariates[-which(covariates == drop_term)] %>% str_c(collapse=' + ')
+  frmla = str_interp("overall ~ year + n_cc + dual + ${remaining_covariates}") %>% as.formula
+  
+  # get the populations
+  term_values = unique(pde[[term]])
+  
+  lapply(term_values, function(value) {
+    pde[pde[[term]]==value, ] %>%
+      model_f(frmla) %>%
+      mutate(population=str_c(term, '_', value))
+  }) %>% bind_rows()
 }
 
 bind_rows(
-  bene %>% filter(between(age, 65, 75)) %>% reduced_model('age', 'age65_75'),
-  bene %>% filter(between(age, 76, 85)) %>% reduced_model('age', 'age76_85'),
-  bene %>% filter(between(age, 86, 95)) %>% reduced_model('age', 'age86_95'),
-  bene %>% filter(age >= 96) %>% reduced_model('age', 'age96_'),
-  bene %>% filter(sex=='female') %>% reduced_model('sex', 'female'),
-  bene %>% filter(sex=='male') %>% reduced_model('sex', 'male'),
-  bene %>% filter(race=='white') %>% reduced_model('race', 'white'),
-  bene %>% filter(race=='black') %>% reduced_model('race', 'black'),
-  bene %>% filter(race=='Hispanic') %>% reduced_model('race', 'Hispanic'),
-  bene %>% filter(race=='other') %>% reduced_model('race', 'other'),
-  bene %>% filter(region=='South') %>% reduced_model('region', 'South'),
-  bene %>% filter(region=='Midwest') %>% reduced_model('region', 'Midwest'),
-  bene %>% filter(region=='West') %>% reduced_model('region', 'West'),
-  bene %>% filter(region=='Northeast') %>% reduced_model('region', 'Northeast')
+  population_models('age_group', drop_term='age'),
+  population_models('sex'),
+  population_models('race'),
+  population_models('region')
 ) %>%
-  output_table('model_overall_demography')
-
-# get models for individual abx
-single_f = function(pde, abx, frmla) {
-  pde %>%
-    filter(antibiotic==abx) %>%
-    count(year, bene_id) %>% ungroup() %>% rename(y=n) %>%
-    right_join(bene, by=c('year', 'bene_id')) %>%
-    replace_na(list(y=0)) %>%
-    model_f(frmla, abx)
-}
-
-single_models = lapply(top_abx, function(a) single_f(pde, a, abx_frmla))
-single_models_firstfill = lapply(top_abx, function(a) single_f(pde_firstfill, a, abx_frmla))
-
-# report the model parameters
-bind_rows(overall_model, single_models) %>%
-  output_table('model_abx')
-
-bind_rows(overall_model_firstfill, single_models_firstfill) %>%
-  output_table('model_abx_firstfill')
+  output_table('demography_models')
