@@ -152,13 +152,3 @@ dx_to_pde_trends = dx_to_pde_trend_pairs %>%
   do(dx_to_pde_trend_f(.$abx, .$dx_cat)) %>%
   ungroup() %T>%
   output_table('dx_to_pde_trends')
-
-# projected appropriateness trend
-bene %>%
-  glm_f(cbind(overall_inapprop, overall_approp) ~ year + age + n_cc + sex + race + dual + region, family='binomial') %>%
-  sandwich_tidy() %T>%
-  output_table('projected_inapprop_trend')
-
-bene %>%
-  filter(year==2011) %$%
-  write(sum(overall_inapprop) / sum(overall), 'tables/inapprop_risk_2011.txt')
