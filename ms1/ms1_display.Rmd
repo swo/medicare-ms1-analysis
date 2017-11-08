@@ -15,7 +15,6 @@ import::from(knitr, kable)
 
 ```{r pop_chars}
 pop_chars = read_tsv('tables/pop_chars.tsv') %>%
-  select(-sem_age, -sem_n_cc) %>%
   mutate_at(vars(n_female:n_region_midwest), function(x) x / .$n_bene * 100)
 
 trend_p = function(x) tidy(t.test(diff(x)))$p.value
@@ -44,13 +43,14 @@ pop_char_trends %>%
 
 There are `r scan('tables/n_unique_bene.txt') %>% prettyNum(big.mark=',')` unique beneficiaries.
 
-```{r pde_counts}
-read_tsv('raw_data/firstfill.tsv') %>%
-  group_by(firstfill) %>%
-  summarize(n_pde=sum(n_pde)) %>%
-  #arrange(desc(firstfill)) %>%
-  mutate(cum_n=prettyNum(cumsum(n_pde), big.mark=',')) %>%
-  kable(caption='PDEs by firstfill (or refill)')
+```{r claims_by_fill}
+claims_by_fill = read_tsv('tables/claims_by_fill.tsv') %>%
+  mutate(f_refill=refills/overall_wrefill)
+
+claims_by_fill %>%
+  kable(caption='PDEs by refill')
+
+#  mutate(cum_n=prettyNum(cumsum(n_pde), big.mark=',')) %>%
 ```
 
 # Trends in drug usage
@@ -64,10 +64,11 @@ claims_by_abx = read_tsv('tables/claims_by_abx.tsv') %>%
 abx_levels = levels(claims_by_abx$abx)
 
 claims_by_abx %>%
-  filter(abx=='overall') %>%
-  ggplot(aes(x=year, y=cpkp)) +
+  filter(abx %in% c('overall', 'overall_approp', 'overall_inapprop')) %>%
+  ggplot(aes(x=year, y=cpkp, color=abx)) +
   geom_point() + geom_line() +
-  scale_y_continuous(limits=c(975, 1525), breaks=c(1000, 1125, 1250, 1375, 1500)) +
+  #scale_y_continuous(limits=c(0, 1525), breaks=c(1000, 1125, 1250, 1375, 1500)) +
+  scale_y_continuous(limits=c(0, 1525), breaks=c(0, 250, 500, 750, 1000, 1250, 1500)) +
   theme_minimal() +
   ggtitle('Unadjusted consumption, all abx')
 
@@ -88,7 +89,7 @@ claims_by_abx %>%
   ggtitle('Unadjusted consumption, next 5')
 ```
 
-## Trends in appropriateness
+## Adjusted trends
 
 ```{r drug_trends}
 est2pct = function(x) (exp(x) - 1)*100
@@ -107,107 +108,49 @@ drug_trends = read_tsv('tables/trend_models.tsv') %>%
   mutate(change=sprintf('%.2f (%.2f -- %.2f)', y, ymin, ymax))
 ```
 
-```{r approp_trends}
-# fold change in consumption
-pde_trend = drug_trends %>%
-  filter(abx=='overall') %>%
-  mutate(rr=exp(estimate),
-         rr_lo=exp(ci_lo),
-         rr_hi=exp(ci_hi))
-
-d_c = pde_trend$rr
-d_c_lo = pde_trend$rr_lo
-d_c_hi = pde_trend$rr_hi
-
-# fraction inappropriate in 2011
-risk_ratio_f = function(or, p) or / (1 + p * (or - 1))
-f_i = scan('tables/inapprop_risk_2011.txt')
-
-inapprop_trend = read_tsv('tables/inapprop_trend.tsv') %>%
-  filter(term=='year') %>%
-  mutate(estimate=3*estimate,
-         std.error=sqrt(3)*std.error) %>%
-  mutate(ci=1.96*std.error,
-         ci_lo=estimate-ci,
-         ci_hi=estimate+ci) %>%
-  mutate(or   =exp(estimate),
-         or_lo=exp(ci_lo),
-         or_hi=exp(ci_hi)) %>%
-  mutate(rr   =risk_ratio_f(or, f_i),
-         rr_lo=risk_ratio_f(or_lo, f_i),
-         rr_hi=risk_ratio_f(or_hi, f_i))
-
-d_f = inapprop_trend$rr
-d_f_lo = inapprop_trend$rr_lo
-d_f_hi = inapprop_trend$rr_hi
-  
-rr2pct = function(x) round((x - 1) * 100, 2)
-
-inapprop_trends = data_frame(
-  abx=c('overall_inapp', 'overall_app'),
-  y   =c(d_c    * d_f,    (1.0 - d_f    * f_i) / (1.0 - f_i) * d_c),
-  ymin=c(d_c_lo * d_f_lo, (1.0 - d_f_hi * f_i) / (1.0 - f_i) * d_c_lo),
-  ymax=c(d_c_hi * d_f_hi, (1.0 - d_f_lo * f_i) / (1.0 - f_i) * d_c_hi)
-) %>%
-  mutate_if(is.numeric, rr2pct)
-
-kable(inapprop_trends, caption='Percent changes in in/appropriate prescribing')
-```
-
-## Adjusted trends
-
 ```{r drug_trends_display}
+format_p = function(p) {
+  if_else(p < 0.001, '< 0.001', as.character(round(p, 3)))
+}
+
 drug_trends %>%
-  select(abx, y, ymin, ymax) %>%
-  mutate_if(is.numeric, function(x) format(x, digits=2, nsmall=2)) %>%
+  filter(abx != 'overall_wrefill') %>%
+  mutate(adj.p=p.adjust(p.value, method='BH')) %>%
+  select(abx, y, ymin, ymax, p.value) %>%
+  mutate_at(vars(y, ymin, ymax), function(x) format(x, digits=2, nsmall=2)) %>%
+  mutate(p.value=format_p(p.value)) %>%
   kable(caption='Drug trends: Percent change from 2011 to 2014')
 
-abx_trends_levels = drug_trends %>%
-  filter(abx != 'overall') %$%
-  { c('overall', 'overall_app', 'overall_inapp', rev(abx)) }
-
-drug_and_inapprop_trends = drug_trends %>%
-  select(abx, y, ymin, ymax) %>%
-  bind_rows(inapprop_trends) %>%
-  mutate(abx=factor(abx, levels=rev(abx_trends_levels)))
-
-drug_and_inapprop_trends %>%
+drug_trends %>%
+  filter(abx != 'overall_wrefill') %>%
+  # put the abx in order
+  arrange(desc(y)) %>%
+  mutate(abx=fct_inorder(factor(abx))) %>%
+  mutate(abx=fct_relevel(abx, c('overall', 'overall_inapprop', 'overall_approp'))) %>%
+  mutate(abx=fct_rev(abx)) %>%
+  # plot
   ggplot(aes(x=abx, y=y, ymin=ymin, ymax=ymax)) +
   geom_bar(stat='identity', fill='white', color='black') +
   geom_errorbar(width=0.5) +
   coord_flip() +
   xlab('') +
   ylab('adjusted change in consumption 2011 to 2014 (%)') +
-  scale_y_continuous(limits=c(-22, 32), breaks=c(-20, -10, 0, 10, 20, 30)) +
+  scale_y_continuous(limits=c(-22, 32.5), breaks=c(-20, -10, 0, 10, 20, 30)) +
   theme_minimal() +
   theme(axis.title.x = element_text(size=16),
         axis.text = element_text(size=16))
-
-drug_and_inapprop_trends %>%
-  arrange(desc(abx)) %>%
-  kable(caption='Percent changes; same data as in figure')
 ```
 
 # Prescribing practice
 
 ```{r prescribing_practice}
-dx_counts_2011 = read_tsv('raw_data/dx_counts.tsv') %>%
-  left_join(select(pop_chars, year, n_bene), by='year') %>%
-  mutate(dkpy=round(n_encounter/n_bene*1000)) %>%
-  filter(year==2011) %>%
-  select(dx_cat, dkpy)
-
-dx_from_pde_2011 = read_tsv('raw_data/dx_from_pde.tsv') %>%
-  filter(year==2011) %>%
-  mutate(f_with_dx=n_pde_with_encounter/n_pde_with_any_encounter) %>%
-  select(antibiotic, dx_cat, year, f_with_dx)
-
 dx_to_pde_table = read_tsv('tables/dx_to_pde_table.tsv') %>%
   select(-n_encounters) %>%
   filter(year %in% c(2011, 2014)) %>%
   gather('abx', 'f_with_abx', azithromycin:clindamycin)
 
 # swo: convert ORs to RRs!
+risk_ratio_f = function(or, p) or / (1 + p * (or - 1))
 rr2pct = function(x) (x - 1) * 100
 
 dx_to_pde_trends = read_tsv('tables/dx_to_pde_trends.tsv') %>%
@@ -232,41 +175,21 @@ dx_to_pde_trends = read_tsv('tables/dx_to_pde_trends.tsv') %>%
 ```
 
 ```{r combined_table}
-format2 = function(x) format(round(x, 2), digits=2, nsmall=2)
+format_pct = function(x) format(round(x*100, 2), digits=2, nsmall=2)
 
-part1 = dx_counts_2011 %>%
-  mutate(dkpy=as.character(dkpy)) %>%
-  spread(dx_cat, dkpy) %>%
-  mutate(abx='dx', key1='dkpy', key2='')
-
-part2 = dx_from_pde_2011 %>%
-  # throw out some rare drugs
-  filter(!is.na(dx_cat)) %>%
-  mutate(f_with_dx=format2(f_with_dx*100)) %>%
-  spread(dx_cat, f_with_dx) %>%
-  mutate(key1='pde2dx', key2=as.character(year)) %>% rename(abx=antibiotic)
-
-part3 = dx_to_pde_table %>%
-  mutate(f_with_abx=format2(f_with_abx*100)) %>%
-  spread(dx_cat, f_with_abx) %>%
-  mutate(key1='dx2pde', key2=as.character(year))
-
-part4 = dx_to_pde_trends %>%
-  spread(dx_cat, change) %>%
-  mutate(key1='dx2pde_trend', key2='')
-
-combined_table = bind_rows(part1, part2, part3, part4) %>%
-  mutate(abx=factor(abx, levels=c('dx', abx_levels)),
-         key1=factor(key1, levels=c('dkpy', 'pde2dx', 'dx2pde', 'dx2pde_trend'))) %>%
-  arrange(abx, key1, key2)
+combined_table = dx_to_pde_table %>%
+  mutate(f_with_abx=format_pct(f_with_abx)) %>%
+  spread(year, f_with_abx) %>%
+  left_join(dx_to_pde_trends, by=c('dx_cat', 'abx')) %>%
+  arrange(abx, dx_cat)
 ```
 
 ## Respiratory
 
 ```{r respiratory}
 combined_table %>%
-  select(abx, key1, key2, pneumonia, sinusitis, uri, bronchitis) %>%
-  filter(abx %in% c('dx', 'azithromycin', 'levofloxacin', 'amoxclav')) %>%
+  filter(dx_cat %in% c('pneumonia', 'sinusitis', 'uri', 'bronchitis'),
+         abx %in% c('dx', 'azithromycin', 'levofloxacin', 'amoxclav')) %>%
   kable
 ```
 
@@ -322,8 +245,8 @@ bind_rows(
 
 ```{r other_respiratory}
 combined_table %>%
-  select(abx, key1, key2, pharyngitis, asthma, other_resp) %>%
-  filter(abx %in% c('dx', 'azithromycin', 'levofloxacin', 'amoxclav')) %>%
+  filter(dx_cat %in% c('pharyngitis', 'asthma', 'other_resp'),
+         abx %in% c('azithromycin', 'levofloxacin', 'amoxclav')) %>%
   kable
 ```
 
@@ -331,8 +254,8 @@ combined_table %>%
 
 ```{r uti}
 combined_table %>%
-  select(abx, key1, key2, uti, uti_t3) %>%
-  filter(abx %in% c('dx', 'ciprofloxacin', 'tmpsmx', 'nitrofurantoin')) %>%
+  filter(dx_cat %in% c('uti', 'uti_t3'),
+         abx %in% c('dx', 'ciprofloxacin', 'tmpsmx', 'nitrofurantoin')) %>%
   kable
 ```
 
@@ -340,7 +263,55 @@ combined_table %>%
 
 ```{r ssti}
 combined_table %>%
-  select(abx, key1, key2, ssti, ssti_t3) %>%
-  filter(abx %in% c('dx', 'cephalexin', 'tmpsmx', 'clindamycin')) %>%
+  filter(dx_cat %in% c('ssti', 'ssti_t3'),
+         abx %in% c('dx', 'cephalexin', 'tmpsmx', 'clindamycin')) %>%
   kable
+```
+
+## Projected appropriateness trend
+
+```{r approp_trends}
+# fold change in consumption
+pde_trend = drug_trends %>%
+  filter(abx=='overall') %>%
+  mutate(rr=exp(estimate),
+         rr_lo=exp(ci_lo),
+         rr_hi=exp(ci_hi))
+
+d_c = pde_trend$rr
+d_c_lo = pde_trend$rr_lo
+d_c_hi = pde_trend$rr_hi
+
+# fraction inappropriate in 2011
+f_i = scan('tables/inapprop_risk_2011.txt')
+
+inapprop_trend = read_tsv('tables/inapprop_trend.tsv') %>%
+  filter(term=='year') %>%
+  mutate(estimate=3*estimate,
+         std.error=sqrt(3)*std.error) %>%
+  mutate(ci=1.96*std.error,
+         ci_lo=estimate-ci,
+         ci_hi=estimate+ci) %>%
+  mutate(or   =exp(estimate),
+         or_lo=exp(ci_lo),
+         or_hi=exp(ci_hi)) %>%
+  mutate(rr   =risk_ratio_f(or, f_i),
+         rr_lo=risk_ratio_f(or_lo, f_i),
+         rr_hi=risk_ratio_f(or_hi, f_i))
+
+d_f = inapprop_trend$rr
+d_f_lo = inapprop_trend$rr_lo
+d_f_hi = inapprop_trend$rr_hi
+  
+rr2pct = function(x) round((x - 1) * 100, 2)
+
+inapprop_trends = data_frame(
+  abx=c('overall_inapp', 'overall_app'),
+  y   =c(d_c    * d_f,    (1.0 - d_f    * f_i) / (1.0 - f_i) * d_c),
+  ymin=c(d_c_lo * d_f_lo, (1.0 - d_f_hi * f_i) / (1.0 - f_i) * d_c_lo),
+  ymax=c(d_c_hi * d_f_hi, (1.0 - d_f_lo * f_i) / (1.0 - f_i) * d_c_hi)
+) %>%
+  mutate_if(is.numeric, rr2pct)
+
+kable(inapprop_trends, caption='Percent changes in in/appropriate prescribing')
 ```

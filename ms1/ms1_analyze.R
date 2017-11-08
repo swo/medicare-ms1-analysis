@@ -1,26 +1,19 @@
 #!/usr/bin/env Rscript
 
 output_table = function(x, base) write_tsv(x, sprintf('tables/%s.tsv', base))
-sem = function(x) sd(x) / sqrt(length(x))
-
-regions = read_tsv('db/census-regions.tsv') %>%
-  select(state, region)
 
 bene = read_tsv('raw_data/bene.tsv') %>%
-  rename(bene_id=BENE_ID) %>%
-  left_join(regions, by='state')
-
-n_unique_bene = length(unique(bene$bene_id)) %T>%
-  write('tables/n_unique_bene.txt')
-
-pde = read_tsv('raw_data/bene_pde.tsv') %>%
-  rename(bene_id=BENE_ID) %>%
-  rename(overall=n_pde) %>%
-  left_join(bene, by=c('year', 'bene_id')) %>%
+  rename(overall=n_pde,
+         overall_inapprop=n_pde_inapprop,
+         overall_wrefill=n_pde_wrefill) %>%
+  mutate(overall_approp=overall - overall_inapprop) %>%
   mutate(age_group=case_when(between(.$age, 65, 75) ~ 'age65_75',
                              between(.$age, 76, 85) ~ 'age76_85',
                              between(.$age, 86, 95) ~ 'age86_95',
                              .$age > 95 ~ 'age96_'))
+
+n_unique_bene = length(unique(bene$BENE_ID)) %T>%
+  write('tables/n_unique_bene.txt')
 
 # summary characteristics
 pop_chars = bene %>%
@@ -28,10 +21,8 @@ pop_chars = bene %>%
   summarize(n_bene=n(),
             mean_age=mean(age),
             sd_age=sd(age),
-            sem_age=sem(age),
             mean_n_cc=mean(n_cc),
             sd_n_cc=sd(n_cc),
-            sem_n_cc=sem(n_cc),
             n_female=sum(sex=='female'),
             n_white=sum(race=='white'),
             n_dual=sum(dual),
@@ -41,12 +32,18 @@ pop_chars = bene %>%
             n_region_midwest=sum(region=='Midwest')) %T>%
   output_table('pop_chars')
 
-claims_by_abx = pde %>%
-  select(year, overall:clindamycin) %>%
+claims_by_fill = bene %>%
+  select(overall, overall_wrefill) %>%
+  summarize_all(sum) %>%
+  mutate(refills=overall_wrefill - overall) %T>%
+  output_table('claims_by_fill')
+
+claims_by_abx = bene %>%
+  select(year, overall, overall_inapprop, overall_approp, azithromycin:clindamycin) %>%
   mutate(n_bene=1) %>%
   group_by(year) %>%
   summarize_if(is.numeric, sum) %>%
-  mutate_at(vars(overall:clindamycin), function(x) x/.$n_bene*1000) %>%
+  mutate_at(vars(-year, -n_bene), function(x) x/.$n_bene*1000) %>%
   select(-n_bene) %>%
   gather('abx', 'cpkp', -year) %T>%
   output_table('claims_by_abx')
@@ -61,10 +58,10 @@ summarize_by = function(df, by) {
     output_table(paste0('claims_by_', by))
 }
 
-summarize_by(pde, 'sex')
-summarize_by(pde, 'region')
-summarize_by(pde, 'race')
-summarize_by(pde, 'age_group')
+summarize_by(bene, 'sex')
+summarize_by(bene, 'region')
+summarize_by(bene, 'race')
+summarize_by(bene, 'age_group')
 
 # run a model and tidy
 glm_f = function(df, frmla, ...) eval(substitute(function(df2) glm(frmla, data=df2, ...)))(df)
@@ -78,11 +75,12 @@ model_f = function(df, frmla) {
 drug_trend_f = function(abx) {
   frmla = str_interp("${abx} ~ year + age + n_cc + sex + race + dual + region") %>%
     as.formula
-  model_f(pde, frmla) %>%
+  model_f(bene, frmla) %>%
     mutate(abx=abx)
 }
 
-top_abx = c('overall', 'azithromycin', 'ciprofloxacin', 'amoxicillin',
+top_abx = c('overall', 'overall_approp', 'overall_inapprop', 'overall_wrefill',
+            'azithromycin', 'ciprofloxacin', 'amoxicillin',
             'cephalexin', 'tmpsmx', 'levofloxacin', 'amoxclav',
             'doxycycline', 'nitrofurantoin', 'clindamycin')
 
@@ -99,7 +97,7 @@ population_models = function(group_type, covariate=NULL) {
   frmla = str_interp("overall ~ year + n_cc + dual + ${remaining_covariates}") %>% as.formula
   
   # get the populations
-  pde %>%
+  bene %>%
     rename(group=!!rlang::sym(group_type)) %>%
     group_by(group) %>%
     do(model_f(., frmla)) %>%
@@ -115,27 +113,8 @@ bind_rows(
 ) %>%
   output_table('demography_models')
 
-# appropriateness trend
-pde_inapprop = read_tsv('raw_data/bene_inapprop.tsv') %>%
-  filter(n_firstfill>0) %>%
-  mutate(risk=n_inapprop_firstfill/n_firstfill) %>%
-  rename(bene_id=BENE_ID) %>%
-  left_join(bene, by=c('year', 'bene_id'))
-
-inapprop_risk_2011 = pde_inapprop %>%
-  filter(year==2011) %$%
-  mean(risk) %T>%
-  write('tables/inapprop_risk_2011.txt')
-
-inapprop_trend = pde_inapprop %>%
-  glm_f(risk ~ year + age + n_cc + sex + race + dual + region, weights=n_firstfill, family='binomial') %>%
-  sandwich_tidy() %T>%
-  output_table('inapprop_trend')
-
 # trends in prescribing practice
-dx_to_pde = read_tsv('raw_data/dx_to_pde.tsv') %>%
-  rename(bene_id=BENE_ID) %>%
-  left_join(bene, by=c('year', 'bene_id'))
+dx_to_pde = read_tsv('raw_data/dx_to_pde.tsv')
 
 dx_to_pde_table = dx_to_pde %>%
   select(year, dx_cat, azithromycin:clindamycin) %>%
@@ -146,22 +125,12 @@ dx_to_pde_table = dx_to_pde %>%
   mutate_at(vars(azithromycin:clindamycin), function(x) x / .$n_encounters) %T>%
   output_table('dx_to_pde_table')
 
-# swo: don't actually do all these combinations
-dxs = c('gi_t3', 'uti_t3', 'uri', 'other_resp', 'gi',
-        'asthma', 'ssti_t3', 'uti', 'ssti', 'bronchitis', 'misc_t3', 'om',
-        'pharyngitis', 'pneumonia', 'misc_bacterial', 'sinusitis', 'flu',
-        'om_t3', 'acne', 'viral_flu')
-
-abx = c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin',
-            'tmpsmx', 'levofloxacin', 'amoxclav',
-            'doxycycline', 'nitrofurantoin', 'clindamycin')
-
 dx_to_pde_trend_f = function (a, dx) {
   frmla = str_interp("${a} ~ year + age + n_cc + sex + race + dual + region") %>%
     as.formula
   
-  now = format(Sys.time(), "%H:%M.%S")
-  cat(str_interp("${now} -- abx: ${a} dx: ${dx}\n"))
+  # now = format(Sys.time(), "%H:%M.%S")
+  # cat(str_interp("${now} -- abx: ${a} dx: ${dx}\n"))
   
   dx_to_pde %>%
     filter(dx_cat==dx) %>%
@@ -169,8 +138,27 @@ dx_to_pde_trend_f = function (a, dx) {
     sandwich_tidy()
 }
 
-dx_to_pde_trends = crossing(abx=abx, dx_cat=dxs) %>%
+dx_to_pde_trend_pairs = bind_rows(
+  crossing(abx=c('azithromycin', 'levofloxacin', 'amoxclav'),
+           dx_cat=c('pneumonia', 'sinusitis', 'uri', 'bronchitis', 'pharyngitis', 'asthma', 'other_resp')),
+  crossing(abx=c('ciprofloxacin', 'tmpsmx', 'nitrofurantoin'),
+           dx_cat=c('uti', 'uti_t3')),
+  crossing(abx=c('cephalexin', 'tmpsmx', 'clindamycin'),
+           dx_cat=c('ssti', 'ssti_t3'))
+)
+
+dx_to_pde_trends = dx_to_pde_trend_pairs %>%
   group_by_all() %>%
   do(dx_to_pde_trend_f(.$abx, .$dx_cat)) %>%
   ungroup() %T>%
   output_table('dx_to_pde_trends')
+
+# projected appropriateness trend
+bene %>%
+  glm_f(cbind(overall_inapprop, overall_approp) ~ year + age + n_cc + sex + race + dual + region, family='binomial') %>%
+  sandwich_tidy() %T>%
+  output_table('projected_inapprop_trend')
+
+bene %>%
+  filter(year==2011) %$%
+  write(sum(overall_inapprop) / sum(overall), 'tables/inapprop_risk_2011.txt')
