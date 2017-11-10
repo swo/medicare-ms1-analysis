@@ -48,6 +48,16 @@ claims_by_abx = bene %>%
   gather('abx', 'cpkp', -year) %T>%
   output_table('claims_by_abx')
 
+# summary of claims taken up by top 10
+bene %>%
+  select(overall, azithromycin:clindamycin) %>%
+  summarize_all(sum) %>%
+  gather('abx', 'n', azithromycin:clindamycin) %>%
+  mutate(cumf=cumsum(n)/overall) %>%
+  tail(1) %>%
+  pull(cumf) %>%
+  write('tables/top10_cumf.txt')
+
 # from here on, the denominators are taken from the beneficiary data grouped
 # in the same way as the consumption data, so we can use the summarize_by function
 summarize_by = function(df, by) {

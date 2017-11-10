@@ -48,10 +48,11 @@ claims_by_fill = read_tsv('tables/claims_by_fill.tsv') %>%
   mutate(f_refill=refills/overall_wrefill)
 
 claims_by_fill %>%
+  mutate_at(vars(-f_refill), function(x) prettyNum(x, big.mark=',')) %>%
   kable(caption='PDEs by refill')
-
-#  mutate(cum_n=prettyNum(cumsum(n_pde), big.mark=',')) %>%
 ```
+
+The top 10 drugs take up `r round(scan('tables/top10_cumf.txt') * 100, 2)`% of all claims.
 
 # Trends in drug usage
 
@@ -61,6 +62,13 @@ claims_by_fill %>%
 claims_by_abx = read_tsv('tables/claims_by_abx.tsv') %>%
   mutate(abx=fct_inorder(factor(abx)))
 
+claims_by_abx %>%
+  mutate(cpkp=round(cpkp)) %>%
+  spread(year, cpkp) %>%
+  kable(caption='Raw drug CPKP')
+```
+
+```{r raw_drug_trends_figure}
 abx_levels = levels(claims_by_abx$abx)
 
 claims_by_abx %>%
@@ -171,7 +179,7 @@ dx_to_pde_trends = read_tsv('tables/dx_to_pde_trends.tsv') %>%
          ymin=rr2pct(rr_lo),
          ymax=rr2pct(rr_hi)) %>%
   mutate(change=sprintf('%.2f (%.2f -- %.2f)', y, ymin, ymax)) %>%
-  select(dx_cat, abx, change)
+  select(dx_cat, abx, change, p.value)
 ```
 
 ```{r combined_table}
@@ -181,6 +189,7 @@ combined_table = dx_to_pde_table %>%
   mutate(f_with_abx=format_pct(f_with_abx)) %>%
   spread(year, f_with_abx) %>%
   left_join(dx_to_pde_trends, by=c('dx_cat', 'abx')) %>%
+  mutate(p.value=format_p(p.value)) %>%
   arrange(abx, dx_cat)
 ```
 
