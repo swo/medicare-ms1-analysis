@@ -74,26 +74,31 @@ abx_levels = levels(claims_by_abx$abx)
 claims_by_abx %>%
   filter(abx %in% c('overall', 'overall_approp', 'overall_inapprop')) %>%
   ggplot(aes(x=year, y=cpkp, color=abx)) +
-  geom_point() + geom_line() +
-  #scale_y_continuous(limits=c(0, 1525), breaks=c(1000, 1125, 1250, 1375, 1500)) +
-  scale_y_continuous(limits=c(0, 1525), breaks=c(0, 250, 500, 750, 1000, 1250, 1500)) +
+  geom_line() +
+  scale_y_continuous(limits=c(0, 1400), breaks=c(0, 250, 500, 750, 1000, 1250, 1400)) +
+  coord_fixed(ratio=4/1400*1.25) +
   theme_minimal() +
+  theme(panel.grid.minor.x=element_blank()) +
   ggtitle('Unadjusted consumption, all abx')
 
 claims_by_abx %>%
   filter(abx %in% c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin', 'tmpsmx', 'levofloxacin')) %>%
   ggplot(aes(x=year, y=cpkp, color=abx)) +
-  geom_point() + geom_line() +
+  geom_line() +
   scale_y_continuous(limits=c(0, 250), breaks=c(0, 50, 100, 150, 200, 250)) +
+  coord_fixed(ratio=4/250*1.25) +
   theme_minimal() +
+  theme(panel.grid.minor.x=element_blank()) +
   ggtitle('Unadjusted consumption, top 5')
 
 claims_by_abx %>%
   filter(abx %in% c('amoxclav', 'doxycycline', 'nitrofurantoin', 'clindamycin')) %>%
   ggplot(aes(x=year, y=cpkp, color=abx)) +
-  geom_point() + geom_line() +
+  geom_line() +
   scale_y_continuous(limits=c(0, 100), breaks=c(0, 50, 100)) +
+  coord_fixed(ratio=4/100*1.25) +
   theme_minimal() +
+  theme(panel.grid.minor.x=element_blank()) +
   ggtitle('Unadjusted consumption, next 5')
 ```
 
@@ -149,6 +154,16 @@ drug_trends %>%
         axis.text = element_text(size=16))
 ```
 
+## Raw inappropriate fractions
+
+```{r inappropriate_fraction}
+claims_by_abx %>%
+  spread(abx, cpkp) %>%
+  mutate(pct_inapprop = overall_inapprop / overall * 100) %>%
+  select(year, pct_inapprop) %>%
+  kable(caption='Raw fraction of inappropriate prescribing')
+```
+
 # Prescribing practice
 
 ```{r prescribing_practice}
@@ -190,7 +205,7 @@ combined_table = dx_to_pde_table %>%
   spread(year, f_with_abx) %>%
   left_join(dx_to_pde_trends, by=c('dx_cat', 'abx')) %>%
   mutate(p.value=format_p(p.value)) %>%
-  arrange(abx, dx_cat)
+  arrange(dx_cat, abx)
 ```
 
 ## Respiratory
@@ -228,7 +243,7 @@ trends_by_demography = read_tsv('tables/demography_models.tsv') %>%
          ymin=est2pct(ci_lo),
          ymax=est2pct(ci_hi)) %>%
   mutate(change=sprintf('%.2f (%.2f -- %.2f)', y, ymin, ymax)) %>%
-  select(group_type, group, change)
+  select(group_type, group, change, p.value)
 
 # overall trend row
 overall_change = drug_trends %>% filter(abx=='overall') %>% pull(change)
