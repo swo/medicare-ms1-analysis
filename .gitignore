@@ -14,3 +14,4 @@ fig/
 *.feather
 .Rproj.user
 ms2/
+*.txt
