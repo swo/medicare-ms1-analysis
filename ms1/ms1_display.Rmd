@@ -107,7 +107,8 @@ claims_by_abx %>%
 ```{r drug_trends}
 est2pct = function(x) (exp(x) - 1)*100
 
-drug_trends = read_tsv('tables/trend_models.tsv') %>%
+drug_trends = read_tsv('raw_data/poisson_models.tsv') %>%
+  select(abx=model, term=Parameter, estimate=Estimate, std.error=StdErr, p.value=ProbChiSq) %>%
   filter(term=='year') %>%
   arrange(estimate) %>%
   mutate(estimate=3*estimate,
@@ -118,24 +119,17 @@ drug_trends = read_tsv('tables/trend_models.tsv') %>%
   mutate(y=est2pct(estimate),
          ymin=est2pct(ci_lo),
          ymax=est2pct(ci_hi)) %>%
-  mutate(change=sprintf('%.2f (%.2f -- %.2f)', y, ymin, ymax))
+  mutate(change=sprintf('%.1f (%.1f -- %.1f)', y, ymin, ymax))
 ```
 
 ```{r drug_trends_display}
-format_p = function(p) {
-  if_else(p < 0.001, '< 0.001', as.character(round(p, 3)))
-}
-
 drug_trends %>%
   filter(abx != 'overall_wrefill') %>%
-  mutate(adj.p=p.adjust(p.value, method='BH')) %>%
   select(abx, y, ymin, ymax, p.value) %>%
-  mutate_at(vars(y, ymin, ymax), function(x) format(x, digits=2, nsmall=2)) %>%
-  mutate(p.value=format_p(p.value)) %>%
+  mutate_at(vars(y, ymin, ymax), function(x) format(x, digits=1, nsmall=1)) %>%
   kable(caption='Drug trends: Percent change from 2011 to 2014')
 
 drug_trends %>%
-  filter(abx != 'overall_wrefill') %>%
   # put the abx in order
   arrange(desc(y)) %>%
   mutate(abx=fct_inorder(factor(abx))) %>%
@@ -162,6 +156,23 @@ claims_by_abx %>%
   mutate(pct_inapprop = overall_inapprop / overall * 100) %>%
   select(year, pct_inapprop) %>%
   kable(caption='Raw fraction of inappropriate prescribing')
+```
+
+## Odds and stuff
+
+```{r odds}
+inapp_odds_trend = read_tsv('raw_data/logistic_models.tsv') %>%
+  select(model, term=Variable, estimate=Estimate, std.error=StdErr, p.value=ProbChiSq) %>%
+  filter(term=='year') %>%
+  mutate(estimate=3*estimate,
+         ci=1.96*sqrt(3)*std.error,
+         y=exp(estimate),
+         ymin=exp(estimate-ci),
+         ymax=exp(estimate+ci)) %>%
+  select(model, y, ymin, ymax) %>%
+  mutate_if(is.numeric, function(x) round((x-1)*100, 1))
+
+inapp_odds_trend %>% kable
 ```
 
 # Prescribing practice
@@ -193,12 +204,13 @@ dx_to_pde_trends = read_tsv('tables/dx_to_pde_trends.tsv') %>%
   mutate(y=rr2pct(rr),
          ymin=rr2pct(rr_lo),
          ymax=rr2pct(rr_hi)) %>%
-  mutate(change=sprintf('%.2f (%.2f -- %.2f)', y, ymin, ymax)) %>%
+  mutate(change=sprintf('%.1f (%.1f -- %.1f)', y, ymin, ymax)) %>%
   select(dx_cat, abx, change, p.value)
 ```
 
 ```{r combined_table}
-format_pct = function(x) format(round(x*100, 2), digits=2, nsmall=2)
+format_pct = function(x) format(round(x*100, 1), digits=1, nsmall=1)
+format_p = function(p) if_else(p<0.0001, '<.0001', format(round(p, 4), digits=4, nsmall=4))
 
 combined_table = dx_to_pde_table %>%
   mutate(f_with_abx=format_pct(f_with_abx)) %>%
@@ -242,7 +254,7 @@ trends_by_demography = read_tsv('tables/demography_models.tsv') %>%
   mutate(y=est2pct(estimate),
          ymin=est2pct(ci_lo),
          ymax=est2pct(ci_hi)) %>%
-  mutate(change=sprintf('%.2f (%.2f -- %.2f)', y, ymin, ymax)) %>%
+  mutate(change=sprintf('%.1f (%.1f -- %.1f)', y, ymin, ymax)) %>%
   select(group_type, group, change, p.value)
 
 # overall trend row
