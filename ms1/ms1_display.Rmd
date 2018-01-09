@@ -69,35 +69,50 @@ claims_by_abx %>%
 ```{r raw_drug_trends}
 abx_levels = levels(claims_by_abx$abx)
 
-claims_by_abx %>%
-  filter(abx %in% c('pde', 'pde_approp', 'pde_inapprop', 'pde_nodx')) %>%
-  ggplot(aes(x=year, y=cpkp, color=abx)) +
-  geom_line() +
-  scale_y_continuous(limits=c(0, 1400), breaks=c(0, 250, 500, 750, 1000, 1250, 1400)) +
-  coord_fixed(ratio=4/1400*1.25) +
-  theme_minimal() +
-  theme(panel.grid.minor.x=element_blank()) +
-  ggtitle('Unadjusted consumption, all abx')
+dummy = data_frame(
+  year = rep(c(2011, 2014), 3),
+  cpkp = c(0, 1500, 0, 250, 0, 100),
+  panel = factor(c(1, 1, 2, 2, 3, 3)),
+  abx = 'pde'
+)
+
+panel_labels = c('1'='a) Overall antibiotic consumption',
+                 '2'='b) Top 6 most-used antibiotics',
+                 '3'='c) Next 4 most-used antibiotics')
 
 claims_by_abx %>%
-  filter(abx %in% c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin', 'tmpsmx', 'levofloxacin')) %>%
-  ggplot(aes(x=year, y=cpkp, color=abx)) +
+  mutate(panel = factor(case_when(
+    .$abx %in% c('pde', 'pde_approp', 'pde_inapprop', 'pde_nodx') ~ 1,
+    .$abx %in% c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin', 'tmpsmx', 'levofloxacin') ~ 2,
+    .$abx %in% c('amoxclav', 'doxycycline', 'nitrofurantoin', 'clindamycin') ~ 3
+  ))) %>%
+  mutate(abx=case_when(
+    .$abx == 'pde' ~ 'Overall use',
+    .$abx == 'pde_inapprop' ~ 'Inappropriate use',
+    .$abx == 'pde_approp' ~ 'Appropriate use',
+    .$abx == 'pde_nodx' ~ 'Indeterminate use',
+    .$abx == 'amoxclav' ~ 'amox/clav',
+    .$abx == 'tmpsmx' ~ 'TMP/SMX',
+    TRUE ~ .$abx)
+  ) %>%
+  arrange(year, desc(cpkp)) %>%
+  {
+  ggplot(., aes(x=year, y=cpkp, group=abx)) +
+  geom_blank(data=dummy) +
   geom_line() +
-  scale_y_continuous(limits=c(0, 250), breaks=c(0, 50, 100, 150, 200, 250)) +
-  coord_fixed(ratio=4/250*1.25) +
-  theme_minimal() +
-  theme(panel.grid.minor.x=element_blank()) +
-  ggtitle('Unadjusted consumption, top 5')
+  geom_text_repel(
+    data=filter(., year==2013),
+    aes(label=abx)
+  ) +
+  facet_wrap(~panel, scales='free_y', labeller=labeller(panel=panel_labels)) +
+  theme_classic() +
+  theme(panel.grid.minor.x=element_blank(),
+        strip.background = element_blank()) +
+  scale_x_continuous(expand=c(0, 0), name='') +
+  scale_y_continuous(expand=c(0, 0), name='claims per 1,000 beneficiaries per year')
+  }
 
-claims_by_abx %>%
-  filter(abx %in% c('amoxclav', 'doxycycline', 'nitrofurantoin', 'clindamycin')) %>%
-  ggplot(aes(x=year, y=cpkp, color=abx)) +
-  geom_line() +
-  scale_y_continuous(limits=c(0, 100), breaks=c(0, 50, 100)) +
-  coord_fixed(ratio=4/100*1.25) +
-  theme_minimal() +
-  theme(panel.grid.minor.x=element_blank()) +
-  ggtitle('Unadjusted consumption, next 5')
+ggsave('fig/raw_drug.pdf', height=5.0, width=9.0, unit='in')
 ```
 
 ## Adjusted trends
@@ -127,10 +142,19 @@ abx_trends %>%
   kable(caption='Drug trends: Percent change from 2011 to 2014')
 
 abx_trends %>%
+  mutate(antibiotic=case_when(
+    .$antibiotic == 'n_pde' ~ 'Overall use',
+    .$antibiotic == 'n_pde_inapprop' ~ 'Inappropriate use',
+    .$antibiotic == 'n_pde_approp' ~ 'Appropriate use',
+    .$antibiotic == 'n_pde_nodx' ~ 'Indeterminate use',
+    .$antibiotic == 'amoxclav' ~ 'amox/clav',
+    .$antibiotic == 'tmpsmx' ~ 'TMP/SMX',
+    TRUE ~ .$antibiotic)
+  ) %>%
   # put the abx in order
   arrange(desc(estimate)) %>%
   mutate(antibiotic=fct_inorder(factor(antibiotic))) %>%
-  mutate(antibiotic=fct_relevel(antibiotic, c('n_pde', 'n_pde_approp', 'n_pde_inapprop', 'n_pde_nodx'))) %>%
+  mutate(antibiotic=fct_relevel(antibiotic, c('Overall use', 'Inappropriate use', 'Appropriate use', 'Indeterminate use'))) %>%
   mutate(antibiotic=fct_rev(antibiotic)) %>%
   # plot
   ggplot(aes(x=antibiotic, y=estimate, ymin=lower_ci, ymax=upper_ci)) +
@@ -138,11 +162,13 @@ abx_trends %>%
   geom_errorbar(width=0.5) +
   coord_flip() +
   xlab('') +
-  ylab('adjusted change in consumption 2011 to 2014 (%)') +
-  scale_y_continuous(limits=c(-22, 32.5), breaks=c(-20, -10, 0, 10, 20, 30)) +
+  ylab('adjusted change in claims per beneficiary per year from 2011 to 2014 (%)') +
+  scale_y_continuous(limits=c(-22, 33), breaks=c(-20, -10, 0, 10, 20, 30)) +
   theme_minimal() +
-  theme(axis.title.x = element_text(size=16),
-        axis.text = element_text(size=16))
+  theme(axis.title.x = element_text(size=12),
+        axis.text = element_text(size=12))
+
+ggsave('fig/abx_trends.pdf', width=6.4, height=4.5, units='in')
 ```
 
 ## Raw inappropriate fractions
