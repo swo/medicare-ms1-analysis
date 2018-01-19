@@ -86,6 +86,7 @@ claims_by_abx %>%
     .$abx %in% c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin', 'tmpsmx', 'levofloxacin') ~ 2,
     .$abx %in% c('amoxclav', 'doxycycline', 'nitrofurantoin', 'clindamycin') ~ 3
   ))) %>%
+  filter(!is.na(panel)) %>% # remove metro
   mutate(abx=case_when(
     .$abx == 'pde' ~ 'Overall use',
     .$abx == 'pde_inapprop' ~ 'Inappropriate use',
@@ -142,6 +143,7 @@ abx_trends %>%
   kable(caption='Drug trends: Percent change from 2011 to 2014')
 
 abx_trends %>%
+  filter(antibiotic != 'metronidazole') %>%
   mutate(antibiotic=case_when(
     .$antibiotic == 'n_pde' ~ 'Overall use',
     .$antibiotic == 'n_pde_inapprop' ~ 'Inappropriate use',
@@ -178,8 +180,9 @@ claims_by_abx %>%
   filter(str_detect(abx, '^pde')) %>%
   select(year, abx, n) %>%
   spread(abx, n) %>%
-  mutate_at(vars(matches('^pde_')), function(x) round(x / .$pde * 100, 1)) %>%
-  select(-pde) %>%
+  mutate(denom=pde_approp + pde_inapprop + pde_nodx) %>%
+  mutate_at(vars(matches('^pde_')), function(x) round(x / .$denom * 100, 1)) %>%
+  select(-pde, -denom) %>%
   kable(caption='Proportion of app., inapp., and no-dx prescribing')
 ```
 
@@ -261,7 +264,7 @@ rxdx_kable(c('azithromycin', 'levofloxacin', 'amoxclav'),
 ```{r claims_by_demography}
 subpop_table = read_tsv('tables/new/claims_by_subpop.tsv') %>%
   mutate(cpkp=round(n_pde/n_bene*1000)) %>%
-  filter(year %in% c(2011, 2014)) %>%
+  #filter(year %in% c(2011, 2014)) %>%
   select(subpop, year, cpkp) %>%
   spread(year, cpkp)
 
