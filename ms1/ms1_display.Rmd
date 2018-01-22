@@ -14,9 +14,9 @@ import::from(knitr, kable)
 # Population characteristics
 
 ```{r pop_chars}
-pop_chars = read_tsv('tables/new/study_pop_chars.tsv')
+pop_chars = read_tsv('tables/study_pop_chars.tsv')
 
-pop_chars = read_tsv('tables/new/study_pop_chars.tsv') %>%
+pop_chars = read_tsv('tables/study_pop_chars.tsv') %>%
   spread(key, value) %>%
   (function (df) {
     ns1 = names(df)
@@ -54,8 +54,11 @@ The top 10 drugs take up `r round(scan('tables/top10_cumf.txt') * 100, 2)`% of a
 ## Raw trends
 
 ```{r raw_drug_trends_table}
-claims_by_abx = read_tsv('tables/new/claims_by_abx.tsv') %>%
+claims_by_abx = read_tsv('tables/claims_by_abx.tsv') %>%
   gather('abx', 'n', c(-year, -bene)) %>%
+  mutate(n=if_else(year == 2015 & abx %in% c('pde_approp', 'pde_inapprop', 'pde_nodx'),
+                   as.integer(round(n * 4/3)),
+                   n)) %>%
   mutate(cpkp=n/bene*1000)
 
 claims_by_abx %>%
@@ -63,7 +66,7 @@ claims_by_abx %>%
   select(year, abx, cpkp) %>%
   spread(year, cpkp) %>%
   arrange(desc(`2011`)) %>%
-  kable(caption='Raw drug CPKP')
+  kable(caption='Raw drug CPKP. 2015 values for abx-assoc. are projected.')
 ```
 
 ```{r raw_drug_trends}
@@ -135,7 +138,7 @@ format_model = function(df) {
     mutate(p.value=format_p(p_value))
 }
 
-abx_trends = read_tsv('tables/new/abx_models.tsv') %>%
+abx_trends = read_tsv('tables/abx_models.tsv') %>%
   format_model()
 
 abx_trends %>%
@@ -164,7 +167,7 @@ abx_trends %>%
   geom_errorbar(width=0.5) +
   coord_flip() +
   xlab('') +
-  ylab('adjusted change in claims per beneficiary per year from 2011 to 2014 (%)') +
+  ylab('adjusted change in claims per beneficiary per year from 2011 to 2015 (%)') +
   scale_y_continuous(limits=c(-22, 33), breaks=c(-20, -10, 0, 10, 20, 30)) +
   theme_minimal() +
   theme(axis.title.x = element_text(size=12),
@@ -193,9 +196,12 @@ denom = claims_by_abx %>%
   select(year, bene) %>%
   distinct()
 
-rxdx_table = read_tsv('tables/new/rxdx_counts.tsv') %>%
+rxdx_table = read_tsv('tables/rxdx_counts.tsv') %>%
   left_join(denom, by='year') %>%
-  mutate(cpkp=n_pdedx / bene * 1000)
+  mutate(cpkp=n_pdedx / bene * 1000) %>%
+  mutate(cpkp=if_else(year==2015,
+                      cpkp * 4/3,
+                      cpkp))
 
 top_dx = rxdx_table %>%
   filter(year==2011) %>%
@@ -228,16 +234,16 @@ top_dx %>%
 ```
 
 ```{r prescribing_practice}
-rxdx_models = read_tsv('tables/new/rxdx_models.tsv')
+rxdx_models = read_tsv('tables/rxdx_models.tsv')
 
 combined_table = rxdx_table %>%
-  mutate(cpkp=round(n_pdedx / bene * 1000, 1)) %>%
-  filter(year %in% c(2011, 2014)) %>%
+  mutate(cpkp=round(cpkp, 1)) %>%
+  filter(year %in% c(2011, 2015)) %>%
   select(antibiotic, dx_cat, year, cpkp) %>%
   spread(year, cpkp) %>%
   right_join(rxdx_models, by=c('antibiotic', 'dx_cat')) %>%
   format_model() %>%
-  select(dx_cat, antibiotic, `2011`, `2014`, change, p.value) %>%
+  select(dx_cat, antibiotic, `2011`, `2015`, change, p.value) %>%
   arrange(dx_cat, antibiotic)
 ```
 
@@ -257,24 +263,37 @@ rxdx_kable(c('azithromycin', 'levofloxacin', 'amoxclav'),
            c('pneumonia', 'sinusitis', 'uri', 'bronchitis', 'other_resp', 'asthma'))
 ```
 
+## Any respiratory
+
+```{r any_respiratory}
+read_tsv('tables/rxdx_resp_counts.tsv') %>%
+  left_join(denom, by='year') %>%
+  mutate(n_pdedx=if_else(year==2015, n_pdedx * 4/3, as.numeric(n_pdedx))) %>%
+  mutate(cpkp=round(n_pdedx / bene * 1000, 1)) %>%
+  filter(year %in% c(2011, 2015)) %>%
+  select(antibiotic, year, cpkp) %>%
+  spread(year, cpkp) %>%
+  mutate(change=`2015`-`2011`) %>%
+  kable(caption='Claims per 1,000 beneficiaries of each drug in association with any of the considered respiratory diagnoses')
+```
+
 # Supplement
 
 ## Claims by demography
 
 ```{r claims_by_demography}
-subpop_table = read_tsv('tables/new/claims_by_subpop.tsv') %>%
+subpop_table = read_tsv('tables/claims_by_subpop.tsv') %>%
   mutate(cpkp=round(n_pde/n_bene*1000)) %>%
-  #filter(year %in% c(2011, 2014)) %>%
+  filter(year %in% c(2011, 2015)) %>%
   select(subpop, year, cpkp) %>%
   spread(year, cpkp)
 
-subpop_models = read_tsv('tables/new/subpop_models.tsv') %>%
+subpop_models = read_tsv('tables/subpop_models.tsv') %>%
   mutate_at(vars(estimate, lower_ci, upper_ci), est2pct) %>%
   mutate(pm=pmax(estimate-lower_ci, upper_ci-estimate)) %>%
-  mutate(change=sprintf('%.1f (%.1f -- %.1f)', estimate, lower_ci, upper_ci)) %>%
-  mutate(change2=sprintf('%.1f ± %.1f', estimate, pm)) %>%
+  mutate(change=sprintf('%.1f ± %.1f', estimate, ceiling_at(pm, 1))) %>%
   mutate(p.value=format_p(p_value)) %>%
-  select(subpop, change2, p.value)
+  select(subpop, change, p.value)
 
 left_join(subpop_table, subpop_models, by='subpop') %>%
   kable(caption='Claims and trends by subpopulation')
