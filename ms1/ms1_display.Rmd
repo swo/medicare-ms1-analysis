@@ -9,13 +9,13 @@ knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='fig/', dev=c('png', 
                       echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE,
                       error=FALSE, autodep=TRUE)
 import::from(knitr, kable)
+
+est2pct = function(x) (x - 1)*100
 ```
 
 # Population characteristics
 
 ```{r pop_chars}
-pop_chars = read_tsv('tables/study_pop_chars.tsv')
-
 pop_chars = read_tsv('tables/study_pop_chars.tsv') %>%
   spread(key, value) %>%
   (function (df) {
@@ -35,19 +35,15 @@ pop_chars %>%
   )) %>%
   spread(year, value) %>%
   kable(caption='Population characteristics')
-
-trend_p = function(x) tidy(t.test(diff(x)))$p.value
-
-pop_chars %>%
-  arrange(key, year) %>%
-  group_by(key) %>%
-  summarize(p_value=trend_p(value)) %>%
-  kable(caption='Trends in population characteristics')
 ```
 
-There are `r scan('tables/n_unique_bene.txt') %>% prettyNum(big.mark=',')` unique beneficiaries.
+```{r popchar_models}
+pop_char_models = read_tsv('tables/pop_char_models.tsv')
 
-The top 10 drugs take up `r round(scan('tables/top10_cumf.txt') * 100, 2)`% of all claims.
+pop_char_models %>%
+  mutate_at(vars(estimate, lower_ci, upper_ci), function(x) prettyNum(est2pct(x), digits=3, width=0, format='fg')) %>%
+  kable(caption='Trends in study population characteristics')
+```
 
 # Trends in drug usage
 
@@ -67,6 +63,16 @@ claims_by_abx %>%
   spread(year, cpkp) %>%
   arrange(desc(`2011`)) %>%
   kable(caption='Raw drug CPKP. 2015 values for abx-assoc. are projected.')
+```
+
+The change in overall use is so small that I'll give it another decimal place:
+
+```{r}
+claims_by_abx %>%
+  filter(abx=='pde', year %in% c(2011, 2015)) %>%
+  select(year, cpkp) %>%
+  mutate(cpkp=round(cpkp, 1)) %>%
+  kable(caption='Overall use')
 ```
 
 ```{r raw_drug_trends}
@@ -111,7 +117,8 @@ claims_by_abx %>%
   facet_wrap(~panel, scales='free_y', labeller=labeller(panel=panel_labels)) +
   theme_classic() +
   theme(panel.grid.minor.x=element_blank(),
-        strip.background = element_blank()) +
+        strip.background = element_blank(),
+        plot.margin=unit(c(1.0, 1.0, 0.5, 0.5), 'lines')) +
   scale_x_continuous(expand=c(0, 0), name='') +
   scale_y_continuous(expand=c(0, 0), name='claims per 1,000 beneficiaries per year')
   }
@@ -122,7 +129,6 @@ ggsave('fig/raw_drug.pdf', height=5.0, width=9.0, unit='in')
 ## Adjusted trends
 
 ```{r abx_trends}
-est2pct = function(x) (x - 1)*100
 format_p = function(p) if_else(p<0.0001, '<.0001', format(round(p, 4), digits=4, nsmall=4))
 
 ceiling_at = function(x, n) {
@@ -134,11 +140,14 @@ format_model = function(df) {
   df %>%
     mutate_at(vars(estimate, lower_ci, upper_ci), est2pct) %>%
     mutate(pm=pmax(estimate-lower_ci, upper_ci-estimate)) %>%
-    mutate(change=sprintf('%.1f ± %.1f', estimate, ceiling_at(pm, 1))) %>%
+    #mutate(change=sprintf('%.1f ± %.1f', estimate, ceiling_at(pm, 1))) %>%
+    mutate(change=sprintf('%.1f (%.1f -- %.1f)', estimate, lower_ci, upper_ci)) %>%
     mutate(p.value=format_p(p_value))
 }
 
-abx_trends = read_tsv('tables/abx_models.tsv') %>%
+abx_trends_raw = read_tsv('tables/abx_models.tsv')
+
+abx_trends = abx_trends_raw %>%
   format_model()
 
 abx_trends %>%
@@ -163,17 +172,31 @@ abx_trends %>%
   mutate(antibiotic=fct_rev(antibiotic)) %>%
   # plot
   ggplot(aes(x=antibiotic, y=estimate, ymin=lower_ci, ymax=upper_ci)) +
-  geom_bar(stat='identity', fill='white', color='black') +
+  geom_col(fill='white', color='black') +
   geom_errorbar(width=0.5) +
   coord_flip() +
   xlab('') +
   ylab('adjusted change in claims per beneficiary per year from 2011 to 2015 (%)') +
-  scale_y_continuous(limits=c(-22, 33), breaks=c(-20, -10, 0, 10, 20, 30)) +
+  scale_y_continuous(limits=c(-20, 30), breaks=c(-20, -10, 0, 10, 20, 30), expand=c(0.0, 0.00)) +
   theme_minimal() +
   theme(axis.title.x = element_text(size=12),
         axis.text = element_text(size=12))
 
 ggsave('fig/abx_trends.pdf', width=6.4, height=4.5, units='in')
+```
+
+Again, overall use declines so little that I'll give it one more decimal place:
+
+```{r}
+abx_trends_raw %>%
+  filter(antibiotic=='n_pde') %>%
+  select(-antibiotic) %>%
+  mutate_at(vars(estimate, lower_ci, upper_ci), est2pct) %>%
+  mutate(pm=pmax(estimate-lower_ci, upper_ci-estimate)) %>%
+  #mutate(change=sprintf('%.2f ± %.2f', estimate, ceiling_at(pm, 2))) %>%
+  mutate(change=sprintf('%.2f (%.2f -- %.2f)', estimate, lower_ci, upper_ci)) %>%
+  mutate(p.value=format_p(p_value)) %>%
+  kable
 ```
 
 ## Raw inappropriate fractions
@@ -242,7 +265,11 @@ combined_table = rxdx_table %>%
   select(antibiotic, dx_cat, year, cpkp) %>%
   spread(year, cpkp) %>%
   right_join(rxdx_models, by=c('antibiotic', 'dx_cat')) %>%
-  format_model() %>%
+  #format_model() %>%
+  mutate_at(vars(estimate, lower_ci, upper_ci), est2pct) %>%
+  mutate(pm=pmax(estimate-lower_ci, upper_ci-estimate)) %>%
+  mutate(change=sprintf('%.1f ± %.1f', estimate, ceiling_at(pm, 1))) %>%
+  mutate(p.value=format_p(p_value)) %>%
   select(dx_cat, antibiotic, `2011`, `2015`, change, p.value) %>%
   arrange(dx_cat, antibiotic)
 ```
@@ -291,7 +318,8 @@ subpop_table = read_tsv('tables/claims_by_subpop.tsv') %>%
 subpop_models = read_tsv('tables/subpop_models.tsv') %>%
   mutate_at(vars(estimate, lower_ci, upper_ci), est2pct) %>%
   mutate(pm=pmax(estimate-lower_ci, upper_ci-estimate)) %>%
-  mutate(change=sprintf('%.1f ± %.1f', estimate, ceiling_at(pm, 1))) %>%
+  #mutate(change=sprintf('%.1f ± %.1f', estimate, ceiling_at(pm, 1))) %>%
+  mutate(change=sprintf('%.2f (%.2f -- %.2f)', estimate, lower_ci, upper_ci)) %>%
   mutate(p.value=format_p(p_value)) %>%
   select(subpop, change, p.value)
 
@@ -316,6 +344,6 @@ rxdx_kable(c('ciprofloxacin', 'tmpsmx', 'nitrofurantoin'),
 ## SSTI
 
 ```{r ssti}
-rxdx_kable(c('cephalexin', 'tmpsmx'),
+rxdx_kable(c('cephalexin', 'tmpsmx', 'ciprofloxacin'),
            c('ssti', 'ssti_t3'))
 ```
