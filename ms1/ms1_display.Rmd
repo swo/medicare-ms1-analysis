@@ -65,14 +65,16 @@ claims_by_abx %>%
   kable(caption='Raw drug CPKP. 2015 values for abx-assoc. are projected.')
 ```
 
-The change in overall use is so small that I'll give it another decimal place:
+The changes in overall use and appropriate use are so small that I'll give it another decimal place:
 
 ```{r}
+# N.B.: 2015 claims were adjusted during loading of the data file
 claims_by_abx %>%
-  filter(abx=='pde', year %in% c(2011, 2015)) %>%
-  select(year, cpkp) %>%
+  filter(abx %in% c('pde', 'pde_approp'), year %in% c(2011, 2015)) %>%
+  select(year, abx, cpkp) %>%
   mutate(cpkp=round(cpkp, 1)) %>%
-  kable(caption='Overall use')
+  spread(year, cpkp) %>%
+  kable(caption='CPKP for small changes')
 ```
 
 ```{r raw_drug_trends}
