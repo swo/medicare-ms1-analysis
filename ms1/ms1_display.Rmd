@@ -27,10 +27,15 @@ pop_chars = read_tsv('tables/study_pop_chars.tsv') %>%
   gather('key', 'value', -year)
 
 pop_chars %>%
-  mutate(key=factor(key, levels=c('n_bene', 'mean_age', 'sd_age', 'n_cc', 'sd_cc', 'pct_female', 'pct_white', 'pct_dual', 'pct_south', 'pct_midwest', 'pct_west', 'pct_northeast'))) %>%
+  mutate(key=factor(key, levels=c(
+    'n_bene',
+    'pct_65-74', 'pct_75-84', 'pct_85-94', 'pct_95+',
+    'pct_female', 'pct_white', 'pct_dual',
+    'mean_cc', 'sd_cc',
+    'pct_south', 'pct_midwest', 'pct_west', 'pct_northeast'))) %>%
   mutate(value=case_when(
     .$key == 'n_bene' ~ prettyNum(.$value, big.mark=','),
-    .$key %in% c('n_cc', 'sd_cc') ~ format(.$value, digits=2, nsmall=2, scientific=FALSE),
+    .$key %in% c('mean_cc', 'sd_cc', 'pct_95+') ~ format(.$value, digits=2, nsmall=2, scientific=FALSE),
     TRUE ~ format(.$value, digits=2, nsmall=1, scientific=FALSE)
   )) %>%
   spread(year, value) %>%
@@ -45,24 +50,54 @@ pop_char_models %>%
   kable(caption='Trends in study population characteristics')
 ```
 
+## Attrition in the sample
+
+```{r}
+attrition = read_tsv('tables/clean_bene_log.tsv')
+
+attrition %>%
+  mutate(step=fct_inorder(factor(step))) %>%
+  spread(year, n_bene) %>%
+  kable()
+
+denom = attrition %>%
+  filter(step=='final') %>%
+  select(-step)
+```
+
 # Trends in drug usage
 
 ## Raw trends
 
 ```{r raw_drug_trends_table}
 claims_by_abx = read_tsv('tables/claims_by_abx.tsv') %>%
-  gather('abx', 'n', c(-year, -bene)) %>%
-  mutate(n=if_else(year == 2015 & abx %in% c('pde_approp', 'pde_inapprop', 'pde_nodx'),
-                   as.integer(round(n * 4/3)),
-                   n)) %>%
-  mutate(cpkp=n/bene*1000)
+  left_join(denom, by='year') %>%
+  mutate(cpkp=n_pde/n_bene*1000)
 
 claims_by_abx %>%
   mutate(cpkp=round(cpkp)) %>%
-  select(year, abx, cpkp) %>%
+  select(year, antibiotic, cpkp) %>%
   spread(year, cpkp) %>%
   arrange(desc(`2011`)) %>%
   kable(caption='Raw drug CPKP. 2015 values for abx-assoc. are projected.')
+```
+
+## Appropriateness
+
+```{r}
+approp_counts = read_tsv('tables/approp_counts.tsv') %>%
+  left_join(denom, by='year') %>%
+  mutate(antibiotic=case_when(
+    .$appropriateness == 'appropriate' ~ 'approp',
+    .$appropriateness == 'inappropriate' ~ 'inapp',
+    .$appropriateness == 'indeterminate' ~ 'indet'
+  )) %>%
+  select(-appropriateness) %>%
+  mutate(cpkp=n_pde/n_bene*1000)
+
+approp_counts %>%
+  select(year, antibiotic, cpkp) %>%
+  spread(year, cpkp)
 ```
 
 The changes in overall use and appropriate use are so small that I'll give it another decimal place:
@@ -70,10 +105,8 @@ The changes in overall use and appropriate use are so small that I'll give it an
 ```{r}
 # N.B.: 2015 claims were adjusted during loading of the data file
 claims_by_abx %>%
-  filter(abx %in% c('pde', 'pde_approp'), year %in% c(2011, 2015)) %>%
-  select(year, abx, cpkp) %>%
+  filter(antibiotic=='n_pde') %>%
   mutate(cpkp=round(cpkp, 1)) %>%
-  spread(year, cpkp) %>%
   kable(caption='CPKP for small changes')
 ```
 
@@ -92,19 +125,22 @@ panel_labels = c('1'='a) Overall antibiotic consumption',
                  '3'='c) Next 4 most-used antibiotics')
 
 claims_by_abx %>%
+  bind_rows(approp_counts) %>%
+  filter(antibiotic != 'n_pde_top10') %>%
+  rename(abx=antibiotic) %>%
   mutate(panel = factor(case_when(
-    .$abx %in% c('pde', 'pde_approp', 'pde_inapprop', 'pde_nodx') ~ 1,
-    .$abx %in% c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin', 'tmpsmx', 'levofloxacin') ~ 2,
-    .$abx %in% c('amoxclav', 'doxycycline', 'nitrofurantoin', 'clindamycin') ~ 3
+    .$abx %in% c('n_pde', 'approp', 'inapp', 'indet') ~ 1,
+    .$abx %in% c('azithromycin', 'ciprofloxacin', 'amoxicillin', 'cephalexin', 'trimethoprim/sulfamethoxazole', 'levofloxacin') ~ 2,
+    .$abx %in% c('amoxicillin/clavulanate', 'doxycycline', 'nitrofurantoin', 'clindamycin') ~ 3
   ))) %>%
   filter(!is.na(panel)) %>% # remove metro
   mutate(abx=case_when(
-    .$abx == 'pde' ~ 'Overall use',
-    .$abx == 'pde_inapprop' ~ 'Inappropriate use',
-    .$abx == 'pde_approp' ~ 'Appropriate use',
-    .$abx == 'pde_nodx' ~ 'Indeterminate use',
-    .$abx == 'amoxclav' ~ 'amox/clav',
-    .$abx == 'tmpsmx' ~ 'TMP/SMX',
+    .$abx == 'n_pde' ~ 'Overall use',
+    .$abx == 'inapp' ~ 'Inappropriate use',
+    .$abx == 'approp' ~ 'Appropriate use',
+    .$abx == 'indet' ~ 'Indeterminate use',
+    .$abx == 'amoxicillin/clavulanate' ~ 'amox/clav',
+    .$abx == 'trimethoprim/sulfamethoxazole' ~ 'TMP/SMX',
     TRUE ~ .$abx)
   ) %>%
   arrange(year, desc(cpkp)) %>%
@@ -142,14 +178,11 @@ format_model = function(df) {
   df %>%
     mutate_at(vars(estimate, lower_ci, upper_ci), est2pct) %>%
     mutate(pm=pmax(estimate-lower_ci, upper_ci-estimate)) %>%
-    #mutate(change=sprintf('%.1f ± %.1f', estimate, ceiling_at(pm, 1))) %>%
     mutate(change=sprintf('%.1f (%.1f -- %.1f)', estimate, lower_ci, upper_ci)) %>%
     mutate(p.value=format_p(p_value))
 }
 
-abx_trends_raw = read_tsv('tables/abx_models.tsv')
-
-abx_trends = abx_trends_raw %>%
+abx_trends = read_tsv('tables/abx_models.tsv') %>%
   format_model()
 
 abx_trends %>%
@@ -157,14 +190,10 @@ abx_trends %>%
   kable(caption='Drug trends: Percent change from 2011 to 2014')
 
 abx_trends %>%
-  filter(antibiotic != 'metronidazole') %>%
   mutate(antibiotic=case_when(
-    .$antibiotic == 'n_pde' ~ 'Overall use',
-    .$antibiotic == 'n_pde_inapprop' ~ 'Inappropriate use',
-    .$antibiotic == 'n_pde_approp' ~ 'Appropriate use',
-    .$antibiotic == 'n_pde_nodx' ~ 'Indeterminate use',
-    .$antibiotic == 'amoxclav' ~ 'amox/clav',
-    .$antibiotic == 'tmpsmx' ~ 'TMP/SMX',
+    .$antibiotic == 'n_abx' ~ 'Overall use',
+    .$antibiotic == 'amoxicillin/clavulanate' ~ 'amox/clav',
+    .$antibiotic == 'trimethoprim/sulfamethoxazole' ~ 'TMP/SMX',
     TRUE ~ .$antibiotic)
   ) %>%
   # put the abx in order
@@ -187,15 +216,29 @@ abx_trends %>%
 ggsave('fig/abx_trends.pdf', width=6.4, height=4.5, units='in')
 ```
 
+```{r}
+app_trends = read_tsv('tables/approp_models.tsv') %>%
+  mutate(antibiotic=case_when(
+    .$appropriateness == 'inappropriate' ~ 'Inappropriate use',
+    .$appropriateness == 'appropriate' ~ 'Appropriate use',
+    .$appropriateness == 'indeterminate' ~ 'Indeterminate use')
+  ) %>%
+  select(-appropriateness) %>%
+  format_model()
+
+app_trends %>%
+  select(antibiotic, change, p.value) %>%
+  kable()
+```
+
 Again, overall use declines so little that I'll give it one more decimal place:
 
 ```{r}
-abx_trends_raw %>%
+abx_trends %>%
   filter(antibiotic=='n_pde') %>%
   select(-antibiotic) %>%
   mutate_at(vars(estimate, lower_ci, upper_ci), est2pct) %>%
   mutate(pm=pmax(estimate-lower_ci, upper_ci-estimate)) %>%
-  #mutate(change=sprintf('%.2f ± %.2f', estimate, ceiling_at(pm, 2))) %>%
   mutate(change=sprintf('%.2f (%.2f -- %.2f)', estimate, lower_ci, upper_ci)) %>%
   mutate(p.value=format_p(p_value)) %>%
   kable
@@ -204,75 +247,46 @@ abx_trends_raw %>%
 ## Raw inappropriate fractions
 
 ```{r inappropriate_fraction}
-claims_by_abx %>%
-  filter(str_detect(abx, '^pde')) %>%
-  select(year, abx, n) %>%
-  spread(abx, n) %>%
-  mutate(denom=pde_approp + pde_inapprop + pde_nodx) %>%
-  mutate_at(vars(matches('^pde_')), function(x) round(x / .$denom * 100, 1)) %>%
-  select(-pde, -denom) %>%
-  kable(caption='Proportion of app., inapp., and no-dx prescribing')
+read_tsv('tables/approp_counts.tsv') %>%
+  group_by(year) %>%
+  mutate(pct = round(100*(n_pde / sum(n_pde)), 1)) %>%
+  select(-n_pde) %>%
+  spread(year, pct)
 ```
 
 # Prescribing practice
 
 ```{r top_dx}
-denom = claims_by_abx %>%
-  select(year, bene) %>%
-  distinct()
+dx_table = read_tsv('tables/dx_counts.tsv') %>%
+  filter(!is.na(dx_cat), dx_cat != 'remaining_codes')
 
-rxdx_table = read_tsv('tables/rxdx_counts.tsv') %>%
+dx_table %>%
   left_join(denom, by='year') %>%
-  mutate(cpkp=n_pdedx / bene * 1000) %>%
-  mutate(cpkp=if_else(year==2015,
-                      cpkp * 4/3,
-                      cpkp))
-
-top_dx = rxdx_table %>%
-  filter(year==2011) %>%
-  group_by(dx_cat) %>%
-  summarize(max_cpkp=max(cpkp)) %>%
-  mutate(over_10=max_cpkp >= 10) %>%
-  arrange(desc(max_cpkp))
-
-top_dx %>%
-  kable(caption='Diagnoses by maximum drug usage in 2011')
-```
-
-```{r top_rxdx}
-infection_sites = read_tsv('infection_sites.tsv')
-
-top_dx %>%
-  filter(over_10) %>%
-  slice(-1) %>% # drop "remaining codes"
-  select(dx_cat) %>%
-  inner_join(rxdx_table, by='dx_cat') %>%
-  left_join(infection_sites, by='dx_cat') %>%
-  filter(year==2011) %>%
-  group_by(site, antibiotic) %>%
-  summarize(cpkp=sum(cpkp)) %>%
-  arrange(site, desc(cpkp)) %>%
-  group_by(site) %>%
-  mutate(f=cpkp/sum(cpkp), cumf=cumsum(f)/sum(f)) %>%
-  do(head(., 5)) %>%
-  kable(caption='Top drugs by diagnosis in 2011')
+  mutate(dxkpy = round(n_dx / n_bene * 1000)) %>%
+  select(-n_dx, -n_bene) %>%
+  spread(year, dxkpy) %>%
+  arrange(desc(`2011`)) %>%
+  kable
 ```
 
 ```{r prescribing_practice}
-rxdx_models = read_tsv('tables/rxdx_models.tsv')
+rxdx_table = read_tsv('tables/pde_for_dx_counts.tsv') %>%
+  left_join(denom, by='year') %>%
+  mutate(cpkp = n_pdedx / n_bene * 1000)
+
+rxdx_models = read_tsv('tables/pde_for_dx_models.tsv')
 
 combined_table = rxdx_table %>%
   mutate(cpkp=round(cpkp, 1)) %>%
-  filter(year %in% c(2011, 2015)) %>%
+  filter(year %in% c(2011, 2014)) %>%
   select(antibiotic, dx_cat, year, cpkp) %>%
   spread(year, cpkp) %>%
   right_join(rxdx_models, by=c('antibiotic', 'dx_cat')) %>%
-  #format_model() %>%
   mutate_at(vars(estimate, lower_ci, upper_ci), est2pct) %>%
   mutate(pm=pmax(estimate-lower_ci, upper_ci-estimate)) %>%
   mutate(change=sprintf('%.1f ± %.1f', estimate, ceiling_at(pm, 1))) %>%
   mutate(p.value=format_p(p_value)) %>%
-  select(dx_cat, antibiotic, `2011`, `2015`, change, p.value) %>%
+  select(dx_cat, antibiotic, `2011`, `2014`, change, p.value) %>%
   arrange(dx_cat, antibiotic)
 ```
 
@@ -288,22 +302,8 @@ rxdx_kable = function(abxs, dxs) {
     kable()
 }
 
-rxdx_kable(c('azithromycin', 'levofloxacin', 'amoxclav'),
+rxdx_kable(c('azithromycin', 'levofloxacin', 'amoxicillin/clavulanate'),
            c('pneumonia', 'sinusitis', 'uri', 'bronchitis', 'other_resp', 'asthma'))
-```
-
-## Any respiratory
-
-```{r any_respiratory}
-read_tsv('tables/rxdx_resp_counts.tsv') %>%
-  left_join(denom, by='year') %>%
-  mutate(n_pdedx=if_else(year==2015, n_pdedx * 4/3, as.numeric(n_pdedx))) %>%
-  mutate(cpkp=round(n_pdedx / bene * 1000, 1)) %>%
-  filter(year %in% c(2011, 2015)) %>%
-  select(antibiotic, year, cpkp) %>%
-  spread(year, cpkp) %>%
-  mutate(change=`2015`-`2011`) %>%
-  kable(caption='Claims per 1,000 beneficiaries of each drug in association with any of the considered respiratory diagnoses')
 ```
 
 # Supplement
@@ -314,18 +314,17 @@ read_tsv('tables/rxdx_resp_counts.tsv') %>%
 subpop_table = read_tsv('tables/claims_by_subpop.tsv') %>%
   mutate(cpkp=round(n_pde/n_bene*1000)) %>%
   filter(year %in% c(2011, 2015)) %>%
-  select(subpop, year, cpkp) %>%
+  select(pop_char, value, year, cpkp) %>%
   spread(year, cpkp)
 
 subpop_models = read_tsv('tables/subpop_models.tsv') %>%
   mutate_at(vars(estimate, lower_ci, upper_ci), est2pct) %>%
   mutate(pm=pmax(estimate-lower_ci, upper_ci-estimate)) %>%
-  #mutate(change=sprintf('%.1f ± %.1f', estimate, ceiling_at(pm, 1))) %>%
   mutate(change=sprintf('%.2f (%.2f -- %.2f)', estimate, lower_ci, upper_ci)) %>%
   mutate(p.value=format_p(p_value)) %>%
-  select(subpop, change, p.value)
+  select(pop_char, value, change, p.value)
 
-left_join(subpop_table, subpop_models, by='subpop') %>%
+left_join(subpop_table, subpop_models, by=c('pop_char', 'value')) %>%
   kable(caption='Claims and trends by subpopulation')
 ```
 
@@ -339,13 +338,62 @@ rxdx_kable(c('ciprofloxacin', 'metronidazole', 'levofloxacin'),
 ## UTI
 
 ```{r uti}
-rxdx_kable(c('ciprofloxacin', 'tmpsmx', 'nitrofurantoin'),
+rxdx_kable(c('ciprofloxacin', 'trimethropim/sulfamethoxazole', 'nitrofurantoin'),
            c('uti', 'uti_t3'))
 ```
 
 ## SSTI
 
 ```{r ssti}
-rxdx_kable(c('cephalexin', 'tmpsmx', 'ciprofloxacin'),
+rxdx_kable(c('cephalexin', 'trimethoprim/sulfamethoxazole', 'ciprofloxacin'),
            c('ssti', 'ssti_t3'))
+```
+
+## Prescribing practice -- single
+
+```{r prescribing_practice_similarity}
+rxdx_table_single = read_tsv('tables/pde_for_dx_single_counts.tsv') %>%
+  left_join(denom, by='year') %>%
+  mutate(cpkp = n_pdedx / n_bene * 1000)
+
+rxdx_models_single = read_tsv('tables/pde_for_dx_single_models.tsv')
+
+rxdx_comp = inner_join(rxdx_models, rxdx_models_single,
+           by=c('antibiotic', 'dx_cat'),
+           suffix=c('.multi', '.single'))
+
+rxdx_comp %$%
+  cor.test(estimate.multi, estimate.single)
+
+lm(estimate.multi  ~ estimate.single, data=rxdx_comp) %>%
+  summary()
+
+rxdx_comp %>%
+  ggplot(aes(estimate.multi, estimate.single,
+             xmin=lower_ci.multi, xmax=upper_ci.multi,
+             ymin=lower_ci.single, ymax=upper_ci.single)) +
+  geom_abline() +
+  geom_point() +
+  geom_errorbar() + geom_errorbarh()
+```
+
+```{r prescribing_practice_single}
+infection_sites = read_tsv('infection_sites.tsv')
+
+combined_table_single = rxdx_table_single %>%
+  mutate(cpkp=round(cpkp, 1)) %>%
+  filter(year %in% c(2011, 2014)) %>%
+  select(antibiotic, dx_cat, year, cpkp) %>%
+  spread(year, cpkp) %>%
+  right_join(rxdx_models_single, by=c('antibiotic', 'dx_cat')) %>%
+  mutate_at(vars(estimate, lower_ci, upper_ci), est2pct) %>%
+  mutate(pm=pmax(estimate-lower_ci, upper_ci-estimate)) %>%
+  mutate(change=sprintf('%.1f ± %.1f', estimate, ceiling_at(pm, 1))) %>%
+  mutate(p.value=format_p(p_value)) %>%
+  left_join(infection_sites, by='dx_cat') %>%
+  select(site, dx_cat, antibiotic, `2011`, `2014`, change, p.value) %>%
+  arrange(site, dx_cat, antibiotic)
+
+combined_table_single %>%
+  kable()
 ```
