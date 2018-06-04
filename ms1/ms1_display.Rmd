@@ -82,6 +82,18 @@ claims_by_abx %>%
   kable(caption='Raw drug CPKP. 2015 values for abx-assoc. are projected.')
 ```
 
+## Top 10 fraction
+
+```{r}
+pct_top10 = claims_by_abx %>%
+  filter(antibiotic %in% c('n_pde', 'n_pde_top10')) %>%
+  select(year, antibiotic, n_pde) %>%
+  spread(antibiotic, n_pde) %$%
+  { 100 * sum(n_pde_top10) / sum(n_pde) }
+```
+
+The top 10 antibiotics accounted for `r round(pct_top10, 2)`% of claims.
+
 ## Appropriateness
 
 ```{r}
@@ -97,7 +109,8 @@ approp_counts = read_tsv('tables/approp_counts.tsv') %>%
 
 approp_counts %>%
   select(year, antibiotic, cpkp) %>%
-  spread(year, cpkp)
+  spread(year, cpkp) %>%
+  kable()
 ```
 
 The changes in overall use and appropriate use are so small that I'll give it another decimal place:
@@ -111,8 +124,6 @@ claims_by_abx %>%
 ```
 
 ```{r raw_drug_trends}
-abx_levels = levels(claims_by_abx$abx)
-
 dummy = data_frame(
   year = rep(c(2011, 2014), 3),
   cpkp = c(0, 1500, 0, 250, 0, 100),
@@ -124,7 +135,7 @@ panel_labels = c('1'='a) Overall antibiotic consumption',
                  '2'='b) Top 6 most-used antibiotics',
                  '3'='c) Next 4 most-used antibiotics')
 
-claims_by_abx %>%
+cba_dat = claims_by_abx %>%
   bind_rows(approp_counts) %>%
   filter(antibiotic != 'n_pde_top10') %>%
   rename(abx=antibiotic) %>%
@@ -143,25 +154,37 @@ claims_by_abx %>%
     .$abx == 'trimethoprim/sulfamethoxazole' ~ 'TMP/SMX',
     TRUE ~ .$abx)
   ) %>%
-  arrange(year, desc(cpkp)) %>%
+  arrange(year, desc(cpkp))
+
+cba_dat %>%
   {
   ggplot(., aes(x=year, y=cpkp, group=abx)) +
   geom_blank(data=dummy) +
   geom_line() +
-  geom_text_repel(
+  geom_text(
     data=filter(., year==2013),
-    aes(label=abx)
+    aes(label=abx),
+    nudge_y=c(50, 50, -35, 35,
+              26, -8, 10, 8, -8, -6,
+              4, 8, -3, -5),
+    nudge_x=c(0, rep(-0.5, 3),
+              0, 0, 0, 0, 1.3, 0,
+              rep(0, 4))
   ) +
   facet_wrap(~panel, scales='free_y', labeller=labeller(panel=panel_labels)) +
   theme_classic() +
   theme(panel.grid.minor.x=element_blank(),
         strip.background = element_blank(),
-        plot.margin=unit(c(1.0, 1.0, 0.5, 0.5), 'lines')) +
+        plot.margin=unit(c(1.0, 1.0, 0.5, 0.5), 'lines'),
+        axis.text.x=element_text(color='black'),
+        axis.text.y=element_text(color='black'),
+        text=element_text(color='black')) +
   scale_x_continuous(expand=c(0, 0), name='') +
   scale_y_continuous(expand=c(0, 0), name='claims per 1,000 beneficiaries per year')
   }
 
 ggsave('fig/raw_drug.pdf', height=5.0, width=9.0, unit='in')
+ggsave('fig/drug_trends.png', height=5.0, width=9.0, unit='in')
 ```
 
 ## Adjusted trends
@@ -199,7 +222,7 @@ abx_trends %>%
   # put the abx in order
   arrange(desc(estimate)) %>%
   mutate(antibiotic=fct_inorder(factor(antibiotic))) %>%
-  mutate(antibiotic=fct_relevel(antibiotic, c('Overall use', 'Inappropriate use', 'Appropriate use', 'Indeterminate use'))) %>%
+  mutate(antibiotic=fct_relevel(antibiotic, 'Overall use')) %>%
   mutate(antibiotic=fct_rev(antibiotic)) %>%
   # plot
   ggplot(aes(x=antibiotic, y=estimate, ymin=lower_ci, ymax=upper_ci)) +
@@ -210,10 +233,12 @@ abx_trends %>%
   ylab('adjusted change in claims per beneficiary per year from 2011 to 2015 (%)') +
   scale_y_continuous(limits=c(-20, 30), breaks=c(-20, -10, 0, 10, 20, 30), expand=c(0.0, 0.00)) +
   theme_minimal() +
-  theme(axis.title.x = element_text(size=12),
-        axis.text = element_text(size=12))
+  theme(axis.title.x=element_text(size=12, color='black', hjust=1),
+        axis.text = element_text(size=12, color='black'),
+        plot.margin = unit(c(0.1, 0.2, 0.1, 0), 'in'))
 
 ggsave('fig/abx_trends.pdf', width=6.4, height=4.5, units='in')
+ggsave('fig/abx_trends.png', width=6.4, height=4.5, units='in')
 ```
 
 ```{r}
@@ -221,7 +246,9 @@ app_trends = read_tsv('tables/approp_models.tsv') %>%
   mutate(antibiotic=case_when(
     .$appropriateness == 'inappropriate' ~ 'Inappropriate use',
     .$appropriateness == 'appropriate' ~ 'Appropriate use',
-    .$appropriateness == 'indeterminate' ~ 'Indeterminate use')
+    .$appropriateness == 'indeterminate' ~ 'Indeterminate use',
+    .$appropriateness == 'overall3' ~ 'Overall use'
+    )
   ) %>%
   select(-appropriateness) %>%
   format_model()
@@ -301,6 +328,12 @@ rxdx_kable = function(abxs, dxs) {
     arrange(dx_cat, antibiotic) %>%
     kable()
 }
+
+rxdx_models %>%
+  format_model() %>%
+  select(antibiotic, dx_cat, change, p.value) %>%
+  filter(antibiotic %in% c('azithromycin', 'levofloxacin'),
+         dx_cat %in% c('pneumonia', 'uri'))
 
 rxdx_kable(c('azithromycin', 'levofloxacin', 'amoxicillin/clavulanate'),
            c('pneumonia', 'sinusitis', 'uri', 'bronchitis', 'other_resp', 'asthma'))
@@ -395,5 +428,18 @@ combined_table_single = rxdx_table_single %>%
   arrange(site, dx_cat, antibiotic)
 
 combined_table_single %>%
+  kable()
+```
+
+### Use for any
+
+Use of a drug for any respiratory bit.
+
+```{r}
+rxdx_table_single %>%
+  filter(site=='respiratory') %>%
+  group_by(year, antibiotic) %>%
+  summarize(cpkp = round(sum(cpkp), 1)) %>%
+  spread(year, cpkp) %>%
   kable()
 ```
