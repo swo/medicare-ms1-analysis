@@ -128,7 +128,7 @@ dummy = data_frame(
   year = rep(c(2011, 2014), 3),
   cpkp = c(0, 1500, 0, 250, 0, 100),
   panel = factor(c(1, 1, 2, 2, 3, 3)),
-  abx = 'pde'
+  abx = 'n_pde'
 )
 
 panel_labels = c('1'='a) Overall antibiotic consumption',
@@ -147,8 +147,8 @@ cba_dat = claims_by_abx %>%
   filter(!is.na(panel)) %>% # remove metro
   mutate(abx=case_when(
     .$abx == 'n_pde' ~ 'Overall use',
-    .$abx == 'inapp' ~ 'Inappropriate use',
-    .$abx == 'approp' ~ 'Appropriate use',
+    .$abx == 'inapp' ~ 'Potentially inappropriate use',
+    .$abx == 'approp' ~ 'Potentially appropriate use',
     .$abx == 'indet' ~ 'Indeterminate use',
     .$abx == 'amoxicillin/clavulanate' ~ 'amox/clav',
     .$abx == 'trimethoprim/sulfamethoxazole' ~ 'TMP/SMX',
@@ -164,10 +164,10 @@ cba_dat %>%
   geom_text(
     data=filter(., year==2013),
     aes(label=abx),
-    nudge_y=c(50, 50, -35, 35,
+    nudge_y=c(50, 55, -40, 40,
               26, -8, 10, 8, -8, -6,
               4, 8, -3, -5),
-    nudge_x=c(0, rep(-0.5, 3),
+    nudge_x=c(0, -0.3, -0.3, -0.5,
               0, 0, 0, 0, 1.3, 0,
               rep(0, 4))
   ) +
@@ -183,8 +183,8 @@ cba_dat %>%
   scale_y_continuous(expand=c(0, 0), name='claims per 1,000 beneficiaries per year')
   }
 
-ggsave('fig/raw_drug.pdf', height=5.0, width=9.0, unit='in')
-ggsave('fig/drug_trends.png', height=5.0, width=9.0, unit='in')
+ggsave('fig/raw_trends.pdf', height=5.0, width=9.0, unit='in')
+ggsave('fig/raw_trends.png', height=5.0, width=9.0, unit='in')
 ```
 
 ## Adjusted trends
@@ -237,8 +237,8 @@ abx_trends %>%
         axis.text = element_text(size=12, color='black'),
         plot.margin = unit(c(0.1, 0.2, 0.1, 0), 'in'))
 
-ggsave('fig/abx_trends.pdf', width=6.4, height=4.5, units='in')
-ggsave('fig/abx_trends.png', width=6.4, height=4.5, units='in')
+ggsave('fig/adjusted_trends.pdf', width=6.4, height=4.5, units='in')
+ggsave('fig/adjusted_trends.png', width=6.4, height=4.5, units='in')
 ```
 
 ```{r}
@@ -262,13 +262,13 @@ Again, overall use declines so little that I'll give it one more decimal place:
 
 ```{r}
 abx_trends %>%
-  filter(antibiotic=='n_pde') %>%
+  filter(antibiotic=='n_abx') %>%
   select(-antibiotic) %>%
   mutate_at(vars(estimate, lower_ci, upper_ci), est2pct) %>%
   mutate(pm=pmax(estimate-lower_ci, upper_ci-estimate)) %>%
   mutate(change=sprintf('%.2f (%.2f -- %.2f)', estimate, lower_ci, upper_ci)) %>%
   mutate(p.value=format_p(p_value)) %>%
-  kable
+  kable(caption='Trends in overall use')
 ```
 
 ## Raw inappropriate fractions
@@ -341,11 +341,34 @@ rxdx_kable(c('azithromycin', 'levofloxacin', 'amoxicillin/clavulanate'),
 
 # Supplement
 
+## Retention
+
+```{r}
+retention_f = function(x) {
+  n = length(x)
+  c(1.0, x[2:n] / x[1:(n-1)])
+}
+
+retention_dat = read_tsv('tables/clean_bene_log.tsv')
+
+retention_dat %>%
+  filter(!(step %in% c('total', 'final'))) %>%
+  group_by(year) %>%
+  mutate(retention=retention_f(n_bene)) %>%
+  ungroup() %>%
+  mutate(step=factor(step, levels=c('20pct', 'over65', 'abd', 'demo')),
+         n_bene=prettyNum(n_bene, big.mark=','),
+         value=sprintf('%s (%.1f)', n_bene, 100*retention)) %>%
+  select(year, step, value) %>%
+  spread(year, value) %>%
+  kable()
+```
+
 ## Claims by demography
 
 ```{r claims_by_demography}
 subpop_table = read_tsv('tables/claims_by_subpop.tsv') %>%
-  mutate(cpkp=round(n_pde/n_bene*1000)) %>%
+  mutate(cpkp=round(n_pde/n_bene*1000, 2)) %>%
   filter(year %in% c(2011, 2015)) %>%
   select(pop_char, value, year, cpkp) %>%
   spread(year, cpkp)
@@ -371,7 +394,7 @@ rxdx_kable(c('ciprofloxacin', 'metronidazole', 'levofloxacin'),
 ## UTI
 
 ```{r uti}
-rxdx_kable(c('ciprofloxacin', 'trimethropim/sulfamethoxazole', 'nitrofurantoin'),
+rxdx_kable(c('ciprofloxacin', 'trimethoprim/sulfamethoxazole', 'nitrofurantoin'),
            c('uti', 'uti_t3'))
 ```
 
@@ -385,34 +408,43 @@ rxdx_kable(c('cephalexin', 'trimethoprim/sulfamethoxazole', 'ciprofloxacin'),
 ## Prescribing practice -- single
 
 ```{r prescribing_practice_similarity}
+infection_sites = read_tsv('db/infection_sites.tsv')
+
+respiratory_dxs = infection_sites %>%
+  filter(site=='resp') %>%
+  pull(dx_cat)
+
 rxdx_table_single = read_tsv('tables/pde_for_dx_single_counts.tsv') %>%
+  filter(dx_cat %in% respiratory_dxs) %>%
   left_join(denom, by='year') %>%
   mutate(cpkp = n_pdedx / n_bene * 1000)
 
-rxdx_models_single = read_tsv('tables/pde_for_dx_single_models.tsv')
+rxdx_models_single = read_tsv('tables/pde_for_dx_single_models.tsv') %>%
+  filter(dx_cat %in% respiratory_dxs)
+```
 
-rxdx_comp = inner_join(rxdx_models, rxdx_models_single,
+The two types of models give really similar results about trend estimates:
+
+```{r}
+inner_join(rxdx_models, rxdx_models_single,
            by=c('antibiotic', 'dx_cat'),
-           suffix=c('.multi', '.single'))
+           suffix=c('.multi', '.single')) %>%
+  mutate(f_diff=pmax(estimate.multi, estimate.single) / pmin(estimate.multi, estimate.single)) %$%
+  max(f_diff)
+```
 
-rxdx_comp %$%
-  cor.test(estimate.multi, estimate.single)
+But the number of claims should be different (line shows slope of 2):
 
-lm(estimate.multi  ~ estimate.single, data=rxdx_comp) %>%
-  summary()
-
-rxdx_comp %>%
-  ggplot(aes(estimate.multi, estimate.single,
-             xmin=lower_ci.multi, xmax=upper_ci.multi,
-             ymin=lower_ci.single, ymax=upper_ci.single)) +
-  geom_abline() +
-  geom_point() +
-  geom_errorbar() + geom_errorbarh()
+```{r}
+inner_join(rxdx_table, rxdx_table_single,
+           by=c('antibiotic', 'dx_cat'),
+           suffix=c('.multi', '.single')) %>%
+  ggplot(aes(cpkp.single, cpkp.multi)) +
+  geom_abline(slope=2) +
+  geom_point()
 ```
 
 ```{r prescribing_practice_single}
-infection_sites = read_tsv('infection_sites.tsv')
-
 combined_table_single = rxdx_table_single %>%
   mutate(cpkp=round(cpkp, 1)) %>%
   filter(year %in% c(2011, 2014)) %>%
@@ -423,9 +455,10 @@ combined_table_single = rxdx_table_single %>%
   mutate(pm=pmax(estimate-lower_ci, upper_ci-estimate)) %>%
   mutate(change=sprintf('%.1f ± %.1f', estimate, ceiling_at(pm, 1))) %>%
   mutate(p.value=format_p(p_value)) %>%
-  left_join(infection_sites, by='dx_cat') %>%
-  select(site, dx_cat, antibiotic, `2011`, `2014`, change, p.value) %>%
-  arrange(site, dx_cat, antibiotic)
+  select(dx_cat, antibiotic, `2011`, `2014`, change, p.value) %>%
+  mutate(antibiotic=factor(antibiotic, levels=c('azithromycin', 'levofloxacin', 'amoxicillin/clavulanate')),
+         dx_cat=factor(dx_cat, levels=c('pneumonia', 'sinusitis', 'uri', 'bronchitis', 'other_resp', 'asthma'))) %>%
+  arrange(dx_cat, antibiotic)
 
 combined_table_single %>%
   kable()
@@ -442,4 +475,66 @@ rxdx_table_single %>%
   summarize(cpkp = round(sum(cpkp), 1)) %>%
   spread(year, cpkp) %>%
   kable()
+```
+
+# Reviewer response
+
+## Print abstract figure
+
+```{r print_abstract}
+abstract_dummy = data_frame(
+  year = rep(c(2011, 2015), 2),
+  cpkp = c(0, 250, 0, 100),
+  panel = factor(c(2, 2, 3, 3)),
+  abx = 'pde'
+)
+
+abstract_panel_labels = c('2'='Top 6 most-used antibiotics',
+                 '3'='Next 4 most-used antibiotics')
+
+cba_dat %>%
+  filter(panel %in% c(2, 3)) %>%
+  {
+  ggplot(., aes(x=year, y=cpkp, group=abx)) +
+  geom_blank(data=abstract_dummy) +
+  geom_line() +
+  geom_text(
+    data=filter(., year==2013),
+    aes(label=abx),
+    nudge_y=c(26, -8, 10, 8, -8, -6,
+              4, 8, -3, -5),
+    nudge_x=c(0, 0, 0, 0, 1.3, 0,
+              rep(0, 4))
+  ) +
+  facet_wrap(~panel, scales='free_y', labeller=labeller(panel=abstract_panel_labels)) +
+  theme_classic() +
+  theme(panel.grid.minor.x=element_blank(),
+        strip.background = element_blank(),
+        plot.margin=unit(c(1.0, 1.0, 0.5, 0.5), 'lines'),
+        axis.text.x=element_text(color='black'),
+        axis.text.y=element_text(color='black'),
+        text=element_text(color='black')) +
+  scale_x_continuous(expand=c(0, 0), name='') +
+  scale_y_continuous(expand=c(0, 0), name='claims per 1,000 beneficiaries per year')
+  }
+
+ggsave('fig/abstract_fig.pdf', height=5.0, width=6.0, unit='in')
+ggsave('fig/abstract_fig.png', height=5.0, width=6.0, unit='in')
+```
+
+## Stacked bar charts
+
+```{r stacked_trends}
+p = cba_dat %>%
+  filter(panel != 1) %>%
+  mutate(abx=fct_reorder(factor(abx), cpkp)) %>%
+  ggplot(aes(x=year, y=cpkp, fill=abx)) +
+  geom_col(color='black') +
+  xlab('') +
+  ylab('Claims per 1,000 beneficiaries per year') +
+  theme_minimal() +
+  theme(legend.title=element_blank())
+
+show(p)
+ggsave(plot=p, 'fig/stacked_trends.pdf', units='in', width=4, height=3)
 ```
