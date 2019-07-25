@@ -303,16 +303,16 @@ rxdx_table = read_tsv('tables/pde_for_dx_counts.tsv') %>%
 
 rxdx_models = read_tsv('tables/pde_for_dx_models.tsv')
 
+rxdx_models_display = rxdx_models %>%
+  format_model %>%
+  select(antibiotic, dx_cat, change, p.value)
+
 combined_table = rxdx_table %>%
   mutate(cpkp=round(cpkp, 1)) %>%
   filter(year %in% c(2011, 2014)) %>%
   select(antibiotic, dx_cat, year, cpkp) %>%
   spread(year, cpkp) %>%
-  right_join(rxdx_models, by=c('antibiotic', 'dx_cat')) %>%
-  mutate_at(vars(estimate, lower_ci, upper_ci), est2pct) %>%
-  mutate(pm=pmax(estimate-lower_ci, upper_ci-estimate)) %>%
-  mutate(change=sprintf('%.1f ± %.1f', estimate, ceiling_at(pm, 1))) %>%
-  mutate(p.value=format_p(p_value)) %>%
+  right_join(rxdx_models_display, by=c('antibiotic', 'dx_cat')) %>%
   select(dx_cat, antibiotic, `2011`, `2014`, change, p.value) %>%
   arrange(dx_cat, antibiotic)
 ```
@@ -328,12 +328,6 @@ rxdx_kable = function(abxs, dxs) {
     arrange(dx_cat, antibiotic) %>%
     kable()
 }
-
-rxdx_models %>%
-  format_model() %>%
-  select(antibiotic, dx_cat, change, p.value) %>%
-  filter(antibiotic %in% c('azithromycin', 'levofloxacin'),
-         dx_cat %in% c('pneumonia', 'uri'))
 
 rxdx_kable(c('azithromycin', 'levofloxacin', 'amoxicillin/clavulanate'),
            c('pneumonia', 'sinusitis', 'uri', 'bronchitis', 'other_resp', 'asthma'))
